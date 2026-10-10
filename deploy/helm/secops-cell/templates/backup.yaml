@@ -1,0 +1,220 @@
+{{- if .Values.backup.enabled }}
+{{- if not (or .Values.backup.pvc.enabled .Values.backup.s3.enabled) }}
+{{- fail "backup.enabled needs backup.pvc.enabled and/or backup.s3.enabled" }}
+{{- end }}
+{{- if and .Values.backup.s3.enabled (not .Values.backup.s3.bucket) }}
+{{- fail "backup.s3.bucket is required when backup.s3.enabled" }}
+{{- end }}
+# Scheduled cell backup: databases (pg_dump) + the cell's Secrets, one archive per run, kept on a PVC and/or copied to S3.
+# Restore: scripts/cell-restore.sh (docs/backup-restore.md).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-backup-script
+  labels:
+    {{- include "cell.labels" . | nindent 4 }}
+data:
+  backup.sh: |
+{{ .Files.Get "files/backup.sh" | indent 4 }}
+{{- if .Values.backup.pvc.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-backups
+  labels:
+    {{- include "cell.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- with .Values.backup.pvc.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.backup.pvc.size }}
+{{- end }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ .Release.Name }}-backup
+  labels:
+    {{- include "cell.labels" . | nindent 4 }}
+    app.kubernetes.io/name: backup
+spec:
+  schedule: {{ .Values.backup.schedule | quote }}
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      ttlSecondsAfterFinished: 604800
+      template:
+        metadata:
+          labels:
+            {{- include "cell.podLabels" . | nindent 12 }}
+            app.kubernetes.io/name: backup
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            fsGroup: 999
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- /* The dump always runs; with S3 it is an init container and the upload the main one, so the two run in order. */}}
+          {{- if .Values.backup.s3.enabled }}
+          initContainers:
+          {{- else }}
+          containers:
+          {{- end }}
+            - name: dump
+              image: {{ .Values.backup.image | default .Values.postgres.image | quote }}
+              command: ["bash", "/scripts/backup.sh"]
+              env:
+                - name: CELL
+                  value: {{ .Values.tenant.slug | quote }}
+                {{- if .Values.postgres.bundled }}
+                - name: DATABASES
+                  value: {{ printf "%s %s" .Values.postgres.database .Values.postgres.keycloakDatabase | quote }}
+                {{- end }}
+                - name: OUT_DIR
+                  value: /backups
+                - name: SECRETS_DIR
+                  value: /secrets
+                - name: RETENTION_DAYS
+                  value: {{ ternary (.Values.backup.retentionDays | toString) "0" .Values.backup.pvc.enabled | quote }}
+                {{- if .Values.postgres.bundled }}
+                - name: PGHOST
+                  value: {{ printf "%s-postgres" .Release.Name | quote }}
+                - name: PGUSER
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Release.Name }}-postgres
+                      key: POSTGRES_USER
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Release.Name }}-postgres
+                      key: POSTGRES_PASSWORD
+                {{- else }}
+                {{- /* external database: the script derives PGHOST/PGUSER/PGPASSWORD and the database from the URL the API uses */}}
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Release.Name }}-api-secrets
+                      key: DATABASE_URL
+                {{- end }}
+              volumeMounts:
+                - name: script
+                  mountPath: /scripts
+                  readOnly: true
+                - name: backups
+                  mountPath: /backups
+                - name: cell-key
+                  mountPath: /secrets/{{ .Release.Name }}-cell-key
+                  readOnly: true
+                - name: api-secrets
+                  mountPath: /secrets/{{ .Release.Name }}-api-secrets
+                  readOnly: true
+                {{- if .Values.postgres.bundled }}
+                - name: postgres
+                  mountPath: /secrets/{{ .Release.Name }}-postgres
+                  readOnly: true
+                {{- end }}
+                {{- if .Values.keycloak.bundled }}
+                - name: keycloak
+                  mountPath: /secrets/{{ .Release.Name }}-keycloak
+                  readOnly: true
+                {{- end }}
+                {{- if .Values.managedRunners.enabled }}
+                - name: managed-runner
+                  mountPath: /secrets/{{ .Release.Name }}-managed-runner
+                  readOnly: true
+                {{- end }}
+                {{- if .Values.registry.enabled }}
+                - name: registry
+                  mountPath: /secrets/{{ .Release.Name }}-registry
+                  readOnly: true
+                {{- end }}
+              resources:
+                {{- toYaml .Values.backup.resources | nindent 16 }}
+          {{- if .Values.backup.s3.enabled }}
+          containers:
+            - name: upload
+              image: {{ .Values.backup.s3.image | quote }}
+              command:
+                - sh
+                - -ec
+                - |
+                  f="$(readlink -f /backups/latest.tar.gz)"
+                  [ -f "$f" ] || { echo "no archive to upload"; exit 1; }
+                  dest="s3://{{ .Values.backup.s3.bucket }}/{{ with .Values.backup.s3.prefix }}{{ trimSuffix "/" . }}/{{ end }}"
+                  aws s3 cp "$f" "$dest$(basename "$f")"
+                  aws s3 cp "$f.sha256" "$dest$(basename "$f").sha256"
+                  echo "uploaded $(basename "$f") to $dest"
+              env:
+                {{- with .Values.backup.s3.endpoint }}
+                - name: AWS_ENDPOINT_URL
+                  value: {{ . | quote }}
+                {{- end }}
+                {{- with .Values.backup.s3.region }}
+                - name: AWS_DEFAULT_REGION
+                  value: {{ . | quote }}
+                {{- end }}
+              {{- with .Values.backup.s3.credentialsSecret }}
+              envFrom:
+                - secretRef:
+                    name: {{ . | quote }}
+              {{- end }}
+              volumeMounts:
+                - name: backups
+                  mountPath: /backups
+                  readOnly: true
+              resources:
+                {{- toYaml .Values.backup.resources | nindent 16 }}
+          {{- end }}
+          volumes:
+            - name: script
+              configMap:
+                name: {{ .Release.Name }}-backup-script
+            - name: backups
+              {{- if .Values.backup.pvc.enabled }}
+              persistentVolumeClaim:
+                claimName: {{ .Release.Name }}-backups
+              {{- else }}
+              emptyDir: {}
+              {{- end }}
+            - name: cell-key
+              secret:
+                secretName: {{ .Release.Name }}-cell-key
+            - name: api-secrets
+              secret:
+                secretName: {{ .Release.Name }}-api-secrets
+            {{- if .Values.postgres.bundled }}
+            - name: postgres
+              secret:
+                secretName: {{ .Release.Name }}-postgres
+            {{- end }}
+            {{- if .Values.keycloak.bundled }}
+            - name: keycloak
+              secret:
+                secretName: {{ .Release.Name }}-keycloak
+            {{- end }}
+            {{- if .Values.managedRunners.enabled }}
+            - name: managed-runner
+              secret:
+                secretName: {{ .Release.Name }}-managed-runner
+            {{- end }}
+            {{- if .Values.registry.enabled }}
+            - name: registry
+              secret:
+                secretName: {{ .Release.Name }}-registry
+            {{- end }}
+{{- end }}

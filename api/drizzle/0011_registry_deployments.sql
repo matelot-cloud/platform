@@ -1,0 +1,1 @@
+ALTER TYPE "public"."deployment_source" ADD VALUE 'registry';

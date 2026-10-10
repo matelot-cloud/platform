@@ -1,0 +1,167 @@
+{{- if .Values.keycloak.bundled }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Release.Name }}-keycloak
+  labels:
+    {{- include "cell.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  KC_BOOTSTRAP_ADMIN_USERNAME: {{ .Values.keycloak.adminUser | quote }}
+  KC_BOOTSTRAP_ADMIN_PASSWORD: {{ .Values.keycloak.adminPassword | quote }}
+  KC_DB_USERNAME: {{ .Values.postgres.username | quote }}
+  KC_DB_PASSWORD: {{ .Values.postgres.password | quote }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-keycloak-realm
+  labels:
+    {{- include "cell.labels" . | nindent 4 }}
+data:
+  realm.json: |-
+{{ tpl (.Files.Get "files/realm.json.tpl") . | indent 4 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-keycloak
+  labels:
+    {{- include "cell.labels" . | nindent 4 }}
+    app.kubernetes.io/name: keycloak
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/name: keycloak
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-keycloak
+  labels:
+    {{- include "cell.labels" . | nindent 4 }}
+    app.kubernetes.io/name: keycloak
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/name: keycloak
+  template:
+    metadata:
+      labels:
+        {{- include "cell.podLabels" . | nindent 8 }}
+        app.kubernetes.io/name: keycloak
+        secops.io/ingress-exposed: "true"
+      annotations:
+        checksum/realm: {{ tpl (.Files.Get "files/realm.json.tpl") . | sha256sum }}
+    spec:
+      {{- if .Values.postgres.bundled }}
+      initContainers:
+        # Keycloak exits on an unresolvable database host; on a fresh install the Postgres Service may not have an
+        # endpoint yet, so wait for it here instead of paying a restart.
+        - name: wait-for-postgres
+          image: {{ .Values.postgres.image | quote }}
+          command: ["sh", "-c", "until pg_isready -h {{ .Release.Name }}-postgres -p 5432 -U {{ .Values.postgres.username }} > /dev/null 2>&1; do echo 'waiting for postgres'; sleep 2; done"]
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { cpu: 100m, memory: 64Mi }
+      {{- end }}
+      containers:
+        - name: keycloak
+          image: {{ .Values.keycloak.image | quote }}
+          args: ["start", "--import-realm"]
+          envFrom:
+            - secretRef:
+                name: {{ .Release.Name }}-keycloak
+          env:
+            - name: KC_DB
+              value: postgres
+            - name: KC_DB_URL
+              value: {{ include "cell.keycloakJdbcUrl" . | quote }}
+            - name: KC_HOSTNAME
+              value: {{ printf "%s://%s" (include "cell.scheme" .) (include "cell.authHost" .) | quote }}
+            - name: KC_HOSTNAME_BACKCHANNEL_DYNAMIC
+              value: "true"
+            - name: KC_HTTP_ENABLED
+              value: "true"
+            - name: KC_PROXY_HEADERS
+              value: xforwarded
+            - name: KC_HEALTH_ENABLED
+              value: "true"
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: management
+              containerPort: 9000
+          volumeMounts:
+            - name: realm
+              mountPath: /opt/keycloak/data/import
+              readOnly: true
+          startupProbe:
+            httpGet:
+              path: /health/started
+              port: management
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: management
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: management
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.keycloak.resources | nindent 12 }}
+      volumes:
+        - name: realm
+          configMap:
+            name: {{ .Release.Name }}-keycloak-realm
+{{- if .Values.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}-keycloak
+  labels:
+    {{- include "cell.labels" . | nindent 4 }}
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-buffer-size: "128k"
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls }}
+  tls:
+    - hosts: [{{ include "cell.authHost" . | quote }}]
+      secretName: {{ .Release.Name }}-keycloak-tls
+  {{- end }}
+  rules:
+    - host: {{ include "cell.authHost" . | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}-keycloak
+                port:
+                  name: http
+{{- end }}
+{{- end }}

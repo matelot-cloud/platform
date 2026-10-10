@@ -1,0 +1,31 @@
+# Docker Distribution configuration for the built-in registry (development).
+# Auth is delegated to the platform API: docker login <host> -u <CI token key id> -p <secret>.
+version: 0.1
+log:
+  level: info
+storage:
+  filesystem:
+    rootdirectory: /var/lib/registry
+  delete:
+    enabled: true
+http:
+  addr: :5000
+  headers:
+    X-Content-Type-Options: [nosniff]
+auth:
+  token:
+    realm: http://host.docker.internal:3000/api/v1/registry/token   # the API's token endpoint as reachable from the registry container AND from clients (crane/skopeo on WSL: see SETUP.md); override with REGISTRY_AUTH_TOKEN_REALM
+    service: secops-registry
+    issuer: secops-cell
+    rootcertbundle: /certs/registry.crt
+notifications:
+  endpoints:
+    - name: platform
+      url: http://host.docker.internal:3000/api/v1/registry/events
+      headers:
+        Authorization: [Bearer change-me-registry-events-secret]
+      timeout: 5s
+      threshold: 3
+      backoff: 10s
+      ignoredmediatypes:
+        - application/octet-stream

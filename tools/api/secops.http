@@ -1,0 +1,975 @@
+# secops platform API — generated from http://localhost:3000/api/docs-json
+# Personal access token: user menu → Access tokens. Fill the ids below (Swagger UI: http://localhost:3000/api/docs).
+@baseUrl = http://localhost:3000
+@token = spt_REPLACE_ME
+@organizationId = 
+@workspaceId = 
+@teamId = 
+@projectId = 
+@serviceId = 
+@environmentId = 
+@repositoryId = 
+@integrationId = 
+@imageId = 
+@sbomId = 
+@findingId = 
+@jobId = 
+@pipelineId = 
+@poolId = 
+@runnerId = 
+@membershipId = 
+@tokenId = 
+@userId = 
+@id = 
+@from = 
+@to = 
+
+### admin · GET /admin/users
+GET {{baseUrl}}/api/v1/admin/users
+Authorization: Bearer {{token}}
+
+### admin · PATCH /admin/users/{userId}
+PATCH {{baseUrl}}/api/v1/admin/users/{{userId}}
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "platformRole": "user"
+}
+
+### api-tokens · DELETE /api-tokens/{tokenId}
+DELETE {{baseUrl}}/api/v1/api-tokens/{{tokenId}}
+Authorization: Bearer {{token}}
+
+### api-tokens · GET /api-tokens/presets
+GET {{baseUrl}}/api/v1/api-tokens/presets
+Authorization: Bearer {{token}}
+
+### api-tokens · GET /api-tokens/whoami
+GET {{baseUrl}}/api/v1/api-tokens/whoami
+Authorization: Bearer {{token}}
+
+### vulnerabilities · PATCH /code-findings/{id}
+PATCH {{baseUrl}}/api/v1/code-findings/{{id}}
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "status": "open",
+  "note": "reason for the decision"
+}
+
+### environments · GET /environments/{environmentId}
+GET {{baseUrl}}/api/v1/environments/{{environmentId}}
+Authorization: Bearer {{token}}
+
+### environments · PATCH /environments/{environmentId}
+PATCH {{baseUrl}}/api/v1/environments/{{environmentId}}
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "my-name",
+  "kind": "development"
+}
+
+### environments · DELETE /environments/{environmentId}
+DELETE {{baseUrl}}/api/v1/environments/{{environmentId}}
+Authorization: Bearer {{token}}
+
+### inventory · POST /environments/{environmentId}/deployments
+POST {{baseUrl}}/api/v1/environments/{{environmentId}}/deployments
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "version": "1.9.3",
+  "imageRef": "registry.example.com/team/app@sha256:<digest>",
+  "source": "api",
+  "commitSha": "<commit sha>"
+}
+
+### policies · GET /environments/{environmentId}/gate
+GET {{baseUrl}}/api/v1/environments/{{environmentId}}/gate
+Authorization: Bearer {{token}}
+
+### policies · POST /environments/{environmentId}/gate
+POST {{baseUrl}}/api/v1/environments/{{environmentId}}/gate
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "imageRef": "registry.example.com/team/app@sha256:<digest>",
+  "version": "1.9.3",
+  "ref": "main"
+}
+
+### inventory · POST /environments/{environmentId}/kubernetes-sync
+POST {{baseUrl}}/api/v1/environments/{{environmentId}}/kubernetes-sync
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### risk · GET /environments/{environmentId}/lineage
+GET {{baseUrl}}/api/v1/environments/{{environmentId}}/lineage
+Authorization: Bearer {{token}}
+
+### registry · POST /environments/{environmentId}/promote
+POST {{baseUrl}}/api/v1/environments/{{environmentId}}/promote
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "tag": "v1.9.3"
+}
+
+### registry · GET /environments/{environmentId}/registry
+GET {{baseUrl}}/api/v1/environments/{{environmentId}}/registry
+Authorization: Bearer {{token}}
+
+### inventory · PATCH /environments/{environmentId}/settings
+PATCH {{baseUrl}}/api/v1/environments/{{environmentId}}/settings
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### vulnerabilities · GET /findings/{findingId}
+GET {{baseUrl}}/api/v1/findings/{{findingId}}
+Authorization: Bearer {{token}}
+
+### vulnerabilities · PATCH /findings/{findingId}
+PATCH {{baseUrl}}/api/v1/findings/{{findingId}}
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "status": "open",
+  "note": "reason for the decision"
+}
+
+### health · GET /health/live
+GET {{baseUrl}}/api/v1/health/live
+Authorization: Bearer {{token}}
+
+### health · GET /health/ready
+GET {{baseUrl}}/api/v1/health/ready
+Authorization: Bearer {{token}}
+
+### integrations · DELETE /integrations/{integrationId}
+DELETE {{baseUrl}}/api/v1/integrations/{{integrationId}}?permanent=
+Authorization: Bearer {{token}}
+
+### integrations · GET /integrations/{integrationId}/ecr/repositories
+GET {{baseUrl}}/api/v1/integrations/{{integrationId}}/ecr/repositories
+Authorization: Bearer {{token}}
+
+### integrations · POST /integrations/{integrationId}/ecr/repositories
+POST {{baseUrl}}/api/v1/integrations/{{integrationId}}/ecr/repositories
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "team/app",
+  "scanOnPush": true,
+  "immutableTags": false
+}
+
+### integrations · GET /integrations/{integrationId}/install-url
+GET {{baseUrl}}/api/v1/integrations/{{integrationId}}/install-url
+Authorization: Bearer {{token}}
+
+### integrations · GET /integrations/{integrationId}/repositories
+GET {{baseUrl}}/api/v1/integrations/{{integrationId}}/repositories
+Authorization: Bearer {{token}}
+
+### integrations · POST /integrations/{integrationId}/sync
+POST {{baseUrl}}/api/v1/integrations/{{integrationId}}/sync
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### integrations · POST /integrations/{integrationId}/verify
+POST {{baseUrl}}/api/v1/integrations/{{integrationId}}/verify
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### integrations · GET /integrations/providers
+GET {{baseUrl}}/api/v1/integrations/providers
+Authorization: Bearer {{token}}
+
+### execution · GET /jobs/{jobId}
+GET {{baseUrl}}/api/v1/jobs/{{jobId}}
+Authorization: Bearer {{token}}
+
+### execution · POST /jobs/{jobId}/cancel
+POST {{baseUrl}}/api/v1/jobs/{{jobId}}/cancel
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### execution · GET /jobs/{jobId}/logs
+GET {{baseUrl}}/api/v1/jobs/{{jobId}}/logs?after=
+Authorization: Bearer {{token}}
+
+### execution · POST /jobs/{jobId}/retry
+POST {{baseUrl}}/api/v1/jobs/{{jobId}}/retry
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### iam · GET /me
+GET {{baseUrl}}/api/v1/me
+Authorization: Bearer {{token}}
+
+### me · GET /me/tokens
+GET {{baseUrl}}/api/v1/me/tokens
+Authorization: Bearer {{token}}
+
+### me · POST /me/tokens
+POST {{baseUrl}}/api/v1/me/tokens
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "my-name",
+  "scope": "read",
+  "expiresInDays": 30
+}
+
+### me · DELETE /me/tokens/{id}
+DELETE {{baseUrl}}/api/v1/me/tokens/{{id}}
+Authorization: Bearer {{token}}
+
+### iam · GET /memberships
+GET {{baseUrl}}/api/v1/memberships?scopeType=&scopeId=
+Authorization: Bearer {{token}}
+
+### iam · POST /memberships
+POST {{baseUrl}}/api/v1/memberships
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "email": "person@example.com",
+  "role": "ORG_ADMIN",
+  "scopeType": "ORGANIZATION",
+  "scopeId": "00000000-0000-0000-0000-000000000000"
+}
+
+### iam · DELETE /memberships/{membershipId}
+DELETE {{baseUrl}}/api/v1/memberships/{{membershipId}}
+Authorization: Bearer {{token}}
+
+### meta · GET /meta
+GET {{baseUrl}}/api/v1/meta
+Authorization: Bearer {{token}}
+
+### organizations · GET /organizations
+GET {{baseUrl}}/api/v1/organizations
+Authorization: Bearer {{token}}
+
+### organizations · POST /organizations
+POST {{baseUrl}}/api/v1/organizations
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "parentId": "00000000-0000-0000-0000-000000000000",
+  "slug": "my-slug",
+  "name": "my-name"
+}
+
+### organizations · GET /organizations/{organizationId}
+GET {{baseUrl}}/api/v1/organizations/{{organizationId}}
+Authorization: Bearer {{token}}
+
+### organizations · PATCH /organizations/{organizationId}
+PATCH {{baseUrl}}/api/v1/organizations/{{organizationId}}
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "my-name"
+}
+
+### api-tokens · GET /organizations/{organizationId}/api-tokens
+GET {{baseUrl}}/api/v1/organizations/{{organizationId}}/api-tokens
+Authorization: Bearer {{token}}
+
+### api-tokens · POST /organizations/{organizationId}/api-tokens
+POST {{baseUrl}}/api/v1/organizations/{{organizationId}}/api-tokens
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "my-name",
+  "scopeType": "ORGANIZATION",
+  "preset": "deploy",
+  "expiresInDays": 30
+}
+
+### audit · GET /organizations/{organizationId}/audit-events
+GET {{baseUrl}}/api/v1/organizations/{{organizationId}}/audit-events
+Authorization: Bearer {{token}}
+
+### vulnerabilities · GET /organizations/{organizationId}/code-findings
+GET {{baseUrl}}/api/v1/organizations/{{organizationId}}/code-findings?kind=&severity=&status=&q=
+Authorization: Bearer {{token}}
+
+### vulnerabilities · GET /organizations/{organizationId}/code-findings/summary
+GET {{baseUrl}}/api/v1/organizations/{{organizationId}}/code-findings/summary
+Authorization: Bearer {{token}}
+
+### sbom · GET /organizations/{organizationId}/components
+GET {{baseUrl}}/api/v1/organizations/{{organizationId}}/components
+Authorization: Bearer {{token}}
+
+### inventory · GET /organizations/{organizationId}/deployments
+GET {{baseUrl}}/api/v1/organizations/{{organizationId}}/deployments
+Authorization: Bearer {{token}}
+
+### vulnerabilities · GET /organizations/{organizationId}/findings
+GET {{baseUrl}}/api/v1/organizations/{{organizationId}}/findings?severity=&status=&kev=&q=&projectId=&running=
+Authorization: Bearer {{token}}
+
+### vulnerabilities · GET /organizations/{organizationId}/findings/environments
+GET {{baseUrl}}/api/v1/organizations/{{organizationId}}/findings/environments
+Authorization: Bearer {{token}}
+
+### vulnerabilities · POST /organizations/{organizationId}/findings/recorrelate
+POST {{baseUrl}}/api/v1/organizations/{{organizationId}}/findings/recorrelate
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### vulnerabilities · POST /organizations/{organizationId}/findings/snapshots
+POST {{baseUrl}}/api/v1/organizations/{{organizationId}}/findings/snapshots?backfillDays=
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### vulnerabilities · GET /organizations/{organizationId}/findings/summary
+GET {{baseUrl}}/api/v1/organizations/{{organizationId}}/findings/summary
+Authorization: Bearer {{token}}
+
+### vulnerabilities · GET /organizations/{organizationId}/findings/trend
+GET {{baseUrl}}/api/v1/organizations/{{organizationId}}/findings/trend?days=
+Authorization: Bearer {{token}}
+
+### integrations · GET /organizations/{organizationId}/integrations
+GET {{baseUrl}}/api/v1/organizations/{{organizationId}}/integrations
+Authorization: Bearer {{token}}
+
+### integrations · POST /organizations/{organizationId}/integrations
+POST {{baseUrl}}/api/v1/organizations/{{organizationId}}/integrations
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "scopeType": "ORGANIZATION",
+  "provider": "github",
+  "name": "my-name",
+  "baseUrl": "ghcr.io",
+  "repositoryUrl": "git@github.com:acme/app.git",
+  "auth": {
+    "type": "none",
+    "slug": "my-slug"
+  }
+}
+
+### integrations · GET /organizations/{organizationId}/integrations/github/install-url
+GET {{baseUrl}}/api/v1/organizations/{{organizationId}}/integrations/github/install-url?scopeType=&scopeId=
+Authorization: Bearer {{token}}
+
+### integrations · POST /organizations/{organizationId}/integrations/test
+POST {{baseUrl}}/api/v1/organizations/{{organizationId}}/integrations/test
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "scopeType": "ORGANIZATION",
+  "provider": "github",
+  "name": "my-name",
+  "baseUrl": "ghcr.io",
+  "repositoryUrl": "git@github.com:acme/app.git",
+  "auth": {
+    "type": "none",
+    "slug": "my-slug"
+  }
+}
+
+### execution · GET /organizations/{organizationId}/jobs/active
+GET {{baseUrl}}/api/v1/organizations/{{organizationId}}/jobs/active
+Authorization: Bearer {{token}}
+
+### overview · GET /organizations/{organizationId}/overview
+GET {{baseUrl}}/api/v1/organizations/{{organizationId}}/overview
+Authorization: Bearer {{token}}
+
+### policies · GET /organizations/{organizationId}/policies
+GET {{baseUrl}}/api/v1/organizations/{{organizationId}}/policies
+Authorization: Bearer {{token}}
+
+### policies · POST /organizations/{organizationId}/policies
+POST {{baseUrl}}/api/v1/organizations/{{organizationId}}/policies
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "my-name",
+  "description": "",
+  "rules": {},
+  "action": "block"
+}
+
+### projects · GET /organizations/{organizationId}/projects
+GET {{baseUrl}}/api/v1/organizations/{{organizationId}}/projects
+Authorization: Bearer {{token}}
+
+### registry · POST /organizations/{organizationId}/registry/reconcile
+POST {{baseUrl}}/api/v1/organizations/{{organizationId}}/registry/reconcile
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### integrations · GET /organizations/{organizationId}/repositories
+GET {{baseUrl}}/api/v1/organizations/{{organizationId}}/repositories
+Authorization: Bearer {{token}}
+
+### risk · GET /organizations/{organizationId}/risk
+GET {{baseUrl}}/api/v1/organizations/{{organizationId}}/risk
+Authorization: Bearer {{token}}
+
+### risk · POST /organizations/{organizationId}/risk/recompute
+POST {{baseUrl}}/api/v1/organizations/{{organizationId}}/risk/recompute
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### execution · GET /organizations/{organizationId}/runner-pools
+GET {{baseUrl}}/api/v1/organizations/{{organizationId}}/runner-pools
+Authorization: Bearer {{token}}
+
+### execution · POST /organizations/{organizationId}/runner-pools
+POST {{baseUrl}}/api/v1/organizations/{{organizationId}}/runner-pools
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "scopeType": "ORGANIZATION",
+  "slug": "my-slug",
+  "name": "my-name",
+  "description": ""
+}
+
+### services · GET /organizations/{organizationId}/services
+GET {{baseUrl}}/api/v1/organizations/{{organizationId}}/services
+Authorization: Bearer {{token}}
+
+### teams · GET /organizations/{organizationId}/teams
+GET {{baseUrl}}/api/v1/organizations/{{organizationId}}/teams
+Authorization: Bearer {{token}}
+
+### workspaces · GET /organizations/{organizationId}/workspaces
+GET {{baseUrl}}/api/v1/organizations/{{organizationId}}/workspaces
+Authorization: Bearer {{token}}
+
+### workspaces · POST /organizations/{organizationId}/workspaces
+POST {{baseUrl}}/api/v1/organizations/{{organizationId}}/workspaces
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "slug": "my-slug",
+  "name": "my-name",
+  "description": ""
+}
+
+### execution · GET /pipeline-templates
+GET {{baseUrl}}/api/v1/pipeline-templates
+Authorization: Bearer {{token}}
+
+### execution · GET /pipelines/{pipelineId}
+GET {{baseUrl}}/api/v1/pipelines/{{pipelineId}}
+Authorization: Bearer {{token}}
+
+### execution · POST /pipelines/{pipelineId}/cancel
+POST {{baseUrl}}/api/v1/pipelines/{{pipelineId}}/cancel
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### policies · PATCH /policies/{policyId}
+PATCH {{baseUrl}}/api/v1/policies/{{policyId}}
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "my-name",
+  "description": "",
+  "action": "block"
+}
+
+### policies · DELETE /policies/{policyId}
+DELETE {{baseUrl}}/api/v1/policies/{{policyId}}
+Authorization: Bearer {{token}}
+
+### projects · GET /projects/{projectId}
+GET {{baseUrl}}/api/v1/projects/{{projectId}}
+Authorization: Bearer {{token}}
+
+### projects · PATCH /projects/{projectId}
+PATCH {{baseUrl}}/api/v1/projects/{{projectId}}
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "my-name",
+  "description": "",
+  "criticality": "LOW"
+}
+
+### projects · DELETE /projects/{projectId}
+DELETE {{baseUrl}}/api/v1/projects/{{projectId}}
+Authorization: Bearer {{token}}
+
+### vulnerabilities · GET /projects/{projectId}/code-findings
+GET {{baseUrl}}/api/v1/projects/{{projectId}}/code-findings?kind=&severity=&status=&q=
+Authorization: Bearer {{token}}
+
+### vulnerabilities · GET /projects/{projectId}/code-findings/summary
+GET {{baseUrl}}/api/v1/projects/{{projectId}}/code-findings/summary
+Authorization: Bearer {{token}}
+
+### vulnerabilities · GET /projects/{projectId}/findings
+GET {{baseUrl}}/api/v1/projects/{{projectId}}/findings?severity=&status=&kev=&q=
+Authorization: Bearer {{token}}
+
+### vulnerabilities · GET /projects/{projectId}/findings/environments
+GET {{baseUrl}}/api/v1/projects/{{projectId}}/findings/environments
+Authorization: Bearer {{token}}
+
+### vulnerabilities · GET /projects/{projectId}/findings/summary
+GET {{baseUrl}}/api/v1/projects/{{projectId}}/findings/summary
+Authorization: Bearer {{token}}
+
+### vulnerabilities · GET /projects/{projectId}/findings/trend
+GET {{baseUrl}}/api/v1/projects/{{projectId}}/findings/trend?days=
+Authorization: Bearer {{token}}
+
+### risk · GET /projects/{projectId}/graph
+GET {{baseUrl}}/api/v1/projects/{{projectId}}/graph
+Authorization: Bearer {{token}}
+
+### integrations · GET /projects/{projectId}/integrations
+GET {{baseUrl}}/api/v1/projects/{{projectId}}/integrations
+Authorization: Bearer {{token}}
+
+### inventory · GET /projects/{projectId}/inventory
+GET {{baseUrl}}/api/v1/projects/{{projectId}}/inventory
+Authorization: Bearer {{token}}
+
+### execution · GET /projects/{projectId}/jobs
+GET {{baseUrl}}/api/v1/projects/{{projectId}}/jobs?limit=
+Authorization: Bearer {{token}}
+
+### overview · GET /projects/{projectId}/overview
+GET {{baseUrl}}/api/v1/projects/{{projectId}}/overview
+Authorization: Bearer {{token}}
+
+### execution · GET /projects/{projectId}/pipelines
+GET {{baseUrl}}/api/v1/projects/{{projectId}}/pipelines?limit=
+Authorization: Bearer {{token}}
+
+### policies · GET /projects/{projectId}/policies
+GET {{baseUrl}}/api/v1/projects/{{projectId}}/policies
+Authorization: Bearer {{token}}
+
+### policies · POST /projects/{projectId}/policies
+POST {{baseUrl}}/api/v1/projects/{{projectId}}/policies
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "my-name",
+  "description": "",
+  "rules": {},
+  "action": "block"
+}
+
+### integrations · GET /projects/{projectId}/repositories
+GET {{baseUrl}}/api/v1/projects/{{projectId}}/repositories
+Authorization: Bearer {{token}}
+
+### risk · GET /projects/{projectId}/risk
+GET {{baseUrl}}/api/v1/projects/{{projectId}}/risk
+Authorization: Bearer {{token}}
+
+### risk · POST /projects/{projectId}/risk/recompute
+POST {{baseUrl}}/api/v1/projects/{{projectId}}/risk/recompute
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### execution · GET /projects/{projectId}/runner-pools
+GET {{baseUrl}}/api/v1/projects/{{projectId}}/runner-pools
+Authorization: Bearer {{token}}
+
+### sbom · GET /projects/{projectId}/sbom-summary
+GET {{baseUrl}}/api/v1/projects/{{projectId}}/sbom-summary
+Authorization: Bearer {{token}}
+
+### services · GET /projects/{projectId}/services
+GET {{baseUrl}}/api/v1/projects/{{projectId}}/services
+Authorization: Bearer {{token}}
+
+### services · POST /projects/{projectId}/services
+POST {{baseUrl}}/api/v1/projects/{{projectId}}/services
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "slug": "my-slug",
+  "name": "my-name",
+  "description": "",
+  "kind": "api",
+  "criticality": "LOW"
+}
+
+### registry · GET /registry/info
+GET {{baseUrl}}/api/v1/registry/info
+Authorization: Bearer {{token}}
+
+### execution · GET /runner-agent
+GET {{baseUrl}}/api/v1/runner-agent
+Authorization: Bearer {{token}}
+
+### execution · DELETE /runner-pools/{poolId}
+DELETE {{baseUrl}}/api/v1/runner-pools/{{poolId}}
+Authorization: Bearer {{token}}
+
+### execution · POST /runner-pools/{poolId}/registration-tokens
+POST {{baseUrl}}/api/v1/runner-pools/{{poolId}}/registration-tokens
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### execution · DELETE /runners/{runnerId}
+DELETE {{baseUrl}}/api/v1/runners/{{runnerId}}
+Authorization: Bearer {{token}}
+
+### sbom · GET /sboms/{from}/diff/{to}
+GET {{baseUrl}}/api/v1/sboms/{{from}}/diff/{{to}}
+Authorization: Bearer {{token}}
+
+### sbom · GET /sboms/{sbomId}
+GET {{baseUrl}}/api/v1/sboms/{{sbomId}}?q=
+Authorization: Bearer {{token}}
+
+### sbom · GET /sboms/{sbomId}/download
+GET {{baseUrl}}/api/v1/sboms/{{sbomId}}/download
+Authorization: Bearer {{token}}
+
+### vulnerabilities · GET /sboms/{sbomId}/findings
+GET {{baseUrl}}/api/v1/sboms/{{sbomId}}/findings?status=
+Authorization: Bearer {{token}}
+
+### services · GET /services/{serviceId}
+GET {{baseUrl}}/api/v1/services/{{serviceId}}
+Authorization: Bearer {{token}}
+
+### services · PATCH /services/{serviceId}
+PATCH {{baseUrl}}/api/v1/services/{{serviceId}}
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "my-name",
+  "description": "",
+  "kind": "api",
+  "criticality": "LOW"
+}
+
+### services · DELETE /services/{serviceId}
+DELETE {{baseUrl}}/api/v1/services/{{serviceId}}
+Authorization: Bearer {{token}}
+
+### inventory · GET /services/{serviceId}/deployments
+GET {{baseUrl}}/api/v1/services/{{serviceId}}/deployments
+Authorization: Bearer {{token}}
+
+### environments · GET /services/{serviceId}/environments
+GET {{baseUrl}}/api/v1/services/{{serviceId}}/environments
+Authorization: Bearer {{token}}
+
+### environments · POST /services/{serviceId}/environments
+POST {{baseUrl}}/api/v1/services/{{serviceId}}/environments
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "slug": "my-slug",
+  "name": "my-name",
+  "kind": "development"
+}
+
+### vulnerabilities · GET /services/{serviceId}/findings
+GET {{baseUrl}}/api/v1/services/{{serviceId}}/findings?status=
+Authorization: Bearer {{token}}
+
+### vulnerabilities · POST /services/{serviceId}/findings/recorrelate
+POST {{baseUrl}}/api/v1/services/{{serviceId}}/findings/recorrelate
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### policies · GET /services/{serviceId}/gate-evaluations
+GET {{baseUrl}}/api/v1/services/{{serviceId}}/gate-evaluations
+Authorization: Bearer {{token}}
+
+### inventory · GET /services/{serviceId}/images
+GET {{baseUrl}}/api/v1/services/{{serviceId}}/images
+Authorization: Bearer {{token}}
+
+### inventory · POST /services/{serviceId}/images
+POST {{baseUrl}}/api/v1/services/{{serviceId}}/images
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "my-name"
+}
+
+### inventory · DELETE /services/{serviceId}/images/{imageId}
+DELETE {{baseUrl}}/api/v1/services/{{serviceId}}/images/{{imageId}}
+Authorization: Bearer {{token}}
+
+### inventory · POST /services/{serviceId}/images/{imageId}/sync
+POST {{baseUrl}}/api/v1/services/{{serviceId}}/images/{{imageId}}/sync
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### inventory · GET /services/{serviceId}/inventory
+GET {{baseUrl}}/api/v1/services/{{serviceId}}/inventory
+Authorization: Bearer {{token}}
+
+### execution · POST /services/{serviceId}/jobs
+POST {{baseUrl}}/api/v1/services/{{serviceId}}/jobs
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "type": "repository_check"
+}
+
+### execution · POST /services/{serviceId}/pipelines
+POST {{baseUrl}}/api/v1/services/{{serviceId}}/pipelines
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "template": "security",
+  "ref": "main"
+}
+
+### integrations · GET /services/{serviceId}/registries
+GET {{baseUrl}}/api/v1/services/{{serviceId}}/registries
+Authorization: Bearer {{token}}
+
+### integrations · POST /services/{serviceId}/registries/{integrationId}/credentials
+POST {{baseUrl}}/api/v1/services/{{serviceId}}/registries/{{integrationId}}/credentials
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### integrations · POST /services/{serviceId}/registries/{integrationId}/repositories
+POST {{baseUrl}}/api/v1/services/{{serviceId}}/registries/{{integrationId}}/repositories
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "team/app",
+  "scanOnPush": true
+}
+
+### registry · GET /services/{serviceId}/registry
+GET {{baseUrl}}/api/v1/services/{{serviceId}}/registry
+Authorization: Bearer {{token}}
+
+### inventory · GET /services/{serviceId}/releases
+GET {{baseUrl}}/api/v1/services/{{serviceId}}/releases
+Authorization: Bearer {{token}}
+
+### inventory · POST /services/{serviceId}/releases
+POST {{baseUrl}}/api/v1/services/{{serviceId}}/releases
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "version": "1.9.3",
+  "tag": "v1.9.3",
+  "commitSha": "<commit sha>",
+  "notes": "release notes"
+}
+
+### inventory · POST /services/{serviceId}/releases/sync
+POST {{baseUrl}}/api/v1/services/{{serviceId}}/releases/sync
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### integrations · GET /services/{serviceId}/repositories
+GET {{baseUrl}}/api/v1/services/{{serviceId}}/repositories
+Authorization: Bearer {{token}}
+
+### integrations · POST /services/{serviceId}/repositories
+POST {{baseUrl}}/api/v1/services/{{serviceId}}/repositories
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "repositoryId": "00000000-0000-0000-0000-000000000000",
+  "role": "primary"
+}
+
+### integrations · DELETE /services/{serviceId}/repositories/{repositoryId}
+DELETE {{baseUrl}}/api/v1/services/{{serviceId}}/repositories/{{repositoryId}}
+Authorization: Bearer {{token}}
+
+### risk · GET /services/{serviceId}/risk
+GET {{baseUrl}}/api/v1/services/{{serviceId}}/risk
+Authorization: Bearer {{token}}
+
+### sbom · GET /services/{serviceId}/sboms
+GET {{baseUrl}}/api/v1/services/{{serviceId}}/sboms
+Authorization: Bearer {{token}}
+
+### sbom · POST /services/{serviceId}/sboms
+POST {{baseUrl}}/api/v1/services/{{serviceId}}/sboms
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "target": "source",
+  "version": "1.9.3",
+  "imageRef": "registry.example.com/team/app@sha256:<digest>",
+  "document": {}
+}
+
+### teams · GET /teams/{teamId}
+GET {{baseUrl}}/api/v1/teams/{{teamId}}
+Authorization: Bearer {{token}}
+
+### teams · PATCH /teams/{teamId}
+PATCH {{baseUrl}}/api/v1/teams/{{teamId}}
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "my-name",
+  "description": ""
+}
+
+### teams · DELETE /teams/{teamId}
+DELETE {{baseUrl}}/api/v1/teams/{{teamId}}
+Authorization: Bearer {{token}}
+
+### policies · GET /teams/{teamId}/policies
+GET {{baseUrl}}/api/v1/teams/{{teamId}}/policies
+Authorization: Bearer {{token}}
+
+### policies · POST /teams/{teamId}/policies
+POST {{baseUrl}}/api/v1/teams/{{teamId}}/policies
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "my-name",
+  "description": "",
+  "rules": {},
+  "action": "block"
+}
+
+### projects · GET /teams/{teamId}/projects
+GET {{baseUrl}}/api/v1/teams/{{teamId}}/projects
+Authorization: Bearer {{token}}
+
+### projects · POST /teams/{teamId}/projects
+POST {{baseUrl}}/api/v1/teams/{{teamId}}/projects
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "slug": "my-slug",
+  "name": "my-name",
+  "description": "",
+  "criticality": "LOW"
+}
+
+### workspaces · GET /workspaces/{workspaceId}
+GET {{baseUrl}}/api/v1/workspaces/{{workspaceId}}
+Authorization: Bearer {{token}}
+
+### workspaces · PATCH /workspaces/{workspaceId}
+PATCH {{baseUrl}}/api/v1/workspaces/{{workspaceId}}
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "my-name",
+  "description": ""
+}
+
+### workspaces · DELETE /workspaces/{workspaceId}
+DELETE {{baseUrl}}/api/v1/workspaces/{{workspaceId}}
+Authorization: Bearer {{token}}
+
+### policies · GET /workspaces/{workspaceId}/policies
+GET {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/policies
+Authorization: Bearer {{token}}
+
+### policies · POST /workspaces/{workspaceId}/policies
+POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/policies
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "my-name",
+  "description": "",
+  "rules": {},
+  "action": "block"
+}
+
+### teams · GET /workspaces/{workspaceId}/teams
+GET {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/teams
+Authorization: Bearer {{token}}
+
+### teams · POST /workspaces/{workspaceId}/teams
+POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/teams
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "slug": "my-slug",
+  "name": "my-name",
+  "description": ""
+}

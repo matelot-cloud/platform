@@ -1,0 +1,64 @@
+# Local development infrastructure. The API runs on the host with `pnpm dev`.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: platform
+      POSTGRES_PASSWORD: platform
+      POSTGRES_DB: platform
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./deploy/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U platform -d platform"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: platform
+      KC_DB_PASSWORD: platform
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      - "8080:8080"
+    volumes:
+      # Mount the directory, not the file: single-file bind mounts break on Docker Desktop after restarts.
+      - ./deploy/keycloak:/opt/keycloak/data/import:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Built-in container registry: teams push here with their CI token; auth is delegated to the API.
+  registry:
+    image: registry:2.8.3
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      # Token realm handed to clients; must be reachable from the registry AND from every client (see SETUP.md).
+      REGISTRY_AUTH_TOKEN_REALM: ${REGISTRY_AUTH_TOKEN_REALM:-http://host.docker.internal:3000/api/v1/registry/token}
+    volumes:
+      - ./deploy/registry/config-dev.yml:/etc/docker/registry/config.yml:ro
+      - ./deploy/registry/certs:/certs:ro
+      - registry-data:/var/lib/registry
+
+
+volumes:
+  registry-data:
+  postgres-data:

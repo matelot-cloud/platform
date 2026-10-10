@@ -1,0 +1,18 @@
+name: Set up the SecOps CLI
+description: Installs @secops-platform/cli and exports SECOPS_URL / SECOPS_KEY_ID / SECOPS_SECRET for later steps.
+inputs:
+  url: { description: Platform URL, required: true }
+  key-id: { description: CI token key id (sk_…), required: true }
+  secret: { description: CI token secret (sec_…) — store as a secret, required: true }
+  version: { description: CLI version (npm dist-tag or semver), required: false, default: latest }
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        npm install -g "secops-platform-cli@${{ inputs.version }}"
+        echo "SECOPS_URL=${{ inputs.url }}" >> "$GITHUB_ENV"
+        echo "SECOPS_KEY_ID=${{ inputs.key-id }}" >> "$GITHUB_ENV"
+        echo "::add-mask::${{ inputs.secret }}"
+        echo "SECOPS_SECRET=${{ inputs.secret }}" >> "$GITHUB_ENV"
+        secops whoami

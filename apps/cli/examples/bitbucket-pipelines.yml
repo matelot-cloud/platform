@@ -1,0 +1,53 @@
+# Matelot security workflow for Bitbucket Pipelines — save as bitbucket-pipelines.yml in the service repository.
+# Repository variables (Repository settings → Pipelines → Repository variables): MATELOT_URL, MATELOT_SERVICE_ID,
+# MATELOT_ENV_DEV, MATELOT_ENV_TEST, MATELOT_ENV_PROD, and secured MATELOT_KEY_ID + MATELOT_SECRET.
+image: node:22
+
+definitions:
+  steps:
+    - step: &install
+        script:
+          - npm install -g "github:dev-testing-secops-platform/secops-platform-cli#main"
+    - step: &security
+        name: Security pipeline (SBOM, secrets, IaC)
+        script:
+          - apt-get update -qq && apt-get install -y -qq jq >/dev/null
+          - npm install -g "github:dev-testing-secops-platform/secops-platform-cli#main"
+          - matelot pipeline --service "$MATELOT_SERVICE_ID" --ref "$BITBUCKET_COMMIT" --wait --timeout 900
+          - matelot findings summary --project "$(matelot service show --service "$MATELOT_SERVICE_ID" --json | jq -r .projectId)"
+
+pipelines:
+  default:
+    - step: *security
+  branches:
+    main:
+      - step: *security
+      - step:
+          name: Deploy dev
+          script:
+            - npm install -g "github:dev-testing-secops-platform/secops-platform-cli#main"
+            - matelot deploy --env "$MATELOT_ENV_DEV" --version "main-${BITBUCKET_COMMIT:0:7}" --commit "$BITBUCKET_COMMIT"
+  tags:
+    'v*':
+      - step: *security
+      - step:
+          name: Deploy test
+          script:
+            - npm install -g "github:dev-testing-secops-platform/secops-platform-cli#main"
+            - V="${BITBUCKET_TAG#v}"
+            - matelot gate --env "$MATELOT_ENV_TEST" --version "$V" || true
+            - matelot deploy --env "$MATELOT_ENV_TEST" --version "$V" --commit "$BITBUCKET_COMMIT"
+      - step:
+          name: Deploy prod (blocking gate)
+          trigger: manual
+          deployment: production
+          script:
+            - apt-get update -qq && apt-get install -y -qq jq >/dev/null
+            - npm install -g "github:dev-testing-secops-platform/secops-platform-cli#main"
+            - V="${BITBUCKET_TAG#v}"
+            - matelot gate --env "$MATELOT_ENV_PROD" --version "$V"
+            - matelot deploy --env "$MATELOT_ENV_PROD" --version "$V" --commit "$BITBUCKET_COMMIT"
+            - REL=$(matelot releases list --service "$MATELOT_SERVICE_ID" --json | jq -r --arg v "$V" '.[] | select(.version==$v) | .id' | head -1)
+            - matelot evidence export --release "$REL" --out "evidence-$V.zip" && matelot evidence verify "evidence-$V.zip"
+          artifacts:
+            - evidence-*.zip

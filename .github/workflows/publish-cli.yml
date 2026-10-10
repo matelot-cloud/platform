@@ -1,0 +1,25 @@
+name: publish-cli
+on:
+  push:
+    tags: ["cli-v*"]        # git tag cli-v0.1.0 && git push --tags
+permissions:
+  contents: read
+  id-token: write           # npm provenance (Sigstore attestation of the build)
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: apps/cli } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, registry-url: https://registry.npmjs.org, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build && pnpm test
+      - run: |
+          TAG=${GITHUB_REF_NAME#cli-v}
+          node -e "const p=require('./package.json'); if(p.version!=='$TAG'){console.error('package.json version '+p.version+' != tag '+'$TAG'); process.exit(1)}"
+      - run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -1,0 +1,1 @@
+ALTER TABLE "api_tokens" ADD COLUMN "environments" text[] DEFAULT '{}' NOT NULL;

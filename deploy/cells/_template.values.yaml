@@ -1,0 +1,50 @@
+# Cell: __NAME__ (__SLUG__) — one file per cell, committed; secrets stay out (the ${VAR} placeholders are filled from
+# the environment by scripts/cell-provision.sh at apply time). Anything not set here keeps the chart default.
+tenant:
+  slug: __SLUG__
+  name: "__NAME__"
+  domain: __DOMAIN__            # app: __SLUG__.__DOMAIN__  auth: auth-__SLUG__.__DOMAIN__  registry: registry-__SLUG__.__DOMAIN__
+  adminEmails: __ADMINS__       # first login of these e-mails receives ORG_ADMIN on the root organization
+
+image:
+  repository: ghcr.io/your-org/secops-api
+  tag: "0.1.0"                  # all three images move together: scripts/cell-provision.sh apply --tag X
+web:
+  image: { repository: ghcr.io/your-org/secops-web, tag: "0.1.0" }
+managedRunners:
+  image: { repository: ghcr.io/your-org/secops-runner, tag: "0.1.0" }
+  replicas: 1
+imagePullSecrets: []            # e.g. [{ name: ghcr-pull }] — create the Secret in tenant-__SLUG__ first
+
+api:
+  replicas: 1
+  corsOrigins: ["https://__SLUG__.__DOMAIN__"]
+  extraEnv: {}                  # SMTP_HOST, SMTP_PORT, SMTP_FROM, … for e-mail notifications (secrets via ${VAR})
+
+ingress:
+  className: nginx
+  tls: true
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+
+postgres:
+  bundled: true                 # production: bundled: false + externalUrl / externalKeycloakJdbcUrl (managed database)
+  storage: 20Gi
+  password: ${DB_PASSWORD}
+redis:
+  bundled: true
+keycloak:
+  bundled: true
+  adminPassword: ${KC_ADMIN_PASSWORD}
+  allowPasswordGrant: false
+  seedUsers: []                 # users come from the customer's IdP (docs/cell-provisioning.md §Handover)
+
+backup:
+  enabled: true
+  schedule: "17 2 * * *"
+  retentionDays: 7
+  pvc: { enabled: true, size: 20Gi }
+  s3:
+    enabled: false              # recommended: enabled, bucket, prefix: cells/__SLUG__, region, credentialsSecret or pod identity
+    bucket: ""
+    prefix: cells/__SLUG__

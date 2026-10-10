@@ -1,0 +1,108 @@
+{{- if .Values.managedRunners.enabled }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Release.Name }}-managed-runner
+  labels:
+    {{- include "cell.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+type: Opaque
+stringData:
+  MANAGED_RUNNER_SECRET: {{ include "cell.managedRunnerSecret" . | quote }}
+---
+# Headless service: required by the StatefulSet (stable names runner-0, runner-1 … = runner names in the Managed pool).
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-runner
+  labels:
+    {{- include "cell.labels" . | nindent 4 }}
+    app.kubernetes.io/name: runner
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/name: runner
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-runner
+  labels:
+    {{- include "cell.labels" . | nindent 4 }}
+    app.kubernetes.io/name: runner
+spec:
+  serviceName: {{ .Release.Name }}-runner
+  replicas: {{ .Values.managedRunners.replicas }}
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/name: runner
+  template:
+    metadata:
+      labels:
+        {{- include "cell.podLabels" . | nindent 8 }}
+        app.kubernetes.io/name: runner
+    spec:
+      # managed runners get no Kubernetes API access (no "kubernetes" tag): cluster inventory stays on customer runners
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: 600   # SIGTERM: the agent finishes the current job, then exits
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: runner
+          image: {{ include "cell.runnerImage" . | quote }}
+          imagePullPolicy: {{ .Values.managedRunners.image.pullPolicy }}
+          env:
+            - name: RUNNER_URL
+              value: {{ printf "http://%s-api/api/v1" .Release.Name | quote }}
+            - name: RUNNER_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: RUNNER_TAGS
+              value: {{ join "," .Values.managedRunners.tags | quote }}
+            - name: RUNNER_DATA_DIR
+              value: /data
+            - name: RUNNER_WORKDIR
+              value: /work
+            - name: HOME
+              value: /work
+            - name: RUNNER_MANAGED_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-managed-runner
+                  key: MANAGED_RUNNER_SECRET
+          resources:
+            {{- toYaml .Values.managedRunners.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: work
+              mountPath: /work
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: work
+          emptyDir:
+            sizeLimit: {{ .Values.managedRunners.workDirSize }}
+        - name: tmp
+          emptyDir: {}
+{{- end }}

@@ -1,0 +1,152 @@
+{{- if and .Values.registry.enabled .Values.ingress.enabled }}
+{{- $pair := include "cell.registryKeyPair" . | fromJson }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Release.Name }}-registry
+  labels:
+    {{- include "cell.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+type: Opaque
+stringData:
+  registry.key: |
+{{ $pair.key | indent 4 }}
+  registry.crt: |
+{{ $pair.cert | indent 4 }}
+  REGISTRY_EVENTS_SECRET: {{ include "cell.registryEventsSecret" . | quote }}
+  REGISTRY_HOST: {{ include "cell.registryHost" . | quote }}
+  REGISTRY_TOKEN_KEY_PATH: /etc/secops/registry/registry.key
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-registry-config
+  labels:
+    {{- include "cell.labels" . | nindent 4 }}
+data:
+  config.yml: |
+    version: 0.1
+    log: { level: info }
+    storage:
+      filesystem: { rootdirectory: /var/lib/registry }
+      delete: { enabled: true }
+    http:
+      addr: :5000
+      headers: { X-Content-Type-Options: [nosniff] }
+    auth:
+      token:
+        realm: {{ printf "%s://%s/api/v1/registry/token" (include "cell.scheme" .) (include "cell.apiHost" .) | quote }}
+        service: secops-registry
+        issuer: secops-cell
+        rootcertbundle: /certs/registry.crt
+    notifications:
+      endpoints:
+        - name: platform
+          url: http://{{ .Release.Name }}-api:3000/api/v1/registry/events
+          headers: { Authorization: ["Bearer {{ include "cell.registryEventsSecret" . }}"] }
+          timeout: 5s
+          threshold: 3
+          backoff: 10s
+          ignoredmediatypes: [application/octet-stream]
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-registry-data
+  labels:
+    {{- include "cell.labels" . | nindent 4 }}
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with .Values.registry.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources: { requests: { storage: {{ .Values.registry.storage }} } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-registry
+  labels:
+    {{- include "cell.labels" . | nindent 4 }}
+    app.kubernetes.io/name: registry
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/name: registry
+  template:
+    metadata:
+      labels:
+        {{- include "cell.labels" . | nindent 8 }}
+        app.kubernetes.io/name: registry
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/registry.yaml") . | sha256sum }}
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 1000, fsGroup: 1000 }
+      containers:
+        - name: registry
+          image: {{ .Values.registry.image | quote }}
+          ports: [{ containerPort: 5000, name: http }]
+          volumeMounts:
+            - { name: config, mountPath: /etc/docker/registry/config.yml, subPath: config.yml }
+            - { name: certs, mountPath: /certs }
+            - { name: data, mountPath: /var/lib/registry }
+          resources:
+            {{- toYaml .Values.registry.resources | nindent 12 }}
+          readinessProbe: { httpGet: { path: /, port: http }, initialDelaySeconds: 5 }
+      volumes:
+        - name: config
+          configMap: { name: {{ .Release.Name }}-registry-config }
+        - name: certs
+          secret:
+            secretName: {{ .Release.Name }}-registry
+            items: [{ key: registry.crt, path: registry.crt }]
+        - name: data
+          persistentVolumeClaim: { claimName: {{ .Release.Name }}-registry-data }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-registry
+  labels:
+    {{- include "cell.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/name: registry
+  ports: [{ port: 5000, targetPort: http, name: http }]
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}-registry
+  labels:
+    {{- include "cell.labels" . | nindent 4 }}
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if .Values.ingress.tls }}
+  tls:
+    - hosts: [{{ include "cell.registryHost" . | quote }}]
+      secretName: {{ .Release.Name }}-registry-tls
+  {{- end }}
+  rules:
+    - host: {{ include "cell.registryHost" . | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}-registry
+                port: { name: http }
+{{- end }}

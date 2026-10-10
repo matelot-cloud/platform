@@ -1,0 +1,18 @@
+Tenant cell "{{ .Values.tenant.slug }}" ({{ .Values.tenant.name }}) deployed to namespace {{ .Release.Namespace }}.
+
+  Web app:   {{ include "cell.scheme" . }}://{{ include "cell.apiHost" . }}/
+  API:       {{ include "cell.scheme" . }}://{{ include "cell.apiHost" . }}/api/v1   (docs: /api/docs)
+  Keycloak:  {{ include "cell.scheme" . }}://{{ include "cell.authHost" . }}   (admin: {{ .Values.keycloak.adminUser }})
+  Root org:  {{ .Values.tenant.slug }}  admins: {{ join ", " .Values.tenant.adminEmails }}
+
+Watch it come up:
+  kubectl -n {{ .Release.Namespace }} get pods -w
+
+First-time note: Keycloak takes a minute or two to start; API pods wait on migrations in an init container.
+{{ if .Values.backup.enabled }}
+Backups: CronJob {{ .Release.Name }}-backup ({{ .Values.backup.schedule }} UTC){{ if .Values.backup.pvc.enabled }}, kept {{ .Values.backup.retentionDays }} days on PVC {{ .Release.Name }}-backups{{ end }}{{ if .Values.backup.s3.enabled }}, copied to s3://{{ .Values.backup.s3.bucket }}/{{ .Values.backup.s3.prefix }}{{ end }}.
+  Run one now / download:  scripts/cell-backup.sh -r {{ .Release.Name }} -n {{ .Release.Namespace }} -d ./backups
+  Restore:                 scripts/cell-restore.sh -r {{ .Release.Name }} -n {{ .Release.Namespace }} ARCHIVE     (docs/backup-restore.md)
+{{ else }}
+Backups are off (backup.enabled=false): see docs/backup-restore.md before this cell holds real data.
+{{ end }}

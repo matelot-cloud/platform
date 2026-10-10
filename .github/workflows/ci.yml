@@ -1,0 +1,67 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_USER: platform, POSTGRES_PASSWORD: platform, POSTGRES_DB: platform }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U platform" --health-interval 5s --health-timeout 3s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @secops/api typecheck
+      - run: pnpm --filter @secops/api test
+      - run: pnpm --filter @secops/api build
+      - name: Migrations apply on a fresh database
+        run: node apps/api/dist/migrate.js
+        env: { DATABASE_URL: "postgresql://platform:platform@localhost:5432/platform" }
+      - name: Schema and migrations are in sync
+        run: pnpm --filter @secops/api db:generate && git diff --exit-code apps/api/drizzle
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: node tools/docs-site/build.mjs --check
+      - run: pnpm --filter @secops/web build
+      - run: pnpm --filter @secops/runner build
+      - run: pnpm --filter secops-platform-cli build && pnpm --filter secops-platform-cli test
+      - run: pnpm --filter @secops/web test
+
+  chart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - run: python3 -c 'import yaml' 2>/dev/null || pip install pyyaml
+      - run: bash scripts/chart-test.sh
+      - name: Operator scripts parse
+        run: for f in scripts/*.sh scripts/lib/*.sh deploy/helm/secops-cell/files/*.sh; do bash -n "$f"; done
+      - run: python3 scripts/lib/cellwait_test.py
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with: { context: ., file: apps/api/Dockerfile, push: false, tags: secops-api:ci }
+      - uses: docker/build-push-action@v6
+        with: { context: ., file: apps/web/Dockerfile, push: false, tags: secops-web:ci }
+      - uses: docker/build-push-action@v6
+        with: { context: ., file: apps/runner/Dockerfile, push: false, tags: secops-runner:ci }

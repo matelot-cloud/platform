@@ -1,0 +1,17 @@
+{
+  "name": "secops-platform",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm --filter @secops/api dev",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "db:generate": "pnpm --filter @secops/api db:generate",
+    "db:migrate": "pnpm --filter @secops/api db:migrate"
+  }
+}

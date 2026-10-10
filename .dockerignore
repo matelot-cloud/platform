@@ -1,0 +1,10 @@
+# build caches and test output only; never a source folder (apps/web/src/pages/coverage is code)
+**/node_modules
+**/dist
+apps/*/coverage
+.git
+.env
+deploy
+docs/roadmap
+docs/concept.md
+scripts

@@ -1,0 +1,70 @@
+{
+  "realm": "platform",
+  "displayName": "Product Security Platform (dev)",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "bruteForceProtected": true,
+  "accessTokenLifespan": 900,
+  "clients": [
+    {
+      "clientId": "platform-api",
+      "name": "Platform API",
+      "description": "Resource server: the API validates tokens carrying this audience.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "bearerOnly": true,
+      "publicClient": false
+    },
+    {
+      "clientId": "platform-web",
+      "name": "Platform Web",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "redirectUris": ["http://localhost:5173/*", "http://localhost:3000/*"],
+      "webOrigins": ["+"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "+"
+      },
+      "protocolMappers": [
+        {
+          "name": "platform-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "platform-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "admin",
+      "email": "admin@acme.local",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Cell",
+      "lastName": "Admin",
+      "credentials": [{ "type": "password", "value": "admin", "temporary": false }]
+    },
+    {
+      "username": "dev",
+      "email": "dev@acme.local",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Dana",
+      "lastName": "Developer",
+      "credentials": [{ "type": "password", "value": "dev", "temporary": false }]
+    }
+  ]
+}

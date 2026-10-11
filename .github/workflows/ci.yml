@@ -80,4 +80,4 @@ jobs:
       - uses: docker/build-push-action@v6
         with: { context: ., file: apps/web/Dockerfile, push: false, tags: secops-web:ci }
       - uses: docker/build-push-action@v6
-        with: { context: ., file: apps/runner/Dockerfile, push: false, tags: secops-runner:ci }
+        with: { context: apps/runner, file: apps/runner/Dockerfile, push: false, tags: secops-runner:ci }

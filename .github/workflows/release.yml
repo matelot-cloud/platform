@@ -50,10 +50,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: api,    file: apps/api/Dockerfile,    target: runtime }
-          - { name: worker, file: apps/api/Dockerfile,    target: worker }
-          - { name: web,    file: apps/web/Dockerfile,    target: "" }
-          - { name: runner, file: apps/runner/Dockerfile, target: "" }
+          - { name: api,    file: apps/api/Dockerfile,    target: runtime, context: . }
+          - { name: worker, file: apps/api/Dockerfile,    target: worker, context: . }
+          - { name: web,    file: apps/web/Dockerfile,    target: "", context: . }
+          - { name: runner, file: apps/runner/Dockerfile, target: "", context: apps/runner }
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
@@ -78,7 +78,7 @@ jobs:
       - id: build
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ${{ matrix.context }}
           file: ${{ matrix.file }}
           target: ${{ matrix.target }}
           platforms: linux/amd64,linux/arm64

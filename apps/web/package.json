@@ -6,11 +6,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "docs": "node ../../tools/docs-site/build.mjs",
-    "build": "node ../../tools/docs-site/build.mjs && tsc -b && vite build",
+    "build": "tsc -b && vite build",
     "typecheck": "tsc -b",
     "preview": "vite preview",
-    "test": "node test/render.mjs && node test/oauth-consent-flow.mjs && node test/keyless-verify.mjs && node test/onboarding-card.mjs && node ../../tools/docs-site/test.mjs"
+    "test": "node test/render.mjs && node test/oauth-consent-flow.mjs && node test/keyless-verify.mjs && node test/onboarding-card.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.59.0",

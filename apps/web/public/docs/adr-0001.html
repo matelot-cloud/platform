@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ADR 1: tenancy and stack · Documentation</title>
+<link rel="icon" href="logo.png">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="index.html"><img src="logo.png" alt=""><span id="product">Security Platform</span> <span class="dim">docs</span></a>
+  <div class="search"><input id="q" type="search" placeholder="Search the docs…" autocomplete="off" aria-label="Search"><div id="results" class="results" hidden></div></div>
+  <a class="app" href="/">Open the app →</a>
+</header>
+<div class="page">
+  <button class="nav-toggle" aria-expanded="false" aria-controls="side">Contents</button>
+  <nav class="side" id="side"><ul><li class="section"><span>Start here</span><ul><li><a href="index.html">Documentation</a></li><li><a href="product.html">What the platform does</a></li><li><a href="roles.html">Roles and permissions</a></li><li><a href="coverage.html">Service coverage</a></li></ul></li><li class="section"><span>CLI and automation</span><ul><li><a href="cli.html">CLI guide</a></li><li><a href="cli-reference.html">Command reference</a></li><li><a href="ci-integration.html">CI/CD integration</a></li><li><a href="access-tokens.html">Access tokens</a></li><li><a href="mcp.html">MCP server (AI assistants)</a></li></ul></li><li class="section"><span>Connections and registries</span><ul><li><a href="github-app.html">GitHub App</a></li><li><a href="keyless-registries.html">Keyless registry access</a></li><li><a href="release-process.html">Builds, releases, deployments</a></li></ul></li><li class="section"><span>Runners</span><ul><li><a href="managed-runners.html">Managed runners</a></li><li><a href="runner-protocol.html">Runner protocol</a></li></ul></li><li class="section"><span>Operating a cell</span><ul><li><a href="cell-provisioning.html">Provisioning a cell</a></li><li><a href="backup-restore.html">Backup and restore</a></li><li><a href="usage-and-limits.html">Usage and rate limits</a></li><li><a href="endpoints.html">Endpoints of a cell</a></li></ul></li><li class="section"><span>Reference</span><ul><li><a href="parity-matrix.html">UI / API / CLI / MCP parity</a></li><li class="current"><a href="adr-0001.html">ADR 1: tenancy and stack</a></li><li><a href="adr-0002.html">ADR 2: web app</a></li><li><a href="adr-0003.html">ADR 3: two-level RBAC</a></li></ul></li></ul></nav>
+  <main class="content">
+    <div class="crumbs">Reference</div>
+    <article><h1 id="adr-0001-tenancy-model-and-core-stack"><a class="anchor" href="#adr-0001-tenancy-model-and-core-stack">ADR 0001 — Tenancy model and core stack</a></h1>
+<p><strong>Status:</strong> accepted · <strong>Date:</strong> 2026-09-18</p>
+<h2 id="context"><a class="anchor" href="#context">Context</a></h2>
+<p>The product is a B2B security/compliance platform for enterprise clients who expect strong
+isolation, SSO/SAML integration and, frequently, their own compliance evidence about how their
+data is separated. We also need multiple organizations inside one client (parent company with
+subsidiaries, MSSP serving several customers) and an agentic AI layer whose actions must be
+attributable and permission-scoped.</p>
+<h2 id="decisions"><a class="anchor" href="#decisions">Decisions</a></h2>
+<h3 id="1-one-dedicated-cell-per-client-operated-by-us"><a class="anchor" href="#1-one-dedicated-cell-per-client-operated-by-us">1. One dedicated cell per client, operated by us</a></h3>
+<p>Each client gets its own Kubernetes namespace (<code>tenant-&lt;slug&gt;</code>) holding the API, workers, Postgres,
+Redis and Keycloak, deployed as one Helm release of <code>deploy/helm/secops-cell</code>. A control plane
+(later) provisions cells and rolls versions across them.</p>
+<p><em>Why:</em> physical isolation is easy to explain and audit; noisy-neighbour and blast-radius problems
+disappear; per-client versions and maintenance windows become possible; the Helm chart doubles as
+the on-prem/regulated-deployment story.
+<em>Cost:</em> fleet operations (upgrades, monitoring, cost per idle client). Accepted; it is the control
+plane&#39;s job.</p>
+<h3 id="2-keep-organization-scoping-inside-the-cell"><a class="anchor" href="#2-keep-organization-scoping-inside-the-cell">2. Keep organization scoping inside the cell</a></h3>
+<p>Organizations remain a first-class entity with a parent/child hierarchy, even though a cell serves
+one client. Parent-org roles apply inside child orgs.</p>
+<p><em>Why:</em> subsidiaries and MSSP customers are per-client requirements, not cross-client ones.</p>
+<h3 id="3-keycloak-per-cell-owns-authentication-the-platform-owns-authorization"><a class="anchor" href="#3-keycloak-per-cell-owns-authentication-the-platform-owns-authorization">3. Keycloak per cell owns authentication; the platform owns authorization</a></h3>
+<p>Keycloak (realm <code>platform</code>) issues RS256 tokens; the API validates them against the realm JWKS and
+provisions users just-in-time. Roles are <strong>not</strong> Keycloak roles: they are platform memberships
+(<code>user × role × scope</code>) because the permission model is hierarchical and resource-scoped.</p>
+<p><em>Why:</em> SSO/SAML/OIDC brokering, MFA and session management are solved problems in Keycloak;
+authorization must understand the platform&#39;s hierarchy, which Keycloak does not.</p>
+<h3 id="4-typescript-nestjs"><a class="anchor" href="#4-typescript-nestjs">4. TypeScript / NestJS</a></h3>
+<p>Chosen by the team. Modules map 1:1 to the product&#39;s domains; DI makes the RBAC guard and audit
+service pervasive without boilerplate.</p>
+<h3 id="5-drizzle-orm-with-generated-sql-migrations"><a class="anchor" href="#5-drizzle-orm-with-generated-sql-migrations">5. Drizzle ORM with generated SQL migrations</a></h3>
+<p><em>Why over Prisma:</em> no native query engine to ship (smaller images, faster cold start in cells),
+migrations are plain SQL under review, and the query builder stays close to SQL for the
+graph-style queries the security graph and risk engine will need. Migrations are applied by the
+API pod&#39;s init container, so an image rollout carries its schema.</p>
+<h3 id="6-audit-trail-is-a-domain-concern-not-middleware"><a class="anchor" href="#6-audit-trail-is-a-domain-concern-not-middleware">6. Audit trail is a domain concern, not middleware</a></h3>
+<p>Services write explicit audit events with before/after state and reason. The request id from
+<code>x-request-id</code> is stored with each event so logs and audit rows correlate.</p>
+<h2 id="consequences"><a class="anchor" href="#consequences">Consequences</a></h2>
+<ul>
+<li>Every new domain follows the same template: schema in <code>schema.ts</code>, permissions declared in
+<code>permissions.ts</code>, controller routes with <code>@RequirePermission</code>, service methods that audit.</li>
+<li>The agent layer (step 7) will act <em>through</em> the same API with a service identity whose
+memberships bound what it may touch; <code>actor_type = AI_AGENT</code> is already in the schema.</li>
+</ul>
+</article>
+    <footer>Version 0.1.0 · generated from <code>docs/adr/0001-tenancy-and-stack.md</code></footer>
+  </main>
+  <nav class="toc"><div class="toc-title">On this page</div><ul><li class="d2"><a href="#context">Context</a></li><li class="d2"><a href="#decisions">Decisions</a></li><li class="d3"><a href="#1-one-dedicated-cell-per-client-operated-by-us">1. One dedicated cell per client, operated by us</a></li><li class="d3"><a href="#2-keep-organization-scoping-inside-the-cell">2. Keep organization scoping inside the cell</a></li><li class="d3"><a href="#3-keycloak-per-cell-owns-authentication-the-platform-owns-authorization">3. Keycloak per cell owns authentication; the platform owns authorization</a></li><li class="d3"><a href="#4-typescript-nestjs">4. TypeScript / NestJS</a></li><li class="d3"><a href="#5-drizzle-orm-with-generated-sql-migrations">5. Drizzle ORM with generated SQL migrations</a></li><li class="d3"><a href="#6-audit-trail-is-a-domain-concern-not-middleware">6. Audit trail is a domain concern, not middleware</a></li><li class="d2"><a href="#consequences">Consequences</a></li></ul></nav>
+</div>
+<script src="site.js" defer></script>
+</body>
+</html>

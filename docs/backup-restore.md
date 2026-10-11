@@ -5,7 +5,14 @@ database** (users, realm, sessions) and a handful of **Kubernetes Secrets**, one
 the only way to read the stored connection credentials (GitHub tokens, registry passwords, Jira tokens, SMTP…). A
 backup without the key restores a cell whose connections all say "cannot decrypt".
 
-The chart ships a scheduled backup that captures all three into one archive, and the repository ships the restore.
+The chart ships a scheduled backup that captures all three into one archive; two operator scripts run a backup on
+demand, download archives and restore them.
+
+**Where the scripts are.** `scripts/cell-backup.sh` and `scripts/cell-restore.sh` are in the `scripts/` folder of
+[matelot-io/helm-charts](https://github.com/matelot-io/helm-charts) (next to the chart; they only need `kubectl`,
+`helm`, `bash` and `python3`). The `make backup TENANT=acme` / `make restore …` shorthands used on this page are the
+platform repository's Makefile and expand to `scripts/cell-backup.sh -r acme -n tenant-acme -d ./backups` and
+`scripts/cell-restore.sh -r acme -n tenant-acme ARCHIVE`; `make deploy` stands for `helm upgrade --install`.
 
 ## What is in an archive
 
@@ -52,8 +59,8 @@ backup:
 `make deploy` (or `helm upgrade`) creates the CronJob `<release>-backup`, the PVC `<release>-backups` (kept on
 uninstall) and the script ConfigMap. On a StorageClass with `volumeBindingMode: WaitForFirstConsumer` (kind, EKS gp3,
 GKE, AKS defaults) that PVC stays **Pending until the first backup runs** — normal, but it means `helm … --wait` on
-this chart waits for it: use `scripts/cell-provision.sh apply` (which waits on the workloads and runs the first
-backup) or run `make backup` right after a plain install. The job runs `pg_dump` with the chart's own Postgres image, so client and server
+this chart waits for it: do not pass `--wait`; when the pods are Running, run the first backup
+(`kubectl -n <ns> create job <release>-backup-first --from=cronjob/<release>-backup`, or `scripts/cell-backup.sh`). The job runs `pg_dump` with the chart's own Postgres image, so client and server
 versions match. With S3, the dump is an init container and the upload the main container, so an upload never starts
 before the dump has finished. Retention on S3 is the bucket's lifecycle rule; the chart does not delete from buckets.
 

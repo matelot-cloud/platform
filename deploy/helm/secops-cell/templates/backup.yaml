@@ -6,7 +6,7 @@
 {{- fail "backup.s3.bucket is required when backup.s3.enabled" }}
 {{- end }}
 # Scheduled cell backup: databases (pg_dump) + the cell's Secrets, one archive per run, kept on a PVC and/or copied to S3.
-# Restore: scripts/cell-restore.sh (docs/backup-restore.md).
+# Restore: scripts/cell-restore.sh from https://github.com/matelot-io/helm-charts (docs: backup-restore).
 apiVersion: v1
 kind: ConfigMap
 metadata:

@@ -6,9 +6,10 @@
 
 Matelot (repository: `secops-platform`)
 
-Product Security, DevSecOps & Compliance platform — delivered as **one dedicated cell per client**,
-running in Kubernetes and operated by us. This repository is the product: the API, the workers
-(later), and the Helm chart that turns a set of tenant values into a running cell.
+Product Security, DevSecOps & Compliance platform — delivered as **one dedicated cell per organization**,
+self-hosted in the customer's Kubernetes cluster from one Helm chart (closed source; the customer gets the images and
+the chart). This repository is the product: the API, the worker, the web app, the CLI, the runner agent, and the
+Helm chart that turns a set of tenant values into a running cell.
 
 > Status: **Step 1 — foundation.** Core domain (Organization → Workspace → Team → Project),
 > Keycloak authentication, hierarchical RBAC, audit trail, health checks, migrations, container
@@ -112,6 +113,32 @@ make deploy TENANT=globex TENANT_NAME="Globex Corporation"
 
 See `deploy/helm/secops-cell/values.yaml` for every knob and `values-production.example.yaml`
 for a cell with external Postgres/Redis and TLS.
+
+## Releases, public repositories and the website
+
+Matelot is closed source and self-hosted: customers get the images and the chart, nothing else leaves this
+repository. The GitHub organization `matelot-io` has this private monorepo (`platform`) and four public repositories:
+
+| Repository | What | Updated by |
+| --- | --- | --- |
+| `matelot-io/matelot` | issues, discussions, releases, EULA, security policy, changelog summary | people; releases by the pipeline |
+| `matelot-io/helm-charts` | `charts/secops-cell` + backup/restore scripts (copies of `deploy/helm/secops-cell`, `scripts/cell-*.sh`) | the release pipeline |
+| `matelot-io/website` | landing page (its own `content.json`) + generated docs (`docs/latest`, `docs/vX.Y`), GitHub Pages | docs by the pipeline, landing by people |
+| `matelot-io/.github` | organization profile and default community files | people |
+
+Images: `ghcr.io/matelot-io/{api,web,worker,runner}`; chart: `oci://ghcr.io/matelot-io/charts/secops-cell`.
+
+* **A tag `vX.Y.Z` releases everything** (`.github/workflows/release.yml`): multi-arch images signed with cosign and
+  carrying syft SBOM attestations, the chart as OCI, the chart folder and scripts synced to `helm-charts`, the docs
+  rendered into `website` (`docs/vX.Y/` + `latest`), and a GitHub Release in `matelot` with the `CHANGELOG.md`
+  section and the digests. Every push to `main` syncs `docs/latest` (`docs-sync.yml`). Cross-repository pushes use
+  the organization secret `PUBLIC_REPOS_TOKEN`; the whole procedure, the one-time setup and the token rotation are in
+  **docs/release-process.md** (internal, not published).
+* **Documentation** is `docs/*.md` rendered by `tools/docs-site/build.mjs` (page list: its `SITE` table; the install
+  guide for customers is `docs/install.md`). `make docs-check` renders and link-checks it (CI); `make docs-sync
+  WEBSITE_DIR=../website` renders into a local clone of the website to preview the whole site.
+* Inside a cell, the sidebar's "Documentation" opens the public site; `web.docsUrl` in the chart (or `docsUrl` in
+  `config.json`) points an air-gapped cell at a mirror.
 
 ## The web app
 

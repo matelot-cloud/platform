@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Access tokens · Documentation</title>
+<link rel="icon" href="logo.png">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="index.html"><img src="logo.png" alt=""><span id="product">Security Platform</span> <span class="dim">docs</span></a>
+  <div class="search"><input id="q" type="search" placeholder="Search the docs…" autocomplete="off" aria-label="Search"><div id="results" class="results" hidden></div></div>
+  <a class="app" href="/">Open the app →</a>
+</header>
+<div class="page">
+  <button class="nav-toggle" aria-expanded="false" aria-controls="side">Contents</button>
+  <nav class="side" id="side"><ul><li class="section"><span>Start here</span><ul><li><a href="index.html">Documentation</a></li><li><a href="product.html">What the platform does</a></li><li><a href="roles.html">Roles and permissions</a></li><li><a href="coverage.html">Service coverage</a></li></ul></li><li class="section"><span>CLI and automation</span><ul><li><a href="cli.html">CLI guide</a></li><li><a href="cli-reference.html">Command reference</a></li><li><a href="ci-integration.html">CI/CD integration</a></li><li class="current"><a href="access-tokens.html">Access tokens</a></li><li><a href="mcp.html">MCP server (AI assistants)</a></li></ul></li><li class="section"><span>Connections and registries</span><ul><li><a href="github-app.html">GitHub App</a></li><li><a href="keyless-registries.html">Keyless registry access</a></li><li><a href="release-process.html">Builds, releases, deployments</a></li></ul></li><li class="section"><span>Runners</span><ul><li><a href="managed-runners.html">Managed runners</a></li><li><a href="runner-protocol.html">Runner protocol</a></li></ul></li><li class="section"><span>Operating a cell</span><ul><li><a href="cell-provisioning.html">Provisioning a cell</a></li><li><a href="backup-restore.html">Backup and restore</a></li><li><a href="usage-and-limits.html">Usage and rate limits</a></li><li><a href="endpoints.html">Endpoints of a cell</a></li></ul></li><li class="section"><span>Reference</span><ul><li><a href="parity-matrix.html">UI / API / CLI / MCP parity</a></li><li><a href="adr-0001.html">ADR 1: tenancy and stack</a></li><li><a href="adr-0002.html">ADR 2: web app</a></li><li><a href="adr-0003.html">ADR 3: two-level RBAC</a></li></ul></li></ul></nav>
+  <main class="content">
+    <div class="crumbs">CLI and automation</div>
+    <article><h1 id="access-tokens"><a class="anchor" href="#access-tokens">Access tokens</a></h1>
+<table>
+<thead>
+<tr>
+<th>Token</th>
+<th>For</th>
+<th>Acts as</th>
+<th>Reach</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>CI token</strong> (project → Settings → CI tokens)</td>
+<td>pipelines</td>
+<td>the token itself</td>
+<td>its scope (project/team/…), its preset, its <em>May deploy to</em> list</td>
+</tr>
+<tr>
+<td><strong>Personal access token</strong> (user menu → Access tokens)</td>
+<td>people: scripts, the API, <code>secops</code> on a laptop</td>
+<td>the user</td>
+<td>see scopes below</td>
+</tr>
+</tbody></table>
+<h2 id="personal-token-scopes"><a class="anchor" href="#personal-token-scopes">Personal token scopes</a></h2>
+<ul>
+<li><strong>read</strong> — <code>GET</code>/<code>HEAD</code> only, within the user&#39;s memberships.</li>
+<li><strong>write</strong> — the full API as the user, within the user&#39;s <strong>workspace / team / project memberships</strong>.
+Organization-admin and security-admin roles and the platform admin flag are <strong>not</strong> carried.</li>
+<li><strong>sudo</strong> — administrators only: the user&#39;s full rights, including organization / platform administration.</li>
+</ul>
+<p>A normal user&#39;s token therefore reaches exactly the projects they are assigned to. An admin&#39;s everyday
+token behaves like a member token; admin power is opt-in per (short-lived) sudo token.</p>
+<h2 id="security-properties"><a class="anchor" href="#security-properties">Security properties</a></h2>
+<ul>
+<li><code>spt_</code> + 240 random bits; only the SHA-256 is stored; shown once.</li>
+<li>Expiry 1–365 days; revocable; last use (time, IP) tracked.</li>
+<li>A personal token cannot create or revoke tokens (sign in to the web app); CI tokens neither.</li>
+<li>Created / revoked events are audited in every organization the user belongs to.</li>
+<li>Everything done with a token is audited as the user.</li>
+</ul>
+<h2 id="use"><a class="anchor" href="#use">Use</a></h2>
+<pre><code class="language-bash">curl -H &quot;Authorization: Bearer spt_…&quot; https://&lt;cell&gt;/api/v1/me
+export SECOPS_URL=https://&lt;cell&gt; SECOPS_TOKEN=spt_…   # matelot CLI as yourself
+matelot whoami
+</code></pre>
+<p>The built-in registry <code>docker login</code> still uses a CI token (<code>matelot registry login</code> with SECOPS_KEY_ID/SECRET).</p>
+<h2 id="api-collection-and-checks"><a class="anchor" href="#api-collection-and-checks">API collection and checks</a></h2>
+<p><code>tools/api/</code>: <code>secops-api-check.mjs</code> (calls every GET endpoint with your token and reports PASS / DENIED / FAIL),
+<code>secops.postman_collection.json</code> and <code>secops.http</code> (every operation), <code>README.md</code> (everyday curl calls).</p>
+</article>
+    <footer>Version 0.1.0 · generated from <code>docs/access-tokens.md</code></footer>
+  </main>
+  <nav class="toc"><div class="toc-title">On this page</div><ul><li class="d2"><a href="#personal-token-scopes">Personal token scopes</a></li><li class="d2"><a href="#security-properties">Security properties</a></li><li class="d2"><a href="#use">Use</a></li><li class="d2"><a href="#api-collection-and-checks">API collection and checks</a></li></ul></nav>
+</div>
+<script src="site.js" defer></script>
+</body>
+</html>

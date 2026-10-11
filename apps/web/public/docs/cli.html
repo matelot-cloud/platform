@@ -1,0 +1,1194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CLI guide · Documentation</title>
+<link rel="icon" href="logo.png">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="index.html"><img src="logo.png" alt=""><span id="product">Security Platform</span> <span class="dim">docs</span></a>
+  <div class="search"><input id="q" type="search" placeholder="Search the docs…" autocomplete="off" aria-label="Search"><div id="results" class="results" hidden></div></div>
+  <a class="app" href="/">Open the app →</a>
+</header>
+<div class="page">
+  <button class="nav-toggle" aria-expanded="false" aria-controls="side">Contents</button>
+  <nav class="side" id="side"><ul><li class="section"><span>Start here</span><ul><li><a href="index.html">Documentation</a></li><li><a href="product.html">What the platform does</a></li><li><a href="roles.html">Roles and permissions</a></li><li><a href="coverage.html">Service coverage</a></li></ul></li><li class="section"><span>CLI and automation</span><ul><li class="current"><a href="cli.html">CLI guide</a></li><li><a href="cli-reference.html">Command reference</a></li><li><a href="ci-integration.html">CI/CD integration</a></li><li><a href="access-tokens.html">Access tokens</a></li><li><a href="mcp.html">MCP server (AI assistants)</a></li></ul></li><li class="section"><span>Connections and registries</span><ul><li><a href="github-app.html">GitHub App</a></li><li><a href="keyless-registries.html">Keyless registry access</a></li><li><a href="release-process.html">Builds, releases, deployments</a></li></ul></li><li class="section"><span>Runners</span><ul><li><a href="managed-runners.html">Managed runners</a></li><li><a href="runner-protocol.html">Runner protocol</a></li></ul></li><li class="section"><span>Operating a cell</span><ul><li><a href="cell-provisioning.html">Provisioning a cell</a></li><li><a href="backup-restore.html">Backup and restore</a></li><li><a href="usage-and-limits.html">Usage and rate limits</a></li><li><a href="endpoints.html">Endpoints of a cell</a></li></ul></li><li class="section"><span>Reference</span><ul><li><a href="parity-matrix.html">UI / API / CLI / MCP parity</a></li><li><a href="adr-0001.html">ADR 1: tenancy and stack</a></li><li><a href="adr-0002.html">ADR 2: web app</a></li><li><a href="adr-0003.html">ADR 3: two-level RBAC</a></li></ul></li></ul></nav>
+  <main class="content">
+    <div class="crumbs">CLI and automation</div>
+    <article><h1 id="cli-reference-secops"><a class="anchor" href="#cli-reference-secops">CLI reference — <code>secops</code></a></h1>
+<p>Environment: <code>SECOPS_URL</code> plus either <code>SECOPS_TOKEN</code> (personal access token, acts as you) or <code>SECOPS_KEY_ID</code> + <code>SECOPS_SECRET</code> (CI token). <code>--json</code> prints the raw response; otherwise lists print as tables.
+Path flags: <code>--org</code>, <code>--project</code>, <code>--service</code>, <code>--env</code>, <code>--id</code> (or a positional id), <code>--from/--to</code>. <code>--org</code> is auto-detected when you belong to one organization (or set <code>SECOPS_ORG</code>).</p>
+<h2 id="delivery-commands"><a class="anchor" href="#delivery-commands">Delivery commands</a></h2>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot whoami</code></td>
+<td>identity and permissions of the token</td>
+</tr>
+<tr>
+<td><code>matelot pipeline --service ID [--template security] [--ref SHA] [--wait --timeout S]</code></td>
+<td>run the security pipeline; non-zero exit when it fails</td>
+</tr>
+<tr>
+<td><code>matelot deploy --env ID [--version V] [--image REF@DIGEST] [--commit SHA]</code></td>
+<td>record a deployment; a new version becomes a release; rejected by policies with <em>reject deployments</em></td>
+</tr>
+<tr>
+<td><code>matelot promote --env ID --tag TAG</code></td>
+<td>copy a build image into the environment repository (= deploy); recorded immediately</td>
+</tr>
+<tr>
+<td><code>matelot gate --env ID --image REF | --version V | --ref SHA</code></td>
+<td>evaluate the environment&#39;s policies; exit 2 when a blocking policy fails</td>
+</tr>
+<tr>
+<td><code>matelot release --service ID --version V [--notes T]</code></td>
+<td>record a release</td>
+</tr>
+<tr>
+<td><code>matelot sbom --service ID --file bom.json --target source|image [--version V] [--image REF]</code></td>
+<td>upload an SBOM</td>
+</tr>
+<tr>
+<td><code>matelot registry login [--connection NAME --service ID]</code></td>
+<td>docker login to the built-in registry or an ECR/ACR/Docker Hub connection</td>
+</tr>
+<tr>
+<td><code>matelot registry path --service ID [--env ID] [--connection NAME --repository NAME [--create]]</code></td>
+<td>image path in the built-in or an external registry</td>
+</tr>
+<tr>
+<td><code>matelot registry connections --service ID</code></td>
+<td>registry connections a service can use</td>
+</tr>
+<tr>
+<td><code>matelot request METHOD /api/v1/path [json]</code></td>
+<td>any endpoint</td>
+</tr>
+</tbody></table>
+<h2 id="resource-commands"><a class="anchor" href="#resource-commands">Resource commands</a></h2>
+<p>Form: <code>matelot &lt;resource&gt; &lt;verb&gt; [flags]</code>.</p>
+<h3 id="me"><a class="anchor" href="#me">me</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot me show</code></td>
+<td><code>GET /me</code></td>
+<td>Who am I (user + memberships)</td>
+</tr>
+</tbody></table>
+<h3 id="orgs"><a class="anchor" href="#orgs">orgs</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot orgs list</code></td>
+<td><code>GET /organizations</code></td>
+<td>Organizations I belong to</td>
+</tr>
+</tbody></table>
+<h3 id="org"><a class="anchor" href="#org">org</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot org overview</code></td>
+<td><code>GET /organizations/:org/overview</code></td>
+<td>Organization overview (counts, production, risk)</td>
+</tr>
+</tbody></table>
+<h3 id="workspaces"><a class="anchor" href="#workspaces">workspaces</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot workspaces list</code></td>
+<td><code>GET /organizations/:org/workspaces</code></td>
+<td>Workspaces</td>
+</tr>
+</tbody></table>
+<h3 id="teams"><a class="anchor" href="#teams">teams</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot teams list</code></td>
+<td><code>GET /organizations/:org/teams</code></td>
+<td>Teams</td>
+</tr>
+</tbody></table>
+<h3 id="projects"><a class="anchor" href="#projects">projects</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot projects list</code></td>
+<td><code>GET /organizations/:org/projects</code></td>
+<td>Projects</td>
+</tr>
+</tbody></table>
+<h3 id="project"><a class="anchor" href="#project">project</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot project show</code></td>
+<td><code>GET /projects/:project</code></td>
+<td>Project details</td>
+</tr>
+<tr>
+<td><code>matelot project overview</code></td>
+<td><code>GET /projects/:project/overview</code></td>
+<td>Project overview</td>
+</tr>
+</tbody></table>
+<h3 id="services"><a class="anchor" href="#services">services</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot services list</code></td>
+<td><code>GET /projects/:project/services</code></td>
+<td>Services of a project</td>
+</tr>
+<tr>
+<td><code>matelot services list-org</code></td>
+<td><code>GET /organizations/:org/services</code></td>
+<td>Services of the organization</td>
+</tr>
+</tbody></table>
+<h3 id="service"><a class="anchor" href="#service">service</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot service show</code></td>
+<td><code>GET /services/:service</code></td>
+<td>Service details</td>
+</tr>
+</tbody></table>
+<h3 id="envs"><a class="anchor" href="#envs">envs</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot envs list</code></td>
+<td><code>GET /services/:service/environments</code></td>
+<td>Environments of a service</td>
+</tr>
+</tbody></table>
+<h3 id="env"><a class="anchor" href="#env">env</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot env show</code></td>
+<td><code>GET /environments/:env</code></td>
+<td>Environment details</td>
+</tr>
+<tr>
+<td><code>matelot env registry</code></td>
+<td><code>GET /environments/:env/registry</code></td>
+<td>Environment repository in the built-in registry</td>
+</tr>
+<tr>
+<td><code>matelot env lineage</code></td>
+<td><code>GET /environments/:env/lineage</code></td>
+<td>Released vs running lanes, drift, history</td>
+</tr>
+<tr>
+<td><code>matelot env gate</code></td>
+<td><code>GET /environments/:env/gate</code></td>
+<td>Latest gate evaluation of the environment</td>
+</tr>
+</tbody></table>
+<h3 id="releases"><a class="anchor" href="#releases">releases</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot releases list</code></td>
+<td><code>GET /services/:service/releases</code></td>
+<td>Releases of a service</td>
+</tr>
+</tbody></table>
+<h3 id="release"><a class="anchor" href="#release">release</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot release create</code></td>
+<td><code>POST /services/:service/releases</code></td>
+<td>Record a release</td>
+</tr>
+</tbody></table>
+<h3 id="images"><a class="anchor" href="#images">images</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot images list</code></td>
+<td><code>GET /services/:service/images</code></td>
+<td>Container images (registries) of a service</td>
+</tr>
+</tbody></table>
+<h3 id="image"><a class="anchor" href="#image">image</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot image add</code></td>
+<td><code>POST /services/:service/images</code></td>
+<td>Register an image (name, optional integrationId)</td>
+</tr>
+<tr>
+<td><code>matelot image sync</code></td>
+<td><code>POST /images/:id/sync</code></td>
+<td>Read the registry now (tags, digests)</td>
+</tr>
+</tbody></table>
+<h3 id="inventory"><a class="anchor" href="#inventory">inventory</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot inventory show</code></td>
+<td><code>GET /services/:service/inventory</code></td>
+<td>Releases, images and environments joined</td>
+</tr>
+</tbody></table>
+<h3 id="deployments"><a class="anchor" href="#deployments">deployments</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot deployments list</code></td>
+<td><code>GET /services/:service/deployments</code></td>
+<td>Current deployment per environment + history</td>
+</tr>
+<tr>
+<td><code>matelot deployments list-org</code></td>
+<td><code>GET /organizations/:org/deployments</code></td>
+<td>Current production deployments of the organization</td>
+</tr>
+</tbody></table>
+<h3 id="sboms"><a class="anchor" href="#sboms">sboms</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot sboms list</code></td>
+<td><code>GET /services/:service/sboms</code></td>
+<td>SBOMs of a service</td>
+</tr>
+</tbody></table>
+<h3 id="sbom"><a class="anchor" href="#sbom">sbom</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot sbom show</code></td>
+<td><code>GET /sboms/:id</code></td>
+<td>SBOM with components</td>
+</tr>
+<tr>
+<td><code>matelot sbom findings</code></td>
+<td><code>GET /sboms/:id/findings</code></td>
+<td>Findings of one SBOM</td>
+</tr>
+<tr>
+<td><code>matelot sbom diff</code></td>
+<td><code>GET /sboms/:from/diff/:to</code></td>
+<td>Diff two SBOMs (--from, --to)</td>
+</tr>
+</tbody></table>
+<h3 id="components"><a class="anchor" href="#components">components</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot components search</code></td>
+<td><code>GET /organizations/:org/components</code></td>
+<td>Where a component is used (--q)</td>
+</tr>
+</tbody></table>
+<h3 id="findings"><a class="anchor" href="#findings">findings</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot findings list</code></td>
+<td><code>GET /projects/:project/findings</code></td>
+<td>Dependency findings (--severity --status --kev --q)</td>
+</tr>
+<tr>
+<td><code>matelot findings list-org</code></td>
+<td><code>GET /organizations/:org/findings</code></td>
+<td>Findings across the organization</td>
+</tr>
+<tr>
+<td><code>matelot findings summary</code></td>
+<td><code>GET /projects/:project/findings/summary</code></td>
+<td>Open / KEV / production counts</td>
+</tr>
+<tr>
+<td><code>matelot findings environments</code></td>
+<td><code>GET /projects/:project/findings/environments</code></td>
+<td>What runs in each environment, with counts</td>
+</tr>
+<tr>
+<td><code>matelot findings trend</code></td>
+<td><code>GET /projects/:project/findings/trend</code></td>
+<td>Daily trend per environment (--days)</td>
+</tr>
+</tbody></table>
+<h3 id="finding"><a class="anchor" href="#finding">finding</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot finding show</code></td>
+<td><code>GET /findings/:id</code></td>
+<td>One finding with where it runs</td>
+</tr>
+<tr>
+<td><code>matelot finding set</code></td>
+<td><code>PATCH /findings/:id</code></td>
+<td>Decision: --status open</td>
+</tr>
+</tbody></table>
+<h3 id="code-findings"><a class="anchor" href="#code-findings">code-findings</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot code-findings list</code></td>
+<td><code>GET /projects/:project/code-findings</code></td>
+<td>Secrets / IaC / SAST findings (--kind --severity --status)</td>
+</tr>
+<tr>
+<td><code>matelot code-findings summary</code></td>
+<td><code>GET /projects/:project/code-findings/summary</code></td>
+<td>Code findings counts</td>
+</tr>
+</tbody></table>
+<h3 id="code-finding"><a class="anchor" href="#code-finding">code-finding</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot code-finding set</code></td>
+<td><code>PATCH /code-findings/:id</code></td>
+<td>Decision on a code finding (--status --note)</td>
+</tr>
+</tbody></table>
+<h3 id="vulnerabilities"><a class="anchor" href="#vulnerabilities">vulnerabilities</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot vulnerabilities recorrelate [--service ID] [--wait] [--timeout 1800]</code></td>
+<td><code>POST …/findings/recorrelate</code> → job; <code>GET /organizations/:org/correlation/jobs/:id</code> (or <code>/services/:id/…</code>)</td>
+<td>Re-run advisory correlation (asynchronous; <code>--wait</code> polls until done)</td>
+</tr>
+</tbody></table>
+<h3 id="risk"><a class="anchor" href="#risk">risk</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot risk list</code></td>
+<td><code>GET /organizations/:org/risk</code></td>
+<td>Risk score per service</td>
+</tr>
+<tr>
+<td><code>matelot risk project</code></td>
+<td><code>GET /projects/:project/risk</code></td>
+<td>Risk of a project</td>
+</tr>
+<tr>
+<td><code>matelot risk recompute</code></td>
+<td><code>POST /organizations/:org/risk/recompute</code></td>
+<td>Recompute risk now</td>
+</tr>
+</tbody></table>
+<h3 id="graph"><a class="anchor" href="#graph">graph</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot graph show</code></td>
+<td><code>GET /projects/:project/graph</code></td>
+<td>Product map (nodes + edges)</td>
+</tr>
+</tbody></table>
+<h3 id="policies"><a class="anchor" href="#policies">policies</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot policies list</code></td>
+<td><code>GET /organizations/:org/policies</code></td>
+<td>Policies of the organization</td>
+</tr>
+<tr>
+<td><code>matelot policies in-force</code></td>
+<td><code>GET /projects/:project/policies</code></td>
+<td>Policies in force on a project (own + inherited)</td>
+</tr>
+</tbody></table>
+<h3 id="policy"><a class="anchor" href="#policy">policy</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot policy create</code></td>
+<td><code>POST /organizations/:org/policies</code></td>
+<td>Create at the organization (--name --environments prod,staging --max-severity high --block-kev --block-secrets --require-sbom --max-iac high --action block</td>
+</tr>
+<tr>
+<td><code>matelot policy create-project</code></td>
+<td><code>POST /projects/:project/policies</code></td>
+<td>Create at a project (same flags)</td>
+</tr>
+<tr>
+<td><code>matelot policy update</code></td>
+<td><code>PATCH /policies/:id</code></td>
+<td>Update (--enabled true</td>
+</tr>
+<tr>
+<td><code>matelot policy delete</code></td>
+<td><code>DELETE /policies/:id</code></td>
+<td>Delete a policy</td>
+</tr>
+</tbody></table>
+<h3 id="gate"><a class="anchor" href="#gate">gate</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot gate evaluations</code></td>
+<td><code>GET /services/:service/gate-evaluations</code></td>
+<td>Gate evaluations of a service</td>
+</tr>
+</tbody></table>
+<h3 id="pipelines"><a class="anchor" href="#pipelines">pipelines</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot pipelines list</code></td>
+<td><code>GET /projects/:project/pipelines</code></td>
+<td>Pipelines of a project</td>
+</tr>
+</tbody></table>
+<h3 id="pipeline"><a class="anchor" href="#pipeline">pipeline</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot pipeline show</code></td>
+<td><code>GET /pipelines/:id</code></td>
+<td>Pipeline with its jobs</td>
+</tr>
+<tr>
+<td><code>matelot pipeline templates</code></td>
+<td><code>GET /pipeline-templates</code></td>
+<td>Pipeline templates</td>
+</tr>
+</tbody></table>
+<h3 id="jobs"><a class="anchor" href="#jobs">jobs</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot jobs list</code></td>
+<td><code>GET /projects/:project/jobs</code></td>
+<td>Jobs of a project</td>
+</tr>
+<tr>
+<td><code>matelot jobs active</code></td>
+<td><code>GET /organizations/:org/jobs/active</code></td>
+<td>Queued / running jobs</td>
+</tr>
+</tbody></table>
+<h3 id="job"><a class="anchor" href="#job">job</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot job show</code></td>
+<td><code>GET /jobs/:id</code></td>
+<td>Job details</td>
+</tr>
+<tr>
+<td><code>matelot job logs</code></td>
+<td><code>GET /jobs/:id/logs</code></td>
+<td>Job log lines</td>
+</tr>
+<tr>
+<td><code>matelot job create</code></td>
+<td><code>POST /services/:service/jobs</code></td>
+<td>Queue a job (--type sbom</td>
+</tr>
+</tbody></table>
+<h3 id="runners"><a class="anchor" href="#runners">runners</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot runners list</code></td>
+<td><code>GET /organizations/:org/runner-pools</code></td>
+<td>Runner pools and runners</td>
+</tr>
+</tbody></table>
+<h3 id="runner"><a class="anchor" href="#runner">runner</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot runner agent</code></td>
+<td><code>GET /runner-agent</code></td>
+<td>Latest runner version + image</td>
+</tr>
+</tbody></table>
+<h3 id="integrations"><a class="anchor" href="#integrations">integrations</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot integrations list</code></td>
+<td><code>GET /organizations/:org/integrations</code></td>
+<td>Connections (git, registries, k8s)</td>
+</tr>
+<tr>
+<td><code>matelot integrations providers</code></td>
+<td><code>GET /integrations/providers</code></td>
+<td>Available providers</td>
+</tr>
+</tbody></table>
+<h3 id="repositories"><a class="anchor" href="#repositories">repositories</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot repositories list</code></td>
+<td><code>GET /organizations/:org/repositories</code></td>
+<td>Repositories</td>
+</tr>
+</tbody></table>
+<h3 id="registry"><a class="anchor" href="#registry">registry</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot registry info</code></td>
+<td><code>GET /registry/info</code></td>
+<td>Built-in registry info</td>
+</tr>
+<tr>
+<td><code>matelot registry reconcile</code></td>
+<td><code>POST /organizations/:org/registry/reconcile</code></td>
+<td>Read the built-in registry now</td>
+</tr>
+</tbody></table>
+<h3 id="registries"><a class="anchor" href="#registries">registries</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot registries list</code></td>
+<td><code>GET /services/:service/registries</code></td>
+<td>Registry connections usable by a service</td>
+</tr>
+</tbody></table>
+<h3 id="tokens"><a class="anchor" href="#tokens">tokens</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot tokens list</code></td>
+<td><code>GET /me/tokens</code></td>
+<td>My personal access tokens</td>
+</tr>
+</tbody></table>
+<h3 id="token"><a class="anchor" href="#token">token</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot token create</code></td>
+<td><code>POST /me/tokens</code></td>
+<td>New personal token (--name --scope read</td>
+</tr>
+<tr>
+<td><code>matelot token revoke</code></td>
+<td><code>DELETE /me/tokens/:id</code></td>
+<td>Revoke a personal token</td>
+</tr>
+</tbody></table>
+<h3 id="ci-tokens"><a class="anchor" href="#ci-tokens">ci-tokens</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot ci-tokens list</code></td>
+<td><code>GET /organizations/:org/api-tokens</code></td>
+<td>CI tokens</td>
+</tr>
+</tbody></table>
+<h3 id="ci-token"><a class="anchor" href="#ci-token">ci-token</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot ci-token create</code></td>
+<td><code>POST /organizations/:org/api-tokens</code></td>
+<td>Create a CI token (--name --scope-type PROJECT --scope-id ID --preset full</td>
+</tr>
+<tr>
+<td><code>matelot ci-token revoke</code></td>
+<td><code>DELETE /api-tokens/:id</code></td>
+<td>Revoke a CI token</td>
+</tr>
+</tbody></table>
+<h3 id="audit"><a class="anchor" href="#audit">audit</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot audit list</code></td>
+<td><code>GET /organizations/:org/audit-events</code></td>
+<td>Audit trail (--limit)</td>
+</tr>
+<tr>
+<td><code>matelot usage</code></td>
+<td><code>GET /organizations/:org/usage</code></td>
+<td>Usage for a month: active seats, runner minutes, pipelines, jobs, SBOMs, history (--month YYYY-MM, --format csv)</td>
+</tr>
+<tr>
+<td><code>matelot onboarding</code></td>
+<td><code>GET /organizations/:org/onboarding</code></td>
+<td>Organization setup (one-time, organization-level): source code, a runner, alerts, team — what is done, what is next, the command for each step (<code>dismiss</code> / <code>restore</code> hide or show it on the Overview)</td>
+</tr>
+<tr>
+<td><code>matelot coverage [--project ID] [--uncovered] [--gap CHECK] [--days N]</code></td>
+<td><code>GET /organizations/:org/coverage</code>, <code>GET /projects/:project/coverage</code></td>
+<td>Service coverage, per service: repository · security pipeline in the last N days (default 30) · SBOM · a policy applies · a deployment recorded. <code>--uncovered</code> prints only the gaps with the commands that close them (<a href="coverage.html">coverage.md</a>)</td>
+</tr>
+<tr>
+<td><code>matelot connection disconnect</code></td>
+<td><code>POST /integrations/:id/disconnect</code></td>
+<td>Disconnect: keep the connection, forget the credentials</td>
+</tr>
+</tbody></table>
+<h3 id="users"><a class="anchor" href="#users">users</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot users list</code></td>
+<td><code>GET /admin/users</code></td>
+<td>Users (platform admin)</td>
+</tr>
+</tbody></table>
+<h3 id="memberships"><a class="anchor" href="#memberships">memberships</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot memberships list</code></td>
+<td><code>GET /memberships</code></td>
+<td>Memberships of a scope (--scope-type PROJECT --scope-id ID)</td>
+</tr>
+</tbody></table>
+<h3 id="membership"><a class="anchor" href="#membership">membership</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot membership grant</code></td>
+<td><code>POST /memberships</code></td>
+<td>Grant a role (--email --role DEVELOPER --scope-type PROJECT --scope-id ID)</td>
+</tr>
+</tbody></table>
+<h3 id="meta"><a class="anchor" href="#meta">meta</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>API</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot meta show</code></td>
+<td><code>GET /meta</code></td>
+<td>Platform metadata (version, roles)</td>
+</tr>
+</tbody></table>
+<h2 id="policy-rule-flags"><a class="anchor" href="#policy-rule-flags">Policy rule flags</a></h2>
+<p><code>--name</code>, <code>--description</code>, <code>--environments production,staging</code> (empty = all), <code>--max-severity critical|high|medium|low|none</code>, <code>--block-kev [false]</code>, <code>--block-secrets [false]</code>, <code>--require-sbom [false]</code>, <code>--max-iac critical|high|medium|low</code>, <code>--honour-decisions [false]</code>, <code>--action block|warn</code>, <code>--enforce [false]</code>.</p>
+<pre><code class="language-bash">matelot policy create --name &quot;Production baseline&quot; --environments production --max-severity high --block-kev --block-secrets --require-sbom --action block --enforce
+matelot policy create-project --project $PROJ --name &quot;Dev advisory&quot; --environments development --max-severity high --action warn
+matelot policy update --id $POLICY --enabled false
+matelot policies in-force --project $PROJ
+</code></pre>
+<h2 id="examples"><a class="anchor" href="#examples">Examples</a></h2>
+<pre><code class="language-bash">matelot findings list --project $PROJ --severity critical,high --status open
+matelot findings environments --project $PROJ
+matelot finding set --id $FINDING --status accepted --note &quot;not reachable&quot;
+matelot env lineage --env $PROD --json | jq .drift
+matelot sbom findings --id $SBOM
+matelot job logs --id $JOB
+matelot audit list --limit 20
+matelot ci-token create --name build --scope-type PROJECT --scope-id $PROJ --preset full --environments $TEST
+matelot registry reconcile
+</code></pre>
+<h3 id="templates-amp-exceptions"><a class="anchor" href="#templates-amp-exceptions">templates &amp; exceptions</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot policy templates</code></td>
+<td>list ready-made policies</td>
+</tr>
+<tr>
+<td><code>matelot policy from-template --template cra-baseline [--name …]</code> / <code>from-template-project --project ID</code></td>
+<td>create a policy from a template</td>
+</tr>
+<tr>
+<td><code>matelot exceptions list [--active true]</code></td>
+<td>exceptions with state (active / expired / revoked) and how many findings they cover</td>
+</tr>
+<tr>
+<td><code>matelot exception create --service ID --kind vulnerability --match CVE-2024-1234 [--component openssl] --status accepted --reason &quot;…&quot; --until 2026-12-31 [--ticket URL]</code></td>
+<td>time-boxed acceptance in a service (<code>create-project</code>, <code>create-org</code> for wider scopes; <code>--kind code --match DS-0026 [--component deploy/]</code> for rules)</td>
+</tr>
+<tr>
+<td><code>matelot exception approve --id ID</code> · <code>matelot exception revoke --id ID</code></td>
+<td>approve a pending one · revoke (findings reopen)</td>
+</tr>
+</tbody></table>
+<h3 id="remediation-m9"><a class="anchor" href="#remediation-m9">remediation (M9)</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot remediation queue --project ID</code> / <code>queue-org</code></td>
+<td>fix-first queue: score, severity, advisory, component, where it runs, SLA due, tracking</td>
+</tr>
+<tr>
+<td><code>matelot remediation create --service ID --kind vulnerability --match CVE-… [--component X] [--owner-email a@b] [--due 2026-12-31] [--notes …]</code></td>
+<td>track as work (idempotent)</td>
+</tr>
+<tr>
+<td><code>matelot remediation update --id ID --status in_progress|done|wont_fix [--owner-email …] [--due …]</code></td>
+<td>update</td>
+</tr>
+<tr>
+<td><code>matelot remediation issue --id ID [--provider jira --project-key SEC]</code></td>
+<td>open a GitHub issue in the service repo, or a Jira issue</td>
+</tr>
+<tr>
+<td><code>matelot remediations list --project ID [--status open,in_progress]</code> / <code>list-org</code></td>
+<td>tracked work</td>
+</tr>
+<tr>
+<td><code>matelot sla show</code> · <code>matelot sla set --critical 7 --high 30 --medium 90 --low 180 [--jira-project-key SEC]</code></td>
+<td>SLA days and issue defaults</td>
+</tr>
+</tbody></table>
+<h3 id="scoped-remediation-settings-issue-trackers-m9-slice-2"><a class="anchor" href="#scoped-remediation-settings-issue-trackers-m9-slice-2">Scoped remediation settings, issue trackers (M9 slice 2)</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot sla show-scope --scope projects/ID</code> · <code>sla set-scope --scope teams/ID --critical 3 --issue-provider gitlab --jira-project-key PAY --issue-board https://github.com/orgs/acme/projects/5</code></td>
+<td>overrides stored at a scope (blank/null = inherit)</td>
+</tr>
+<tr>
+<td><code>matelot sla effective --project ID</code></td>
+<td>what applies to the project and which scope each value comes from (project → team → workspace → organization)</td>
+</tr>
+<tr>
+<td><code>matelot remediation issue --id ID [--provider github|gitlab|bitbucket|jira]</code></td>
+<td>open the issue on the service repository&#39;s host, or in Jira (nearest connection on the chain)</td>
+</tr>
+</tbody></table>
+<h3 id="mcp-m11"><a class="anchor" href="#mcp-m11">MCP (M11)</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot mcp</code> · <code>matelot mcp --check</code></td>
+<td>Claude Code / Desktop snippets for this cell&#39;s MCP server; --check runs the handshake and counts tools</td>
+</tr>
+</tbody></table>
+<h3 id="cra-evidence-m10"><a class="anchor" href="#cra-evidence-m10">CRA evidence (M10)</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot evidence export --release ID [--out file.zip]</code></td>
+<td>download the signed evidence bundle of a release</td>
+</tr>
+<tr>
+<td><code>matelot evidence verify &lt;bundle.zip&gt;</code></td>
+<td>check every file&#39;s checksum and the cell signature (exit 2 on mismatch)</td>
+</tr>
+<tr>
+<td><code>matelot evidence summary --id ID</code></td>
+<td>the evidence as JSON</td>
+</tr>
+<tr>
+<td><code>matelot cra readiness --service ID</code> / <code>cra readiness-project --project ID</code></td>
+<td>readiness checks with the CRA requirement and the fix</td>
+</tr>
+</tbody></table>
+<h3 id="notifications-amp-vex"><a class="anchor" href="#notifications-amp-vex">notifications &amp; VEX</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot channels list</code> · <code>channels events</code></td>
+<td>channels and the events they can subscribe to</td>
+</tr>
+<tr>
+<td><code>matelot channel create --name ops --kind slack|teams|webhook --url https://… [--events gate.fail,sla.overdue] [--project ID]</code></td>
+<td>add a channel (URL stored encrypted)</td>
+</tr>
+<tr>
+<td><code>matelot channel create --name oncall --kind email --url &quot;a@x.com,b@x.com&quot;</code></td>
+<td>e-mail channel (recipients; the cell needs <code>SMTP_*</code> configured)</td>
+</tr>
+<tr>
+<td><code>matelot channel test --id ID</code> · <code>channel update --id ID --enabled false</code> · <code>channel delete --id ID</code></td>
+<td>manage</td>
+</tr>
+<tr>
+<td><code>matelot evidence vex --id RELEASE</code></td>
+<td>OpenVEX document of a release</td>
+</tr>
+</tbody></table>
+<h3 id="workspace-team-scope"><a class="anchor" href="#workspace-team-scope">workspace / team scope</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>matelot findings list-workspace --id WS [--team TEAM]</code> · <code>findings list-team --id TEAM</code></td>
+<td>findings of a workspace / team</td>
+</tr>
+<tr>
+<td><code>matelot findings summary-workspace|environments-workspace --id WS [--team]</code> · <code>code-findings list-workspace --id WS</code></td>
+<td>counts, what runs where, code findings</td>
+</tr>
+<tr>
+<td><code>matelot risk workspace --id WS [--team]</code> · <code>risk team --id TEAM</code></td>
+<td>risk per service</td>
+</tr>
+<tr>
+<td><code>matelot components search-workspace --id WS --q openssl</code> · <code>components search-project --project ID --q …</code></td>
+<td>component search</td>
+</tr>
+<tr>
+<td><code>matelot remediation queue-workspace --id WS [--team]</code> · <code>cra readiness-workspace --id WS [--team]</code></td>
+<td>fix-first queue, CRA readiness</td>
+</tr>
+<tr>
+<td><code>matelot channels list-scope --scope workspaces/ID</code> · <code>channel create-scope --scope projects/ID --name … --kind … --url …</code></td>
+<td>scoped notification channels</td>
+</tr>
+</tbody></table>
+<h3 id="configuration-as-code"><a class="anchor" href="#configuration-as-code">configuration as code</a></h3>
+<p><code>matelot apply --file matelot-config.yaml --scope projects/&lt;id&gt; [--dry-run]</code> applies channels, policies and SLAs
+declaratively, keyed by name, at an organization / workspace / team / project. Re-running is a no-op; a changed
+URL, event list, rule or SLA is updated; <code>${ENV_VAR}</code> placeholders are substituted from the environment (so
+webhook URLs stay in CI secrets). YAML (simple subset) or JSON. Example: <code>docs/examples/matelot-config.yaml</code>.
+API: <code>POST /&lt;scope&gt;/config/apply[?dryRun=true]</code>. Works with a CI token that has <code>policy:write</code> and <code>project:write</code>,
+or a personal <code>write</code>/<code>sudo</code> token.</p>
+</article>
+    <footer>Version 0.1.0 · generated from <code>docs/cli.md</code></footer>
+  </main>
+  <nav class="toc"><div class="toc-title">On this page</div><ul><li class="d2"><a href="#delivery-commands">Delivery commands</a></li><li class="d2"><a href="#resource-commands">Resource commands</a></li><li class="d3"><a href="#me">me</a></li><li class="d3"><a href="#orgs">orgs</a></li><li class="d3"><a href="#org">org</a></li><li class="d3"><a href="#workspaces">workspaces</a></li><li class="d3"><a href="#teams">teams</a></li><li class="d3"><a href="#projects">projects</a></li><li class="d3"><a href="#project">project</a></li><li class="d3"><a href="#services">services</a></li><li class="d3"><a href="#service">service</a></li><li class="d3"><a href="#envs">envs</a></li><li class="d3"><a href="#env">env</a></li><li class="d3"><a href="#releases">releases</a></li><li class="d3"><a href="#release">release</a></li><li class="d3"><a href="#images">images</a></li><li class="d3"><a href="#image">image</a></li><li class="d3"><a href="#inventory">inventory</a></li><li class="d3"><a href="#deployments">deployments</a></li><li class="d3"><a href="#sboms">sboms</a></li><li class="d3"><a href="#sbom">sbom</a></li><li class="d3"><a href="#components">components</a></li><li class="d3"><a href="#findings">findings</a></li><li class="d3"><a href="#finding">finding</a></li><li class="d3"><a href="#code-findings">code-findings</a></li><li class="d3"><a href="#code-finding">code-finding</a></li><li class="d3"><a href="#vulnerabilities">vulnerabilities</a></li><li class="d3"><a href="#risk">risk</a></li><li class="d3"><a href="#graph">graph</a></li><li class="d3"><a href="#policies">policies</a></li><li class="d3"><a href="#policy">policy</a></li><li class="d3"><a href="#gate">gate</a></li><li class="d3"><a href="#pipelines">pipelines</a></li><li class="d3"><a href="#pipeline">pipeline</a></li><li class="d3"><a href="#jobs">jobs</a></li><li class="d3"><a href="#job">job</a></li><li class="d3"><a href="#runners">runners</a></li><li class="d3"><a href="#runner">runner</a></li><li class="d3"><a href="#integrations">integrations</a></li><li class="d3"><a href="#repositories">repositories</a></li><li class="d3"><a href="#registry">registry</a></li><li class="d3"><a href="#registries">registries</a></li><li class="d3"><a href="#tokens">tokens</a></li><li class="d3"><a href="#token">token</a></li><li class="d3"><a href="#ci-tokens">ci-tokens</a></li><li class="d3"><a href="#ci-token">ci-token</a></li><li class="d3"><a href="#audit">audit</a></li><li class="d3"><a href="#users">users</a></li><li class="d3"><a href="#memberships">memberships</a></li><li class="d3"><a href="#membership">membership</a></li><li class="d3"><a href="#meta">meta</a></li><li class="d2"><a href="#policy-rule-flags">Policy rule flags</a></li><li class="d2"><a href="#examples">Examples</a></li><li class="d3"><a href="#templates-amp-exceptions">templates &amp;amp; exceptions</a></li><li class="d3"><a href="#remediation-m9">remediation (M9)</a></li><li class="d3"><a href="#scoped-remediation-settings-issue-trackers-m9-slice-2">Scoped remediation settings, issue trackers (M9 slice 2)</a></li><li class="d3"><a href="#mcp-m11">MCP (M11)</a></li><li class="d3"><a href="#cra-evidence-m10">CRA evidence (M10)</a></li><li class="d3"><a href="#notifications-amp-vex">notifications &amp;amp; VEX</a></li><li class="d3"><a href="#workspace-team-scope">workspace / team scope</a></li><li class="d3"><a href="#configuration-as-code">configuration as code</a></li></ul></nav>
+</div>
+<script src="site.js" defer></script>
+</body>
+</html>

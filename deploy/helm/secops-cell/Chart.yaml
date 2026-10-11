@@ -1,8 +1,16 @@
 apiVersion: v2
 name: secops-cell
 description: >-
-  One dedicated tenant cell of the Product Security, DevSecOps & Compliance platform:
-  API, Postgres, Redis and Keycloak in a single namespace. One Helm release per client.
+  One Matelot cell: the product-security platform (API, worker, web, managed runners, registry,
+  Postgres, Redis, Keycloak) in a single namespace. One Helm release per organization.
+home: https://matelot-io.github.io/website/
+sources:
+  - https://github.com/matelot-io/helm-charts
+  - https://github.com/matelot-io/matelot
+maintainers:
+  - name: Matelot
+    url: https://github.com/matelot-io
+icon: https://matelot-io.github.io/website/assets/logo.png
 type: application
 version: 0.1.0
 appVersion: "0.1.0"

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GitHub App · Documentation</title>
+<link rel="icon" href="logo.png">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="index.html"><img src="logo.png" alt=""><span id="product">Security Platform</span> <span class="dim">docs</span></a>
+  <div class="search"><input id="q" type="search" placeholder="Search the docs…" autocomplete="off" aria-label="Search"><div id="results" class="results" hidden></div></div>
+  <a class="app" href="/">Open the app →</a>
+</header>
+<div class="page">
+  <button class="nav-toggle" aria-expanded="false" aria-controls="side">Contents</button>
+  <nav class="side" id="side"><ul><li class="section"><span>Start here</span><ul><li><a href="index.html">Documentation</a></li><li><a href="product.html">What the platform does</a></li><li><a href="roles.html">Roles and permissions</a></li><li><a href="coverage.html">Service coverage</a></li></ul></li><li class="section"><span>CLI and automation</span><ul><li><a href="cli.html">CLI guide</a></li><li><a href="cli-reference.html">Command reference</a></li><li><a href="ci-integration.html">CI/CD integration</a></li><li><a href="access-tokens.html">Access tokens</a></li><li><a href="mcp.html">MCP server (AI assistants)</a></li></ul></li><li class="section"><span>Connections and registries</span><ul><li class="current"><a href="github-app.html">GitHub App</a></li><li><a href="keyless-registries.html">Keyless registry access</a></li><li><a href="release-process.html">Builds, releases, deployments</a></li></ul></li><li class="section"><span>Runners</span><ul><li><a href="managed-runners.html">Managed runners</a></li><li><a href="runner-protocol.html">Runner protocol</a></li></ul></li><li class="section"><span>Operating a cell</span><ul><li><a href="cell-provisioning.html">Provisioning a cell</a></li><li><a href="backup-restore.html">Backup and restore</a></li><li><a href="usage-and-limits.html">Usage and rate limits</a></li><li><a href="endpoints.html">Endpoints of a cell</a></li></ul></li><li class="section"><span>Reference</span><ul><li><a href="parity-matrix.html">UI / API / CLI / MCP parity</a></li><li><a href="adr-0001.html">ADR 1: tenancy and stack</a></li><li><a href="adr-0002.html">ADR 2: web app</a></li><li><a href="adr-0003.html">ADR 3: two-level RBAC</a></li></ul></li></ul></nav>
+  <main class="content">
+    <div class="crumbs">Connections and registries</div>
+    <article><h2 id="own-github-app-flow-pitfalls-checklist"><a class="anchor" href="#own-github-app-flow-pitfalls-checklist">Own GitHub App: flow, pitfalls, checklist</a></h2>
+<ul>
+<li><strong>Slug and name</strong> come from GitHub (<code>GET /app</code>) at connect time; the slug you type is only a hint and a mismatch is reported. The install link is always built from GitHub&#39;s slug. The Name field is a display label.</li>
+<li><strong>Retries</strong> update the pending connection of the same App at the same level instead of creating another one.</li>
+<li><strong>Already installed?</strong> GitHub then opens the installation settings instead of the Setup URL, so no callback arrives. Matelot lists the App&#39;s installations on connect and binds the one that fits; otherwise use <em>Manage → Actions → Link existing installation</em>. The callback also handles <code>setup_action=update</code>.</li>
+<li><strong>Expired link</strong>: install links are signed for 15 minutes. If GitHub sends you back later, the Connections page explains and offers &quot;Link existing installation&quot;.</li>
+<li><strong>Two URLs</strong>: Setup URL / Redirect URI (<code>…/api/v1/integrations/github/callback</code>, browser GET) vs Webhook URL (<code>…/api/v1/webhooks/github/&lt;connection id&gt;</code>, GitHub servers POST). A GET on the webhook URL now returns an explanation instead of 404. Webhooks are verified with <code>X-Hub-Signature-256</code>, deduplicated on <code>X-GitHub-Delivery</code>, acknowledged with 202 and processed asynchronously.</li>
+<li><strong>localhost / private hosts</strong>: GitHub cannot deliver webhooks there. Use a tunnel (smee.io, ngrok, Tailscale Funnel) or click Later: the connection works without webhooks, with Sync now and periodic polling.</li>
+<li><strong>Permissions</strong>: Repository — Metadata read, Contents read, Administration read, Issues read &amp; write; Organization — Projects read &amp; write (boards). Granted permissions are read from the installation and missing ones are listed in Manage → Details; after adding permissions to the App, the organization must accept them (Organization → Settings → GitHub Apps), then <em>Check again</em>.</li>
+<li><strong>Capabilities by connection type</strong>: deploy key / plain git → clone only, no issues or boards; fine-grained token → issues and user- or organization-owned boards; GitHub App → issues and organization-owned boards only (a <code>/users/…</code> board is skipped with a log message).</li>
+<li><strong>One App per environment</strong> (dev behind a tunnel, staging, prod): an App has a single webhook URL and separate keys limit the blast radius.</li>
+</ul>
+<h3 id="test-checklist"><a class="anchor" href="#test-checklist">Test checklist</a></h3>
+<ol>
+<li>Connect with a wrong slug hint → connection created, warning shows GitHub&#39;s slug, Install link uses it.</li>
+<li>Connect the same App twice at the same level → second attempt updates the first pending record (no duplicates).</li>
+<li>Install the App on GitHub first, then connect → bound immediately, status pending → connected after the first sync.</li>
+<li>Wait &gt; 15 min on the GitHub install page, then continue → Connections page shows the expired-link banner; Link existing installation completes it.</li>
+<li><code>curl -i https://&lt;host&gt;/api/v1/webhooks/github/&lt;id&gt;</code> → 200 with the explanation, not 404.</li>
+<li>Remove Issues write from the App → Manage → Check again lists it as missing; add it back, accept on GitHub, Check again → clean.</li>
+<li>App connection + <code>/users/&lt;you&gt;/projects/1</code> board → issue created, log says user boards need a token connection.</li>
+</ol>
+</article>
+    <footer>Version 0.1.0 · generated from <code>docs/github-app.md</code></footer>
+  </main>
+  <nav class="toc"><div class="toc-title">On this page</div><ul><li class="d2"><a href="#own-github-app-flow-pitfalls-checklist">Own GitHub App: flow, pitfalls, checklist</a></li><li class="d3"><a href="#test-checklist">Test checklist</a></li></ul></nav>
+</div>
+<script src="site.js" defer></script>
+</body>
+</html>

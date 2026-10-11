@@ -1,57 +1,135 @@
-# Release process — how builds, releases and environments connect
+# Releasing Matelot — internal
 
-## The model
-| Concept | What it is | Created by |
-|---|---|---|
-| **Build** | an image built from a commit (`<registry>/<repo>:<commit>`), identified by its **digest** | a push to the platform registry, or a deployment that reports it |
-| **Release** | a version of the service (`1.9.0`), tied to a commit | a deployment that names a version (`matelot deploy --version`), a git tag / GitHub or GitLab release sync, or *Record release* |
-| **Deployment** | "this image / release now runs in this environment" | `matelot deploy`, `matelot promote`, a push to an environment repository, Kubernetes sync |
+How a release is cut, what the pipeline publishes, how the public repositories are kept in sync, and how the
+cross-repository token is rotated. (The *product* concepts — builds, releases and deployments inside a cell — are in
+`builds-releases-deployments.md`, which is the public page.) This file is internal and is not published.
 
-A release does not *have* an environment — a deployment puts it there. One release can run in several
-environments (test, then prod, then a DR region); the graph draws **release → image → environment**
-for every current deployment.
+## The repositories
 
-## Standard flow
+| Repository | Visibility | Holds | Written by |
+| --- | --- | --- | --- |
+| `matelot-io/platform` | private | this monorepo: code, chart, scripts, docs sources, workflows | people |
+| `matelot-io/matelot` | public | README, EULA, SECURITY, CODE_OF_CONDUCT, SUPPORT, CHANGELOG, issue templates; **issues, discussions, releases** | people (files), `release.yml` (releases) |
+| `matelot-io/helm-charts` | public | `charts/secops-cell/` (copy of `deploy/helm/secops-cell`), `scripts/` (cell-backup, cell-restore + lib), README | `release.yml` (chart + scripts), people (README) |
+| `matelot-io/website` | public, GitHub Pages | landing page sources (`content.json`, template, assets), **generated** `docs/latest/` and `docs/vX.Y/` | people (landing), `docs-sync.yml` + `release.yml` (docs) |
+| `matelot-io/.github` | public | organization profile, default community files | people |
+
+Packages (GitHub Packages, `ghcr.io/matelot-io/…`): `api`, `web`, `worker`, `runner`, `charts/secops-cell`.
+
+**Rule: nothing in a public repository is edited by hand except what the table says.** The chart folder, the
+operator scripts and the generated docs are overwritten on the next release; a fix goes into `platform` and is
+released. Issues, discussions and releases live in `matelot-io/matelot` and are never mirrored back.
+
+## Cutting a release
+
+1. On `main`, green CI (`ci.yml`: api tests + migrations, web/runner/CLI builds and tests, docs render + link check,
+   chart tests, image builds including the worker target).
+2. Add the release's section at the top of `CHANGELOG.md`, titled **`## vX.Y.Z — <one line>`**: the release notes are
+   that section (`scripts/changelog-section.sh vX.Y.Z` shows what will be published; without a matching heading the
+   first section is used with a note — fine for a release candidate, not for a final release).
+3. Bump versions if they changed: `apps/api`, `apps/web`, `apps/runner` `package.json` and `Chart.yaml`
+   (`version` / `appVersion`) carry the development version; the pipeline stamps the tag's version on the chart it
+   publishes, so these only need to match for `make deploy` on kind. The CLI has its own version and release
+   (`publish-cli.yml`).
+4. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`. A release candidate is `vX.Y.Z-rc.N`: everything is
+   published the same way except the `latest` image tags, and the GitHub Release is marked pre-release.
+5. Watch `release.yml` (Actions → release). Jobs:
+   - **images** (matrix api, web, worker, runner): `docker buildx` for `linux/amd64,linux/arm64`, pushed as
+     `X.Y.Z`, `vX.Y.Z` and (final releases) `latest`; `cosign sign` keyless with the workflow's GitHub OIDC
+     identity; `syft` SPDX SBOM attached with `cosign attest --type spdxjson`; SBOMs and digests uploaded as
+     workflow artifacts. The worker is the `worker` target of `apps/api/Dockerfile`.
+   - **chart**: `helm lint`, `helm package --version X.Y.Z --app-version X.Y.Z`, `helm push` to
+     `oci://ghcr.io/matelot-io/charts`, `cosign sign` of the chart digest, then the chart folder and the two operator
+     scripts are copied into a clone of `helm-charts`, committed and tagged `secops-cell-X.Y.Z`.
+   - **docs**: `tools/docs-site/build.mjs` renders `docs/` into `website/docs/vX.Y/` (major.minor: a patch release
+     overwrites its line) and `website/docs/latest/`, runs the website's own test + link check against the result,
+     commits and pushes. The website's `pages.yml` deploys on that push.
+   - **release**: `gh release create vX.Y.Z --repo matelot-io/matelot` with the CHANGELOG section, the image and chart
+     digests, the `cosign verify` commands and the SBOM files attached.
+6. Check: `helm pull oci://ghcr.io/matelot-io/charts/secops-cell --version X.Y.Z`, `docker pull ghcr.io/matelot-io/api:X.Y.Z`,
+   the release page, https://matelot-io.github.io/website/docs/vX.Y/install.html.
+7. Upgrade a cell on kind from the published chart (`helm upgrade … oci://… --version X.Y.Z`) before announcing.
+
+### One-time setup (done once per organization)
+
+- **Packages public:** GitHub creates a package private on first push. After the first release, for each of
+  `api`, `web`, `worker`, `runner`, `charts/secops-cell`: Organization → Packages → package → Package settings →
+  Danger zone → Change visibility → Public. Also under *Manage Actions access* make sure the `platform` repository has
+  write access (it does when the package was first pushed by its workflow). Until this is done customers get
+  `unauthorized` on pull.
+- **Pages:** `website` → Settings → Pages → Source: GitHub Actions. Custom domain later: set the repository variable
+  `SITE_DOMAIN=matelot.io` (Settings → Secrets and variables → Actions → Variables), enter the domain under Pages,
+  point DNS at GitHub (A/AAAA for the apex or CNAME `matelot-io.github.io`). Nothing else changes: the build writes
+  `CNAME`, the sitemap and the preview URLs from that variable; links inside the site are relative.
+- **Discussions** enabled on `matelot-io/matelot`; **private vulnerability reporting** enabled there
+  (Settings → Code security → Private vulnerability reporting), because SECURITY.md points to it.
+- **The cross-repository token** (next section) stored as an organization secret.
+
+## The cross-repository token: `PUBLIC_REPOS_TOKEN`
+
+`GITHUB_TOKEN` only reaches the repository that runs the workflow and its packages, so the pushes to `website` and
+`helm-charts` and the release in `matelot` use a fine-grained personal access token stored as the **organization
+secret `PUBLIC_REPOS_TOKEN`** (Organization → Settings → Secrets and variables → Actions → New organization secret,
+repository access: `platform` only).
+
+Create it as a member who can push to the three public repositories (ideally a dedicated machine account
+`matelot-release` that is a member of the organization with write access to exactly those repositories):
+
+| Setting | Value |
+| --- | --- |
+| Token name | `platform-release → public repos` |
+| Resource owner | `matelot-io` |
+| Expiration | 1 year (the maximum; put the date in the team calendar) |
+| Repository access | Only select repositories: `matelot-io/website`, `matelot-io/helm-charts`, `matelot-io/matelot` |
+| Repository permissions | **Contents: Read and write** (push commits and tags, create releases and upload assets); **Metadata: Read** (added automatically) |
+| Everything else | No access — no Issues, no Pull requests, no Actions, no Administration, no organization permissions |
+
+Organization owners may have to approve the token (Organization → Settings → Personal access tokens) if the
+organization requires approval for fine-grained tokens.
+
+### Rotating it
+
+1. Create a new token with the same settings (above). Keep the old one until the new one has been exercised.
+2. Organization → Settings → Secrets and variables → Actions → `PUBLIC_REPOS_TOKEN` → Update → paste the new token.
+3. Exercise it: Actions → `docs-sync` → Run workflow (it clones and, if anything changed, pushes to `website`), or
+   push a release candidate tag. Green = the new token works.
+4. Delete the old token (user → Settings → Developer settings → Fine-grained tokens → Delete).
+5. If a token may have leaked: revoke it first, then create and store the new one; the workflows fail until step 2 is
+   done, nothing else breaks. The token cannot touch `platform` or the packages.
+
+The same procedure applies at expiry; GitHub e-mails the token owner a week before.
+
+## Keeping the public repositories in sync
+
+| Public content | Source of truth | Sync |
+| --- | --- | --- |
+| `website/docs/latest/` | `docs/*.md` on `main` | `docs-sync.yml` on every push to `main` that touches `docs/` or `tools/docs-site/` (also by hand: Actions → docs-sync → Run workflow); locally `make docs-sync WEBSITE_DIR=../website` renders into a clone for a preview |
+| `website/docs/vX.Y/` | `docs/*.md` at the tag | `release.yml` |
+| `website/content.json`, assets, 404 | the website repository itself | by hand, in `website` (a push deploys) |
+| `helm-charts/charts/secops-cell`, `helm-charts/scripts` | `deploy/helm/secops-cell`, `scripts/cell-backup.sh`, `scripts/cell-restore.sh`, `scripts/lib/{wait.sh,cellwait.py}` | `release.yml` |
+| `helm-charts/README.md`, `LICENSE` | the public repository | by hand |
+| `matelot/*` files | the public repository | by hand; `CHANGELOG.md` there gets a short summary per release line, the detailed log stays here |
+| GitHub Release in `matelot` | `CHANGELOG.md` section + digests | `release.yml` |
+
+The docs page list is the `SITE` table in `tools/docs-site/build.mjs`: a new page is added there and in the
+section's order; a page not in the table is not published (roadmap, concept, `cell-provisioning.md` — our own
+provisioning runbook — and this file stay internal). Public docs may not link into this repository (`../…` links fail the build) because readers cannot open it;
+link to the public repositories or the site instead. `make docs-check` is what CI runs.
+
+## Versions, tags and what a customer sees
+
+- Images: `ghcr.io/matelot-io/<name>:X.Y.Z` (what the chart pulls: `appVersion`), `vX.Y.Z` (same digest), `latest`.
+- Chart: `oci://ghcr.io/matelot-io/charts/secops-cell:X.Y.Z`, `appVersion: X.Y.Z` → a customer upgrades images and
+  chart together with `helm upgrade --version X.Y.Z`; `image.tag` in values overrides for a hotfix image.
+- Docs: `docs/vX.Y/` per release line, `docs/latest/` = `main`; the version switcher is built from the folders.
+- The cell reports its version as `APP_VERSION` (`GET /api/v1/meta`, "API x.y.z" in the web footer), set by the chart
+  from the image tag.
+
+## Local checks before tagging
+
+```bash
+pnpm -r typecheck && pnpm -r test && pnpm -r build
+make helm-lint          # scripts/chart-test.sh: every configuration, install == upgrade, tag change rolls only app pods
+make docs-check         # docs render + every link resolves
+scripts/changelog-section.sh vX.Y.Z
 ```
-commit ──build──► image demo:<sha> ──deploy──► dev          (no release: a build of main)
-tag v1.9.0-rc1 ──► image …:v1.9.0-rc1 ──deploy──► test       release 1.9.0-rc1 created by the deployment
-tag v1.9.0     ──► image …:v1.9.0     ──deploy──► prod       release 1.9.0 created by the deployment
-```
-Every deploy step reports `--version` (for rc and final), `--image <image>@<digest>` and `--commit`.
-
-## What the platform guarantees
-* **A deployment that names a version creates the release** if it does not exist yet (version-like names
-  only), with the commit from `--commit` / `SECOPS_COMMIT`; audited as `release.created`. Git tag sync
-  later enriches the same release (URL, notes, date) — it no longer depends on webhooks reaching the cell.
-* **A digest is one image**, whatever registry or tag it lives under:
-  * a deployment reported by digest from a registry the platform has not read yet triggers an immediate
-    registry read, and every later sync attaches digest-only deployments to their tag;
-  * the security graph, *Vulnerabilities → Running in*, the trend snapshots and the correlation all resolve
-    "what runs here" by digest;
-  * the same image pushed to several registries is scanned once (one SBOM per digest).
-* **Tags link to releases** by version (`v1.9.0` ↔ `1.9.0`), by commit (`<sha>` tags), and by a deployment
-  that names both a version and an image.
-
-## Built-in registry: what records a deployment
-* `matelot promote` records the deployment itself, the moment the copy is done (no dependency on registry
-  notifications reaching the API or on the reconcile loop).
-* A real `docker push` into an environment repository is recorded by the registry notification.
-* The **reconcile pass** (every 2 minutes, or *POST /organizations/:id/registry/reconcile*) only fills an
-  environment that has nothing recorded, or records a tag built **after** the current deployment (a push the
-  notification missed). It never overwrites a deployment reported from another registry, by hand or by
-  Kubernetes — older tags lying in the environment repository are ignored. All three paths are serialised
-  per environment, so they cannot record the same deployment twice.
-
-## Environment lineage (Security graph → Environments)
-Per environment, two lanes: **Released** — repository (commit) → release (version tag) → registries holding that
-tag → environment; **Running now** — repository (commit of the running build) → image *digest* → registries
-holding that digest (the one it was deployed from marked) → environment. Only the digest identifies what runs;
-a tag is a pointer that can move. **Drift** is flagged when the lanes disagree: the version tag was rebuilt
-after the deployment (`tag_moved`), the tag points to different images in different registries
-(`tag_split`), the running digest is in no known registry (`unknown_image`), no release exists for the
-deployed version (`no_release`), the running image was never scanned (`not_scanned`), a registry sync fails.
-API: `GET /environments/:id/lineage`.
-
-## Where to see it
-Releases & images (release card: images + environment chips) · Running now · Security graph (hover a
-release) · Vulnerabilities → Running in · Audit (`release.created`, `deployment.recorded`).

@@ -102,7 +102,7 @@ cmd_apply() {
   printf '%s\n' "$content" > "$FILLED"
   local filled="$FILLED"
   local args=(upgrade --install "$RELEASE" "$CHART" --namespace "$NAMESPACE" --create-namespace -f "$filled" --set "tenant.slug=$SLUG" ${EXTRA[@]+"${EXTRA[@]}"})
-  [ -n "$TAG" ] && args+=(--set "image.tag=$TAG" --set "web.image.tag=$TAG" --set "managedRunners.image.tag=$TAG")
+  [ -n "$TAG" ] && args+=(--set "image.tag=$TAG" --set "worker.image.tag=$TAG" --set "web.image.tag=$TAG" --set "managedRunners.image.tag=$TAG")
   if [ "$DRY" = 1 ]; then
     say "helm ${args[*]} --dry-run"
     helm "${args[@]}" --dry-run > /dev/null || { echo "helm dry run failed (exit $?)" >&2; exit 1; }

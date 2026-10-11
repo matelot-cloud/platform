@@ -37,11 +37,12 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
-      - run: node tools/docs-site/build.mjs --check
       - run: pnpm --filter @secops/web build
       - run: pnpm --filter @secops/runner build
       - run: pnpm --filter secops-platform-cli build && pnpm --filter secops-platform-cli test
       - run: pnpm --filter @secops/web test
+      - name: Documentation renders and every link resolves
+        run: node tools/docs-site/test.mjs && node tools/docs-site/build.mjs --check
 
   chart:
     runs-on: ubuntu-latest
@@ -49,7 +50,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
       - run: python3 -c 'import yaml' 2>/dev/null || pip install pyyaml
-      - run: bash scripts/chart-test.sh
+      - name: helm lint + render in every supported configuration
+        run: bash scripts/chart-test.sh
       - name: Operator scripts parse
         run: for f in scripts/*.sh scripts/lib/*.sh deploy/helm/secops-cell/files/*.sh; do bash -n "$f"; done
       - run: python3 scripts/lib/cellwait_test.py
@@ -61,6 +63,8 @@ jobs:
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
         with: { context: ., file: apps/api/Dockerfile, push: false, tags: secops-api:ci }
+      - uses: docker/build-push-action@v6
+        with: { context: ., file: apps/api/Dockerfile, target: worker, push: false, tags: secops-worker:ci }
       - uses: docker/build-push-action@v6
         with: { context: ., file: apps/web/Dockerfile, push: false, tags: secops-web:ci }
       - uses: docker/build-push-action@v6

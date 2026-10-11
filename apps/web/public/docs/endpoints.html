@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Endpoints of a cell · Documentation</title>
+<link rel="icon" href="logo.png">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="index.html"><img src="logo.png" alt=""><span id="product">Security Platform</span> <span class="dim">docs</span></a>
+  <div class="search"><input id="q" type="search" placeholder="Search the docs…" autocomplete="off" aria-label="Search"><div id="results" class="results" hidden></div></div>
+  <a class="app" href="/">Open the app →</a>
+</header>
+<div class="page">
+  <button class="nav-toggle" aria-expanded="false" aria-controls="side">Contents</button>
+  <nav class="side" id="side"><ul><li class="section"><span>Start here</span><ul><li><a href="index.html">Documentation</a></li><li><a href="product.html">What the platform does</a></li><li><a href="roles.html">Roles and permissions</a></li><li><a href="coverage.html">Service coverage</a></li></ul></li><li class="section"><span>CLI and automation</span><ul><li><a href="cli.html">CLI guide</a></li><li><a href="cli-reference.html">Command reference</a></li><li><a href="ci-integration.html">CI/CD integration</a></li><li><a href="access-tokens.html">Access tokens</a></li><li><a href="mcp.html">MCP server (AI assistants)</a></li></ul></li><li class="section"><span>Connections and registries</span><ul><li><a href="github-app.html">GitHub App</a></li><li><a href="keyless-registries.html">Keyless registry access</a></li><li><a href="release-process.html">Builds, releases, deployments</a></li></ul></li><li class="section"><span>Runners</span><ul><li><a href="managed-runners.html">Managed runners</a></li><li><a href="runner-protocol.html">Runner protocol</a></li></ul></li><li class="section"><span>Operating a cell</span><ul><li><a href="cell-provisioning.html">Provisioning a cell</a></li><li><a href="backup-restore.html">Backup and restore</a></li><li><a href="usage-and-limits.html">Usage and rate limits</a></li><li class="current"><a href="endpoints.html">Endpoints of a cell</a></li></ul></li><li class="section"><span>Reference</span><ul><li><a href="parity-matrix.html">UI / API / CLI / MCP parity</a></li><li><a href="adr-0001.html">ADR 1: tenancy and stack</a></li><li><a href="adr-0002.html">ADR 2: web app</a></li><li><a href="adr-0003.html">ADR 3: two-level RBAC</a></li></ul></li></ul></nav>
+  <main class="content">
+    <div class="crumbs">Operating a cell</div>
+    <article><h1 id="endpoints-of-a-cell"><a class="anchor" href="#endpoints-of-a-cell">Endpoints of a cell</a></h1>
+<p>Every cell exposes exactly three public hostnames, all TLS, no ports:</p>
+<table>
+<thead>
+<tr>
+<th>Surface</th>
+<th>Hostname</th>
+<th>Used by</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Web app + API (<code>/api/v1</code>)</td>
+<td><code>https://&lt;slug&gt;.&lt;domain&gt;</code></td>
+<td>browsers, runners (<code>RUNNER_URL=https://&lt;slug&gt;.&lt;domain&gt;/api/v1</code>), CI (<code>SECOPS_URL</code>), webhooks</td>
+</tr>
+<tr>
+<td>Container registry</td>
+<td><code>https://registry-&lt;slug&gt;.&lt;domain&gt;</code></td>
+<td><code>docker login/push/pull</code>, runners scanning images, clusters pulling environment images</td>
+</tr>
+<tr>
+<td>Identity (Keycloak)</td>
+<td><code>https://auth-&lt;slug&gt;.&lt;domain&gt;</code></td>
+<td>browser login (OIDC), the API (JWKS)</td>
+</tr>
+</tbody></table>
+<p><code>&lt;slug&gt;</code> is the customer (<code>acme</code>), <code>&lt;domain&gt;</code> the operator&#39;s cell domain (<code>secops.example.com</code>). One
+wildcard certificate <code>*.secops.example.com</code> (or cert-manager per host) covers all three, because every
+name is a single level under the domain. The Helm chart derives all URLs from <code>tenant.slug</code> and
+<code>tenant.domain</code>: token realm, registry notifications, OIDC issuer, <code>WEB_BASE_URL</code>, GitHub App callback.</p>
+<p>Provisioning a cell therefore needs from the operator: three DNS records (or a wildcard), a TLS
+issuer, and <code>helm install</code> (M12 automates this in the cell provisioning flow). Nothing about ports or
+hostnames is configured by teams: the UI, the CI snippets and the CLI print the cell&#39;s real URLs.</p>
+<h2 id="local-development"><a class="anchor" href="#local-development">Local development</a></h2>
+<p><code>make dev</code> / <code>make web</code> / <code>docker compose</code> use <code>http://localhost:3000</code> (API), <code>:5173</code> (web),
+<code>:8080</code> (Keycloak) and <code>localhost:5000</code> (registry, <code>insecure-registries</code> in Docker Desktop). These
+never appear in a deployed cell.</p>
+</article>
+    <footer>Version 0.1.0 · generated from <code>docs/endpoints.md</code></footer>
+  </main>
+  
+</div>
+<script src="site.js" defer></script>
+</body>
+</html>

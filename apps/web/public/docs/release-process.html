@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Builds, releases, deployments · Documentation</title>
+<link rel="icon" href="logo.png">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="index.html"><img src="logo.png" alt=""><span id="product">Security Platform</span> <span class="dim">docs</span></a>
+  <div class="search"><input id="q" type="search" placeholder="Search the docs…" autocomplete="off" aria-label="Search"><div id="results" class="results" hidden></div></div>
+  <a class="app" href="/">Open the app →</a>
+</header>
+<div class="page">
+  <button class="nav-toggle" aria-expanded="false" aria-controls="side">Contents</button>
+  <nav class="side" id="side"><ul><li class="section"><span>Start here</span><ul><li><a href="index.html">Documentation</a></li><li><a href="product.html">What the platform does</a></li><li><a href="roles.html">Roles and permissions</a></li><li><a href="coverage.html">Service coverage</a></li></ul></li><li class="section"><span>CLI and automation</span><ul><li><a href="cli.html">CLI guide</a></li><li><a href="cli-reference.html">Command reference</a></li><li><a href="ci-integration.html">CI/CD integration</a></li><li><a href="access-tokens.html">Access tokens</a></li><li><a href="mcp.html">MCP server (AI assistants)</a></li></ul></li><li class="section"><span>Connections and registries</span><ul><li><a href="github-app.html">GitHub App</a></li><li><a href="keyless-registries.html">Keyless registry access</a></li><li class="current"><a href="release-process.html">Builds, releases, deployments</a></li></ul></li><li class="section"><span>Runners</span><ul><li><a href="managed-runners.html">Managed runners</a></li><li><a href="runner-protocol.html">Runner protocol</a></li></ul></li><li class="section"><span>Operating a cell</span><ul><li><a href="cell-provisioning.html">Provisioning a cell</a></li><li><a href="backup-restore.html">Backup and restore</a></li><li><a href="usage-and-limits.html">Usage and rate limits</a></li><li><a href="endpoints.html">Endpoints of a cell</a></li></ul></li><li class="section"><span>Reference</span><ul><li><a href="parity-matrix.html">UI / API / CLI / MCP parity</a></li><li><a href="adr-0001.html">ADR 1: tenancy and stack</a></li><li><a href="adr-0002.html">ADR 2: web app</a></li><li><a href="adr-0003.html">ADR 3: two-level RBAC</a></li></ul></li></ul></nav>
+  <main class="content">
+    <div class="crumbs">Connections and registries</div>
+    <article><h1 id="release-process-how-builds-releases-and-environments-connect"><a class="anchor" href="#release-process-how-builds-releases-and-environments-connect">Release process — how builds, releases and environments connect</a></h1>
+<h2 id="the-model"><a class="anchor" href="#the-model">The model</a></h2>
+<table>
+<thead>
+<tr>
+<th>Concept</th>
+<th>What it is</th>
+<th>Created by</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Build</strong></td>
+<td>an image built from a commit (<code>&lt;registry&gt;/&lt;repo&gt;:&lt;commit&gt;</code>), identified by its <strong>digest</strong></td>
+<td>a push to the platform registry, or a deployment that reports it</td>
+</tr>
+<tr>
+<td><strong>Release</strong></td>
+<td>a version of the service (<code>1.9.0</code>), tied to a commit</td>
+<td>a deployment that names a version (<code>matelot deploy --version</code>), a git tag / GitHub or GitLab release sync, or <em>Record release</em></td>
+</tr>
+<tr>
+<td><strong>Deployment</strong></td>
+<td>&quot;this image / release now runs in this environment&quot;</td>
+<td><code>matelot deploy</code>, <code>matelot promote</code>, a push to an environment repository, Kubernetes sync</td>
+</tr>
+</tbody></table>
+<p>A release does not <em>have</em> an environment — a deployment puts it there. One release can run in several
+environments (test, then prod, then a DR region); the graph draws <strong>release → image → environment</strong>
+for every current deployment.</p>
+<h2 id="standard-flow"><a class="anchor" href="#standard-flow">Standard flow</a></h2>
+<pre><code>commit ──build──► image demo:&lt;sha&gt; ──deploy──► dev          (no release: a build of main)
+tag v1.9.0-rc1 ──► image …:v1.9.0-rc1 ──deploy──► test       release 1.9.0-rc1 created by the deployment
+tag v1.9.0     ──► image …:v1.9.0     ──deploy──► prod       release 1.9.0 created by the deployment
+</code></pre>
+<p>Every deploy step reports <code>--version</code> (for rc and final), <code>--image &lt;image&gt;@&lt;digest&gt;</code> and <code>--commit</code>.</p>
+<h2 id="what-the-platform-guarantees"><a class="anchor" href="#what-the-platform-guarantees">What the platform guarantees</a></h2>
+<ul>
+<li><strong>A deployment that names a version creates the release</strong> if it does not exist yet (version-like names
+only), with the commit from <code>--commit</code> / <code>SECOPS_COMMIT</code>; audited as <code>release.created</code>. Git tag sync
+later enriches the same release (URL, notes, date) — it no longer depends on webhooks reaching the cell.</li>
+<li><strong>A digest is one image</strong>, whatever registry or tag it lives under:<ul>
+<li>a deployment reported by digest from a registry the platform has not read yet triggers an immediate
+registry read, and every later sync attaches digest-only deployments to their tag;</li>
+<li>the security graph, <em>Vulnerabilities → Running in</em>, the trend snapshots and the correlation all resolve
+&quot;what runs here&quot; by digest;</li>
+<li>the same image pushed to several registries is scanned once (one SBOM per digest).</li>
+</ul>
+</li>
+<li><strong>Tags link to releases</strong> by version (<code>v1.9.0</code> ↔ <code>1.9.0</code>), by commit (<code>&lt;sha&gt;</code> tags), and by a deployment
+that names both a version and an image.</li>
+</ul>
+<h2 id="built-in-registry-what-records-a-deployment"><a class="anchor" href="#built-in-registry-what-records-a-deployment">Built-in registry: what records a deployment</a></h2>
+<ul>
+<li><code>matelot promote</code> records the deployment itself, the moment the copy is done (no dependency on registry
+notifications reaching the API or on the reconcile loop).</li>
+<li>A real <code>docker push</code> into an environment repository is recorded by the registry notification.</li>
+<li>The <strong>reconcile pass</strong> (every 2 minutes, or <em>POST /organizations/:id/registry/reconcile</em>) only fills an
+environment that has nothing recorded, or records a tag built <strong>after</strong> the current deployment (a push the
+notification missed). It never overwrites a deployment reported from another registry, by hand or by
+Kubernetes — older tags lying in the environment repository are ignored. All three paths are serialised
+per environment, so they cannot record the same deployment twice.</li>
+</ul>
+<h2 id="environment-lineage-security-graph-environments"><a class="anchor" href="#environment-lineage-security-graph-environments">Environment lineage (Security graph → Environments)</a></h2>
+<p>Per environment, two lanes: <strong>Released</strong> — repository (commit) → release (version tag) → registries holding that
+tag → environment; <strong>Running now</strong> — repository (commit of the running build) → image <em>digest</em> → registries
+holding that digest (the one it was deployed from marked) → environment. Only the digest identifies what runs;
+a tag is a pointer that can move. <strong>Drift</strong> is flagged when the lanes disagree: the version tag was rebuilt
+after the deployment (<code>tag_moved</code>), the tag points to different images in different registries
+(<code>tag_split</code>), the running digest is in no known registry (<code>unknown_image</code>), no release exists for the
+deployed version (<code>no_release</code>), the running image was never scanned (<code>not_scanned</code>), a registry sync fails.
+API: <code>GET /environments/:id/lineage</code>.</p>
+<h2 id="where-to-see-it"><a class="anchor" href="#where-to-see-it">Where to see it</a></h2>
+<p>Releases &amp; images (release card: images + environment chips) · Running now · Security graph (hover a
+release) · Vulnerabilities → Running in · Audit (<code>release.created</code>, <code>deployment.recorded</code>).</p>
+</article>
+    <footer>Version 0.1.0 · generated from <code>docs/release-process.md</code></footer>
+  </main>
+  <nav class="toc"><div class="toc-title">On this page</div><ul><li class="d2"><a href="#the-model">The model</a></li><li class="d2"><a href="#standard-flow">Standard flow</a></li><li class="d2"><a href="#what-the-platform-guarantees">What the platform guarantees</a></li><li class="d2"><a href="#built-in-registry-what-records-a-deployment">Built-in registry: what records a deployment</a></li><li class="d2"><a href="#environment-lineage-security-graph-environments">Environment lineage (Security graph → Environments)</a></li><li class="d2"><a href="#where-to-see-it">Where to see it</a></li></ul></nav>
+</div>
+<script src="site.js" defer></script>
+</body>
+</html>

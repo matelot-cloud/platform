@@ -13,8 +13,5 @@ coverage/
 dist-worker/
 deploy/registry/certs/
 
-# generated documentation site (tools/docs-site/build.mjs)
-apps/web/public/docs/
-.env
-backups/
-decommissioned/
+# generated docs preview (make docs-sync / tools/docs-site)
+dist/

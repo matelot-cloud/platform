@@ -7,7 +7,12 @@ export interface RuntimeConfig {
   realm: string;
   clientId: string;
   apiBaseUrl: string;
+  /** The public documentation site; the sidebar's "Documentation" opens it in a new tab. Defaults to the published site. */
+  docsUrl?: string;
 }
+
+export const DEFAULT_DOCS_URL = 'https://matelot-io.github.io/website/docs/latest/';
+export const docsUrl = (c: Pick<RuntimeConfig, 'docsUrl'>): string => (c.docsUrl?.trim() ? c.docsUrl.trim() : DEFAULT_DOCS_URL);
 
 export async function loadRuntimeConfig(): Promise<RuntimeConfig> {
   const response = await fetch('/config.json', { cache: 'no-store' });

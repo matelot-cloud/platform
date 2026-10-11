@@ -5,9 +5,10 @@ TENANT_NAME ?= ACME Corp
 IMAGE ?= secops-api
 IMAGE_WEB ?= secops-web
 IMAGE_RUNNER ?= secops-runner
+IMAGE_WORKER ?= secops-worker
 TAG ?= dev
 
-.PHONY: help install dev-infra dev dev-stop worker runner runner-image registry-keys web migrate build test token smoke kind-up kind-down image kind-load deploy provision decommission backup restore undeploy helm-lint
+.PHONY: help install dev-infra dev dev-stop worker runner runner-image registry-keys web migrate build test token smoke kind-up kind-down image kind-load deploy provision decommission backup restore undeploy helm-lint docs-check docs-sync
 
 help: ## List targets
 > @grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
@@ -66,11 +67,13 @@ kind-down: ## Delete the kind cluster
 
 image: ## Build the API, web and runner container images
 > docker build -f apps/api/Dockerfile -t $(IMAGE):$(TAG) .
+> docker build -f apps/api/Dockerfile --target worker -t $(IMAGE_WORKER):$(TAG) .
 > docker build -f apps/web/Dockerfile -t $(IMAGE_WEB):$(TAG) .
 > docker build -t $(IMAGE_RUNNER):$(TAG) apps/runner
 
 kind-load: image ## Load the images into kind (API, web, managed runner)
 > kind load docker-image $(IMAGE):$(TAG) --name secops
+> kind load docker-image $(IMAGE_WORKER):$(TAG) --name secops
 > kind load docker-image $(IMAGE_WEB):$(TAG) --name secops
 > kind load docker-image $(IMAGE_RUNNER):$(TAG) --name secops
 
@@ -86,6 +89,7 @@ deploy: ## Deploy (or upgrade) one tenant cell: make deploy TENANT=acme
 >   --set "keycloak.seedUsers[0].email=admin@$(TENANT).local" \
 >   --set "keycloak.seedUsers[0].password=admin" \
 >   --set image.repository=$(IMAGE) --set image.tag=$(TAG) \
+>   --set worker.image.repository=$(IMAGE_WORKER) --set worker.image.tag=$(TAG) \
 >   --set web.image.repository=$(IMAGE_WEB) --set web.image.tag=$(TAG) \
 >   --set managedRunners.image.repository=$(IMAGE_RUNNER) --set managedRunners.image.tag=$(TAG)
 
@@ -103,6 +107,15 @@ restore: ## Restore a tenant cell from an archive: make restore TENANT=acme ARCH
 
 undeploy: ## Remove a tenant cell (keeps the PVC unless you delete the namespace)
 > helm uninstall $(TENANT) --namespace tenant-$(TENANT)
+
+WEBSITE_DIR ?= ../website
+
+docs-check: ## Render docs/ to a temp dir and check every link (what CI runs)
+> node tools/docs-site/test.mjs && node tools/docs-site/build.mjs --check
+
+docs-sync: ## Render docs/ into a local clone of matelot-io/website (WEBSITE_DIR=../website) as docs/latest, then build the site there to preview it
+> node tools/docs-site/build.mjs --out $(WEBSITE_DIR)/docs/latest --version latest
+> cd $(WEBSITE_DIR) && node tools/build.mjs && echo "preview: npx serve $(WEBSITE_DIR)/dist"
 
 helm-lint: ## Lint and render the chart in every supported configuration (defaults, production, backups, S3, external DB, TLS)
 > bash scripts/chart-test.sh

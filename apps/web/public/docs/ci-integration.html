@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CI/CD integration · Documentation</title>
+<link rel="icon" href="logo.png">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="index.html"><img src="logo.png" alt=""><span id="product">Security Platform</span> <span class="dim">docs</span></a>
+  <div class="search"><input id="q" type="search" placeholder="Search the docs…" autocomplete="off" aria-label="Search"><div id="results" class="results" hidden></div></div>
+  <a class="app" href="/">Open the app →</a>
+</header>
+<div class="page">
+  <button class="nav-toggle" aria-expanded="false" aria-controls="side">Contents</button>
+  <nav class="side" id="side"><ul><li class="section"><span>Start here</span><ul><li><a href="index.html">Documentation</a></li><li><a href="product.html">What the platform does</a></li><li><a href="roles.html">Roles and permissions</a></li><li><a href="coverage.html">Service coverage</a></li></ul></li><li class="section"><span>CLI and automation</span><ul><li><a href="cli.html">CLI guide</a></li><li><a href="cli-reference.html">Command reference</a></li><li class="current"><a href="ci-integration.html">CI/CD integration</a></li><li><a href="access-tokens.html">Access tokens</a></li><li><a href="mcp.html">MCP server (AI assistants)</a></li></ul></li><li class="section"><span>Connections and registries</span><ul><li><a href="github-app.html">GitHub App</a></li><li><a href="keyless-registries.html">Keyless registry access</a></li><li><a href="release-process.html">Builds, releases, deployments</a></li></ul></li><li class="section"><span>Runners</span><ul><li><a href="managed-runners.html">Managed runners</a></li><li><a href="runner-protocol.html">Runner protocol</a></li></ul></li><li class="section"><span>Operating a cell</span><ul><li><a href="cell-provisioning.html">Provisioning a cell</a></li><li><a href="backup-restore.html">Backup and restore</a></li><li><a href="usage-and-limits.html">Usage and rate limits</a></li><li><a href="endpoints.html">Endpoints of a cell</a></li></ul></li><li class="section"><span>Reference</span><ul><li><a href="parity-matrix.html">UI / API / CLI / MCP parity</a></li><li><a href="adr-0001.html">ADR 1: tenancy and stack</a></li><li><a href="adr-0002.html">ADR 2: web app</a></li><li><a href="adr-0003.html">ADR 3: two-level RBAC</a></li></ul></li></ul></nav>
+  <main class="content">
+    <div class="crumbs">CLI and automation</div>
+    <article><h1 id="ci-cd-integration-signed-ci-tokens"><a class="anchor" href="#ci-cd-integration-signed-ci-tokens">CI/CD integration (signed CI tokens)</a></h1>
+<p>Pipelines talk to the platform with <strong>CI tokens</strong>: machine credentials created on a project (or
+team / workspace / organization), limited to what a pipeline needs, revocable, audited. Requests are
+<strong>signed</strong>, never carry the secret, cannot be replayed or altered:</p>
+<pre><code>Authorization: SecOps-HMAC-SHA256 keyId=sk_…,ts=&lt;unix&gt;,nonce=&lt;random&gt;,sig=&lt;hex&gt;
+sig = HMAC-SHA256(secret, &quot;v1\n&quot; + ts + &quot;\n&quot; + nonce + &quot;\n&quot; + METHOD + &quot;\n&quot; + path + &quot;\n&quot; + sha256hex(body))
+</code></pre>
+<p>The cell accepts a timestamp within ±5 minutes and each nonce once (Redis). The secret is shown once
+at creation and stored encrypted with the cell key.</p>
+<h2 id="create-a-token"><a class="anchor" href="#create-a-token">Create a token</a></h2>
+<p>Project → Settings → <strong>CI tokens</strong> → New token → choose a preset (<em>Report releases and deployments</em>,
+<em>Run security pipelines and gates</em>, <em>Everything a pipeline can do</em>), optional expiry → copy <code>keyId</code>
+and <code>secret</code> into your CI secrets (<code>MATELOT_KEY_ID</code>, <code>MATELOT_SECRET</code>).</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">Use it</a></h2>
+<p><strong>npm package <code>secops-platform-cli</code></strong> (source: <code>apps/cli</code>, published from
+<code>github.com/dev-testing-secops-platform/secops-platform-cli</code>; Node ≥ 18): <code>npx secops-platform-cli deploy …</code>, or
+in GitHub Actions the repository&#39;s action, which installs it and exports the variables:</p>
+<pre><code class="language-yaml">- uses: dev-testing-secops-platform/secops-platform-cli@main   # or @v2.6.0
+  with:
+    url: ${{ vars.MATELOT_URL }}
+    key-id: ${{ secrets.MATELOT_KEY_ID }}
+    secret: ${{ secrets.MATELOT_SECRET }}
+- run: matelot pipeline --service ${{ vars.MATELOT_SERVICE_ID }} --ref ${{ github.sha }} --wait
+- run: matelot deploy --env ${{ vars.MATELOT_ENV_PROD }} --version ${{ github.ref_name }} --image $IMAGE
+
+GitLab CI and Bitbucket Pipelines equivalents: `docs/examples/gitlab-ci.yml`, `docs/examples/bitbucket-pipelines.yml`. A complete GitHub workflow (pipeline on every push, dev on main, tag → test → blocking prod gate → prod → signed evidence artifact) is in `docs/examples/github-actions.yml`. The action installs the CLI from the GitHub repository (`npm install -g github:…#ref`), so no npm publish is needed.
+</code></pre>
+<p>Releases: <code>git tag cli-v0.1.0 &amp;&amp; git push --tags</code> runs <code>.github/workflows/publish-cli.yml</code>, which
+publishes to npm with <strong>provenance</strong> (Sigstore attestation linking the package to the commit and
+workflow), so consumers can verify what they run (<code>npm audit signatures</code>). Requires an <code>NPM_TOKEN</code>
+secret (automation token of the npm org) once.</p>
+<p>For the rare CI without Node, <code>tools/secops-ci/secops.sh</code> (bash + openssl + curl) implements the same protocol (not advertised in the UI):</p>
+<pre><code class="language-yaml">- uses: &lt;org&gt;/secops-platform/tools/secops-ci@main
+  with:
+    url: https://acme.secops.example.com
+    key-id: ${{ secrets.MATELOT_KEY_ID }}
+    secret: ${{ secrets.MATELOT_SECRET }}
+    command: deploy
+    args: --env 3f2a… --version ${{ github.ref_name }} --image ghcr.io/acme/app:${{ github.ref_name }}
+</code></pre>
+<p>GitLab CI / Jenkins / anything else: <code>curl -sSO https://…/secops.sh &amp;&amp; bash secops.sh deploy …</code>.</p>
+<p>Commands: <code>whoami</code>, <code>deploy --env &lt;id&gt; --version X [--image ref]</code>, <code>release --service &lt;id&gt; --version X</code>,
+<code>pipeline --service &lt;id&gt; [--template security] [--ref &lt;branch|tag|sha&gt;]</code>, <code>sbom --service &lt;id&gt; --file bom.json --target source|image [--version X] [--image ref]</code> (upload an SBOM the CI generated itself, e.g. <code>syft dir:. -o cyclonedx-json=bom.json</code>
+or <code>syft ghcr.io/acme/app:1.2.0 -o cyclonedx-json=bom.json</code> with the job&#39;s own registry access),
+<code>request METHOD /api/v1/… &#39;&lt;json&gt;&#39;</code>.</p>
+<h2 id="network"><a class="anchor" href="#network">Network</a></h2>
+<p>The CI job needs outbound HTTPS to the cell. Hosted CI runners (github.com) require the cell to be
+reachable from the internet (TLS terminates in the cell, so the connection is end-to-end encrypted);
+a private cell works with self-hosted CI runners. For customers who require it, the cell ingress can
+additionally demand a client certificate (mTLS).</p>
+<h2 id="built-in-registry"><a class="anchor" href="#built-in-registry">Built-in registry</a></h2>
+<p>Namespaces mirror the platform, like GitLab group paths — no collisions between teams and the path
+says who owns the image:</p>
+<pre><code>&lt;workspace&gt;/&lt;team&gt;/&lt;project&gt;/&lt;service&gt;:&lt;tag&gt;                builds (scanned on every push)
+&lt;workspace&gt;/&lt;team&gt;/&lt;project&gt;/&lt;service&gt;/&lt;environment&gt;:&lt;tag&gt;  deployed to that environment
+</code></pre>
+<p>Pushing into an environment repository — or <code>matelot promote --env &lt;id&gt; --tag &lt;tag&gt;</code>, which copies the
+build inside the registry without re-uploading — <em>is</em> the deployment; the cluster pulls from the
+environment repository. A project CI token may use only its project&#39;s namespace.</p>
+<p><strong>Protected environments</strong> (Environments → Settings → <em>Protected</em>): only CI tokens explicitly allowed
+for that environment (<em>Settings → CI tokens → May deploy to</em>) can push/promote into it or record
+deployments there; a build token therefore cannot deploy to production by accident. Give the release
+job its own token.</p>
+<p>Nothing is hard-coded in pipelines: <code>matelot registry login</code> logs Docker in with the CI token, <code>matelot registry path --service &lt;id&gt;</code> prints the build image path (<code>--env &lt;id&gt;</code> the environment path), <code>matelot promote</code> deploys.
+Every environment row in the UI has copy buttons for its registry path and id; templates with the real
+values are under Environments → <em>CI snippet</em> (GitHub Actions and GitLab CI).</p>
+<p>With the preset <em>Push and pull images</em> (or <em>Everything a pipeline can do</em>), the same CI token is a
+Docker credential: <code>docker login &lt;registry host&gt; -u $MATELOT_KEY_ID -p $MATELOT_SECRET</code>. Repository
+paths follow <code>&lt;project-slug&gt;/&lt;service-slug&gt;[/&lt;name&gt;]:&lt;tag&gt;</code>; a project token may only push under
+its project. Every push is recorded (tag, digest) on the service and an image SBOM is generated.</p>
+<h2 id="external-registries-docker-hub-ghcr-gitlab-harbor"><a class="anchor" href="#external-registries-docker-hub-ghcr-gitlab-harbor">External registries (Docker Hub, GHCR, GitLab, Harbor…)</a></h2>
+<p>Connect the registry once (<em>Integrations → Connect a source → Container registry</em>: host, robot/read
+token). The pipeline pushes there as usual and reports what it deployed:</p>
+<pre><code class="language-yaml">- run: matelot deploy --env $MATELOT_ENV_DEV --image docker.io/acme/app@sha256:&lt;digest from the push&gt;
+- run: matelot deploy --env $MATELOT_ENV_PRODUCTION --version v1.7.0 --image docker.io/acme/app:v1.7.0
+</code></pre>
+<p>The first report registers the image on the service; tags and digests are read through the
+connection every 15 minutes; tags link to releases by version or commit; every reported tag and every
+tag that appears after the first sync gets an image SBOM automatically (the historical backlog is
+scanned on demand). <code>promote</code> exists only for the built-in registry — external registries have no
+environment repositories, so the deploy step reports instead. Protected environments apply to
+<code>matelot deploy</code> through the token&#39;s <em>May deploy to</em>.</p>
+<h2 id="aws-ecr-and-azure-container-registry"><a class="anchor" href="#aws-ecr-and-azure-container-registry">AWS ECR and Azure Container Registry</a></h2>
+<p>Connect them like any registry (<em>Integrations → Connect a source → AWS Elastic Container Registry /
+Azure Container Registry</em>), but with an <strong>IAM access key</strong> (ECR) or a <strong>service principal</strong> (ACR)
+instead of a Docker password. The platform exchanges those for short-lived Docker credentials —
+12-hour ECR tokens via <code>GetAuthorizationToken</code> (SigV4), ~3-hour ACR refresh tokens via the AAD →
+<code>/oauth2/exchange</code> flow — for tag sync, image scanning by runners, and CI logins. The AWS/Azure
+secret never leaves the cell.</p>
+<p>In CI, no cloud CLI or cloud credential is needed on the runner:</p>
+<pre><code class="language-yaml">- run: matelot registry login --connection &quot;ECR · production&quot; --service $MATELOT_SERVICE_ID
+- run: |
+    IMAGE=$(matelot registry path --service $MATELOT_SERVICE_ID --connection &quot;ECR · production&quot; --repository app --create)
+    docker build -t $IMAGE:$GITHUB_SHA . &amp;&amp; docker push $IMAGE:$GITHUB_SHA
+- run: matelot deploy --env $MATELOT_ENV_DEV --image &lt;image&gt;@sha256:…
+</code></pre>
+<p><code>registry path --connection … --repository …</code> resolves the host from the connection (nothing to
+configure in CI); <code>--create</code> makes the ECR repository if it does not exist (token needs <code>registry:push</code>).
+<code>matelot registry connections --service &lt;id&gt;</code> lists the connections on the service&#39;s path. Issuing
+credentials requires <code>registry:pull</code> (CI presets <em>registry</em> / <em>pipeline</em> / <em>full</em>; people with deploy
+rights) and is recorded in the audit trail. Minimal cloud rights: ECR — <code>ecr:GetAuthorizationToken</code>,
+<code>ecr:BatchGetImage</code>, <code>ecr:GetDownloadUrlForLayer</code>, <code>ecr:ListImages</code>, <code>ecr:DescribeImages</code>
+<code>ecr:DescribeRepositories</code> (+ <code>ecr:CreateRepository</code> to create repositories from the platform: connection → <em>Manage → ECR repositories</em>; + <code>ecr:PutImage</code>/<code>InitiateLayerUpload</code>/<code>UploadLayerPart</code>/<code>CompleteLayerUpload</code> for pushes);
+ACR — role <code>AcrPull</code> (+ <code>AcrPush</code>).</p>
+<h2 id="installing-the-cli-in-ci"><a class="anchor" href="#installing-the-cli-in-ci">Installing the CLI in CI</a></h2>
+<p>The CLI reads <code>MATELOT_URL</code>, <code>MATELOT_KEY_ID</code>, <code>MATELOT_SECRET</code> (CI token) or <code>MATELOT_TOKEN</code> (personal token), and
+<code>MATELOT_COMMIT</code> for <code>deploy</code>. The old <code>SECOPS_*</code> names are still accepted as a fallback.</p>
+<p><code>dev-testing-secops-platform/secops-platform-cli</code> is a private repository, so <code>uses: …@main</code> and
+<code>npm install -g github:…</code> only work for runners that can read it. For other organizations, pick one:</p>
+<ul>
+<li><strong>Package tarball</strong>: <code>npm pack</code> in the CLI repository produces <code>matelot-cli-&lt;version&gt;.tgz</code>; host it where runners can
+download it (an internal artifact store, a release asset) and install with <code>npm install -g &lt;url-or-path&gt;.tgz</code>.</li>
+<li><strong>Internal npm registry</strong> (Verdaccio, Artifactory, GitHub Packages): <code>npm publish</code> there, then <code>npm install -g matelot-cli</code>.</li>
+<li><strong>Public npm</strong>: once the package name is decided and published, <code>npm install -g &lt;name&gt;</code> works everywhere.</li>
+</ul>
+<p>The GitHub Action is a thin wrapper around the install; replace its <code>uses:</code> step with a <code>run: npm install -g …</code> line plus
+the three environment variables when the action is not reachable.</p>
+<h2 id="gate-timing-in-ci-wait-for-correlation"><a class="anchor" href="#gate-timing-in-ci-wait-for-correlation">Gate timing in CI: wait for correlation</a></h2>
+<p>Right after <code>docker push</code>, the image&#39;s SBOM is still being correlated for a few seconds. <code>matelot gate</code> and
+<code>matelot deploy</code> therefore wait for it (<code>--wait-correlation N</code> seconds; default <strong>300 in CI</strong> — detected by the <code>CI</code>
+variable or a CI token — and 0 for a person at a terminal) and only then evaluate the policies.</p>
+<p>The CLI asks the server in short slices (≤ 25 s per request, so no ingress or load balancer timeout is hit) until the
+budget is spent: &quot;waiting for SBOM correlation… (50 s / 300 s)&quot; lines go to stderr. It also waits for the image&#39;s SBOM
+to <strong>exist</strong>: right after a push the SBOM job may not have run, and an image nobody scanned never passes a gate, even
+where the policies do not require an SBOM.</p>
+<p>Exit codes: <code>0</code> pass/warn · <code>2</code> a blocking policy failed · <code>3</code> not evaluated (no SBOM for the image after the budget,
+or its correlation still pending or failed; no counts are printed, nothing was judged) · <code>4</code> authentication.
+Let a <code>3</code> fail the job loudly (the platform could not tell), but do not treat it as a security verdict.</p>
+<p><strong>Breaking change in CLI 2.9.0:</strong> an authentication failure now exits <code>4</code> (it was <code>3</code>); <code>3</code> means &quot;not evaluated&quot;.
+Scripts that tested for <code>3</code> to detect a bad token must test for <code>4</code>.</p>
+<h2 id="pipeline-jobs"><a class="anchor" href="#pipeline-jobs">Pipeline jobs</a></h2>
+<table>
+<thead>
+<tr>
+<th>Stage</th>
+<th>Job</th>
+<th>Tool</th>
+<th>Needs</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>source</td>
+<td>checkout</td>
+<td>git</td>
+<td>repository access (connection)</td>
+</tr>
+<tr>
+<td>inventory</td>
+<td>sbom</td>
+<td>syft</td>
+<td>—</td>
+</tr>
+<tr>
+<td>scan</td>
+<td>dependencies (<code>sca</code>)</td>
+<td>platform correlation (OSV / NVD / KEV / EPSS)</td>
+<td>the sbom job</td>
+</tr>
+<tr>
+<td>scan</td>
+<td>code (<code>sast</code>)</td>
+<td>Semgrep (<code>--config auto</code>; set <code>SEMGREP_CONFIG=p/ci</code> on an offline runner)</td>
+<td>runner image ≥ this release</td>
+</tr>
+<tr>
+<td>scan</td>
+<td>secrets, infrastructure</td>
+<td>trivy</td>
+<td>—</td>
+</tr>
+<tr>
+<td>policy</td>
+<td>evaluate (<code>policy_eval</code>)</td>
+<td>platform worker</td>
+<td>—</td>
+</tr>
+</tbody></table>
+<p>Rebuild the runner image after this release (<code>docker build apps/runner</code>) so <code>semgrep</code> is present; a runner without it reports the code job as skipped with that reason.</p>
+</article>
+    <footer>Version 0.1.0 · generated from <code>docs/ci-integration.md</code></footer>
+  </main>
+  <nav class="toc"><div class="toc-title">On this page</div><ul><li class="d2"><a href="#create-a-token">Create a token</a></li><li class="d2"><a href="#use-it">Use it</a></li><li class="d2"><a href="#network">Network</a></li><li class="d2"><a href="#built-in-registry">Built-in registry</a></li><li class="d2"><a href="#external-registries-docker-hub-ghcr-gitlab-harbor">External registries (Docker Hub, GHCR, GitLab, Harbor…)</a></li><li class="d2"><a href="#aws-ecr-and-azure-container-registry">AWS ECR and Azure Container Registry</a></li><li class="d2"><a href="#installing-the-cli-in-ci">Installing the CLI in CI</a></li><li class="d2"><a href="#gate-timing-in-ci-wait-for-correlation">Gate timing in CI: wait for correlation</a></li><li class="d2"><a href="#pipeline-jobs">Pipeline jobs</a></li></ul></nav>
+</div>
+<script src="site.js" defer></script>
+</body>
+</html>

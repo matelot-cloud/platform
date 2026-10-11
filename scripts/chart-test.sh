@@ -4,6 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 CHART=deploy/helm/secops-cell
+[ ! -e helm ] || { echo "stale chart copy at ./helm — the chart lives in deploy/helm/secops-cell only (git rm -r helm)" >&2; exit 1; }
 OUT="${CHART_TEST_OUT:-$(mktemp -d)}"
 run() { # run <name> [helm template args…]
   local name="$1"; shift
@@ -23,6 +24,7 @@ run no-managed-runners --set managedRunners.enabled=false --set registry.enabled
 grep -q 'kind: CronJob' "$OUT/backup-pvc.yaml" && ! grep -q 'kind: CronJob' "$OUT/defaults.yaml" || { echo "backup CronJob rendering is wrong" >&2; exit 1; }
 grep -q 'kind: PersistentVolumeClaim' "$OUT/backup-pvc.yaml" && grep -q 'initContainers' "$OUT/backup-s3.yaml" || { echo "backup storage rendering is wrong" >&2; exit 1; }
 grep -q 'DATABASE_URL' "$OUT/external-db.yaml" || { echo "external-db backup should use DATABASE_URL" >&2; exit 1; }
+grep -q '"docsUrl": "https://matelot-io.github.io/website/docs/latest/"' "$OUT/defaults.yaml" || { echo "web config.json should carry the default docsUrl" >&2; exit 1; }
 # data outlives `helm uninstall`: every PVC the chart creates is kept; Keycloak waits for Postgres instead of restarting
 python3 - "$OUT/backup-pvc.yaml" <<'PY'
 import sys, yaml
@@ -74,8 +76,8 @@ def pod_templates(docs):
 # (generated secrets pinned as above: without a cluster each `helm template` would roll new ones, and the registry's
 #  checksum legitimately covers its token key pair — on a real upgrade `lookup` returns the stored pair)
 pinned = [f"--set=encryptionKey={cell_key}", f"--set=registry.eventsSecret={reg['REGISTRY_EVENTS_SECRET']}", f"--set=managedRunners.secret={runner}", f"--set-file=registry.tokenKey={out}/reg.key", f"--set-file=registry.tokenCert={out}/reg.crt"]
-tag_a = render(pinned + ["--set", "image.tag=1.0.0", "--set", "web.image.tag=1.0.0", "--set", "managedRunners.image.tag=1.0.0"])
-tag_b = render(pinned + ["--set", "image.tag=1.0.1", "--set", "web.image.tag=1.0.1", "--set", "managedRunners.image.tag=1.0.1"])
+tag_a = render(pinned + ["--set", "image.tag=1.0.0", "--set", "worker.image.tag=1.0.0", "--set", "web.image.tag=1.0.0", "--set", "managedRunners.image.tag=1.0.0"])
+tag_b = render(pinned + ["--set", "image.tag=1.0.1", "--set", "worker.image.tag=1.0.1", "--set", "web.image.tag=1.0.1", "--set", "managedRunners.image.tag=1.0.1"])
 pa, pb = pod_templates(tag_a), pod_templates(tag_b)
 changed = sorted(k for k in pa if pa[k] != pb[k])
 expected = sorted(["Deployment/acme-api", "Deployment/acme-worker", "Deployment/acme-web", "StatefulSet/acme-runner"])

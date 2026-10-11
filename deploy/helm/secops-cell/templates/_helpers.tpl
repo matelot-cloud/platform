@@ -138,6 +138,10 @@ checksums agree, and an install renders exactly what the next upgrade renders (n
 {{- include "cell.generated" (dict "ctx" . "name" "managedRunnerSecret" "value" .Values.managedRunners.secret "secret" "managed-runner" "key" "MANAGED_RUNNER_SECRET" "gen" (randAlphaNum 48)) -}}
 {{- end -}}
 
+{{- define "cell.workerImage" -}}
+{{- printf "%s:%s" .Values.worker.image.repository (.Values.worker.image.tag | default .Chart.AppVersion) -}}
+{{- end -}}
+
 {{- define "cell.runnerImage" -}}
 {{- printf "%s:%s" .Values.managedRunners.image.repository (.Values.managedRunners.image.tag | default .Chart.AppVersion) -}}
 {{- end -}}

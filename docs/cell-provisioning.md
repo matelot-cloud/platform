@@ -14,7 +14,7 @@ decommissioning. The control plane that will automate it later (roadmap step 17)
 | cert-manager with a `ClusterIssuer` (e.g. `letsencrypt`) | TLS for `<slug>.<domain>`, `auth-<slug>.<domain>`, `registry-<slug>.<domain>` | `kubectl get clusterissuer` |
 | A wildcard DNS record `*.<domain>` → the ingress | one record covers every cell | `dig +short x.<domain>` |
 | A default StorageClass (or set `*.storageClassName`) | Postgres, registry, backups | `kubectl get storageclass` |
-| The three images in a registry the cluster can pull from | `secops-api`, `secops-web`, `secops-runner` at the same tag | `imagePullSecrets` per namespace if private |
+| The four images: `ghcr.io/matelot-io/{api,worker,web,runner}` at the same tag (public packages; a private mirror needs `imagePullSecrets`) | released by `.github/workflows/release.yml` | |
 | For backups off-site: an S3 bucket and credentials or pod identity | docs/backup-restore.md | |
 | Optional: an SMTP relay for e-mail notifications | `api.extraEnv` SMTP_* | |
 

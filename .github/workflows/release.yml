@@ -1,0 +1,213 @@
+# Release: tag vX.Y.Z on main → images, chart, public repositories, GitHub Release. See docs/release-process.md.
+#
+#   images   ghcr.io/matelot-io/{api,web,worker,runner}:X.Y.Z (+ vX.Y.Z, + latest unless pre-release), linux/amd64 + arm64,
+#            cosign-signed (keyless, GitHub OIDC), SPDX SBOM attached as an attestation (syft)
+#   chart    oci://ghcr.io/matelot-io/charts/secops-cell:X.Y.Z (appVersion X.Y.Z, signed); chart folder + backup/restore
+#            scripts synced to matelot-io/helm-charts
+#   docs     rendered into matelot-io/website: docs/vX.Y/ and docs/latest/ (Pages deploys on that push)
+#   release  GitHub Release vX.Y.Z in matelot-io/matelot: the CHANGELOG section + image and chart digests
+#
+# Secrets: GITHUB_TOKEN (ghcr, this repo) · PUBLIC_REPOS_TOKEN (org secret: fine-grained PAT, Contents read/write on
+# matelot-io/website, matelot-io/helm-charts, matelot-io/matelot) for the cross-repository pushes and the release.
+# One-time: after the first run make the five packages public (Packages → package → Package settings → Danger zone →
+# Change visibility), otherwise customers cannot pull. Pre-release tags (v1.2.0-rc.1) publish everything but `latest`
+# and mark the GitHub Release as pre-release.
+name: release
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+*']
+
+env:
+  REGISTRY: ghcr.io
+  ORG: matelot-io
+  CHART_DIR: deploy/helm/secops-cell
+  CHART_NAME: secops-cell
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}       # 1.2.3 or 1.2.3-rc.1
+      line: ${{ steps.v.outputs.line }}             # v1.2  (docs folder)
+      prerelease: ${{ steps.v.outputs.prerelease }} # true / false
+    steps:
+      - id: v
+        run: |
+          tag="${GITHUB_REF_NAME}"; version="${tag#v}"
+          case "$version" in *-*) pre=true ;; *) pre=false ;; esac
+          line="v$(echo "$version" | cut -d. -f1,2)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"; echo "line=$line" >> "$GITHUB_OUTPUT"; echo "prerelease=$pre" >> "$GITHUB_OUTPUT"
+          echo "tag $tag → version $version, docs $line, prerelease $pre"
+
+  images:
+    needs: version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write   # cosign keyless
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: api,    file: apps/api/Dockerfile,    target: runtime }
+          - { name: worker, file: apps/api/Dockerfile,    target: worker }
+          - { name: web,    file: apps/web/Dockerfile,    target: "" }
+          - { name: runner, file: apps/runner/Dockerfile, target: "" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ matrix.name }}
+          flavor: latest=${{ needs.version.outputs.prerelease == 'false' }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=ref,event=tag
+          labels: |
+            org.opencontainers.image.title=Matelot ${{ matrix.name }}
+            org.opencontainers.image.vendor=Matelot
+            org.opencontainers.image.url=https://matelot-io.github.io/website/
+            org.opencontainers.image.documentation=https://matelot-io.github.io/website/docs/latest/install.html
+            org.opencontainers.image.source=https://github.com/matelot-io/matelot
+            org.opencontainers.image.licenses=LicenseRef-Matelot-EULA
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          target: ${{ matrix.target }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: false
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,scope=${{ matrix.name }},mode=max
+      - uses: sigstore/cosign-installer@v3
+      - uses: anchore/sbom-action/download-syft@v0
+      - name: Sign the image and attach its SBOM (keyless, GitHub OIDC)
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ matrix.name }}@${{ steps.build.outputs.digest }}
+        run: |
+          cosign sign --yes "$IMAGE"
+          syft "$IMAGE" -o spdx-json > sbom.spdx.json
+          cosign attest --yes --type spdxjson --predicate sbom.spdx.json "$IMAGE"
+          echo "${{ matrix.name }} ${{ steps.build.outputs.digest }}" > "digest-${{ matrix.name }}.txt"
+      - uses: actions/upload-artifact@v4
+        with: { name: "digest-${{ matrix.name }}", path: "digest-${{ matrix.name }}.txt" }
+      - uses: actions/upload-artifact@v4
+        with: { name: "sbom-${{ matrix.name }}", path: sbom.spdx.json }
+
+  chart:
+    needs: version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - uses: sigstore/cosign-installer@v3
+      - name: Package and push the chart as OCI
+        id: push
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          helm lint "$CHART_DIR"
+          helm package "$CHART_DIR" --version "$VERSION" --app-version "$VERSION" --destination out
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+          helm push "out/$CHART_NAME-$VERSION.tgz" "oci://$REGISTRY/$ORG/charts" 2>&1 | tee push.log
+          digest=$(sed -n 's/^Digest: *//p' push.log)
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          cosign sign --yes "$REGISTRY/$ORG/charts/$CHART_NAME@$digest"
+      - name: Sync the chart folder to matelot-io/helm-charts
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          TOKEN: ${{ secrets.PUBLIC_REPOS_TOKEN }}
+        run: |
+          git clone --depth 1 "https://x-access-token:${TOKEN}@github.com/$ORG/helm-charts.git" public
+          rm -rf "public/charts/$CHART_NAME" public/scripts; mkdir -p public/charts public/scripts/lib
+          cp -r "$CHART_DIR" "public/charts/$CHART_NAME"
+          cp scripts/cell-backup.sh scripts/cell-restore.sh public/scripts/; cp scripts/lib/wait.sh scripts/lib/cellwait.py public/scripts/lib/
+          # the published copy carries the release version (the source keeps a development version)
+          sed -i "s/^version: .*/version: $VERSION/; s/^appVersion: .*/appVersion: \"$VERSION\"/" "public/charts/$CHART_NAME/Chart.yaml"
+          cd public
+          git config user.name "matelot-release[bot]"; git config user.email "release@matelot.io"
+          git add -A
+          git diff --cached --quiet && echo "chart unchanged" || { git commit -m "secops-cell $VERSION (from platform ${GITHUB_SHA::7})"; git push; }
+          git tag -f "$CHART_NAME-$VERSION" && git push -f origin "$CHART_NAME-$VERSION"
+
+  docs:
+    needs: version
+    runs-on: ubuntu-latest
+    permissions: { contents: read }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile --filter @secops/web   # `marked`
+      - run: node tools/docs-site/test.mjs
+      - name: Render docs/${{ needs.version.outputs.line }} and docs/latest into matelot-io/website
+        env:
+          LINE: ${{ needs.version.outputs.line }}
+          VERSION: ${{ needs.version.outputs.version }}
+          TOKEN: ${{ secrets.PUBLIC_REPOS_TOKEN }}
+        run: |
+          git clone --depth 1 "https://x-access-token:${TOKEN}@github.com/$ORG/website.git" public
+          node tools/docs-site/build.mjs --out "public/docs/$LINE" --version "$LINE"
+          node tools/docs-site/build.mjs --out public/docs/latest --version latest
+          cd public && node tools/test.mjs && node tools/build.mjs --check
+          git config user.name "matelot-release[bot]"; git config user.email "release@matelot.io"
+          git add -A docs
+          git diff --cached --quiet && echo "docs unchanged" || { git commit -m "docs: $LINE from platform v$VERSION"; git push; }
+
+  release:
+    needs: [version, images, chart, docs]
+    runs-on: ubuntu-latest
+    permissions: { contents: read }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { pattern: "digest-*", merge-multiple: true, path: digests }
+      - uses: actions/download-artifact@v4
+        with: { pattern: "sbom-*", path: sboms }
+      - name: "Release notes: CHANGELOG section + digests"
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          CHART_DIGEST: ${{ needs.chart.outputs.digest }}
+        run: |
+          bash scripts/changelog-section.sh "v$VERSION" > notes.md
+          {
+            echo; echo "## Artifacts"; echo
+            echo '```'
+            while read -r name digest; do echo "ghcr.io/$ORG/$name:$VERSION@$digest"; done < <(cat digests/*.txt | sort)
+            echo "oci://ghcr.io/$ORG/charts/$CHART_NAME:$VERSION@$CHART_DIGEST"
+            echo '```'
+            echo
+            echo "Images and chart are signed with cosign (keyless, GitHub OIDC) and the images carry SPDX SBOM attestations:"
+            echo '```'
+            echo "cosign verify ghcr.io/$ORG/api:$VERSION --certificate-identity-regexp 'https://github.com/$ORG/platform/' --certificate-oidc-issuer https://token.actions.githubusercontent.com"
+            echo "cosign verify-attestation --type spdxjson ghcr.io/$ORG/api:$VERSION --certificate-identity-regexp 'https://github.com/$ORG/platform/' --certificate-oidc-issuer https://token.actions.githubusercontent.com"
+            echo '```'
+            echo
+            echo "Install or upgrade: https://matelot-io.github.io/website/docs/${{ needs.version.outputs.line }}/install.html"
+          } >> notes.md
+          for d in sboms/*/; do n=$(basename "$d" | sed 's/^sbom-//'); cp "$d/sbom.spdx.json" "matelot-$n-$VERSION.spdx.json"; done
+          cat notes.md
+      - name: Create the GitHub Release in matelot-io/matelot
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_REPOS_TOKEN }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          flags=(); [ "${{ needs.version.outputs.prerelease }}" = "true" ] && flags+=(--prerelease)
+          # the public repo has no code: the release is a tag on its default branch
+          gh release create "v$VERSION" --repo "$ORG/matelot" --target main --title "Matelot v$VERSION" --notes-file notes.md "${flags[@]}" matelot-*.spdx.json

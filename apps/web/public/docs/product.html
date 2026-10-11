@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>What the platform does · Documentation</title>
+<link rel="icon" href="logo.png">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="index.html"><img src="logo.png" alt=""><span id="product">Security Platform</span> <span class="dim">docs</span></a>
+  <div class="search"><input id="q" type="search" placeholder="Search the docs…" autocomplete="off" aria-label="Search"><div id="results" class="results" hidden></div></div>
+  <a class="app" href="/">Open the app →</a>
+</header>
+<div class="page">
+  <button class="nav-toggle" aria-expanded="false" aria-controls="side">Contents</button>
+  <nav class="side" id="side"><ul><li class="section"><span>Start here</span><ul><li><a href="index.html">Documentation</a></li><li class="current"><a href="product.html">What the platform does</a></li><li><a href="roles.html">Roles and permissions</a></li><li><a href="coverage.html">Service coverage</a></li></ul></li><li class="section"><span>CLI and automation</span><ul><li><a href="cli.html">CLI guide</a></li><li><a href="cli-reference.html">Command reference</a></li><li><a href="ci-integration.html">CI/CD integration</a></li><li><a href="access-tokens.html">Access tokens</a></li><li><a href="mcp.html">MCP server (AI assistants)</a></li></ul></li><li class="section"><span>Connections and registries</span><ul><li><a href="github-app.html">GitHub App</a></li><li><a href="keyless-registries.html">Keyless registry access</a></li><li><a href="release-process.html">Builds, releases, deployments</a></li></ul></li><li class="section"><span>Runners</span><ul><li><a href="managed-runners.html">Managed runners</a></li><li><a href="runner-protocol.html">Runner protocol</a></li></ul></li><li class="section"><span>Operating a cell</span><ul><li><a href="cell-provisioning.html">Provisioning a cell</a></li><li><a href="backup-restore.html">Backup and restore</a></li><li><a href="usage-and-limits.html">Usage and rate limits</a></li><li><a href="endpoints.html">Endpoints of a cell</a></li></ul></li><li class="section"><span>Reference</span><ul><li><a href="parity-matrix.html">UI / API / CLI / MCP parity</a></li><li><a href="adr-0001.html">ADR 1: tenancy and stack</a></li><li><a href="adr-0002.html">ADR 2: web app</a></li><li><a href="adr-0003.html">ADR 3: two-level RBAC</a></li></ul></li></ul></nav>
+  <main class="content">
+    <div class="crumbs">Start here</div>
+    <article><h1 id="cra-native-product-security-os-for-european-software-companies-v1-focus"><a class="anchor" href="#cra-native-product-security-os-for-european-software-companies-v1-focus">CRA-Native Product Security OS for European Software Companies (v1 focus)</a></h1>
+<p>The platform is a <strong>B2B Product Security &amp; Compliance SaaS built for European software, IoT,
+embedded, and connected-product companies</strong>. It helps engineering and security teams continuously
+understand: what software products they have; what components and dependencies those products
+contain; which vulnerabilities affect them; which releases and production environments are exposed;
+what security policies are being violated; what needs to be fixed; what evidence is required for
+CRA and other compliance frameworks.</p>
+<p><strong>Product Security + CI/CD Security + CRA Compliance in one operational platform.</strong> Not a generic
+AppSec scanner, not a generic GRC platform.</p>
+<h2 id="core-structure"><a class="anchor" href="#core-structure">Core structure</a></h2>
+<p>Organization → Workspaces → Teams → Projects → Products / Services → Environments. Each project
+connects its own repositories (GitHub / GitLab / Azure DevOps), CI/CD pipelines, Jira project,
+container registries, Kubernetes environments, security tools, cloud resources.</p>
+<h2 id="product-inventory"><a class="anchor" href="#product-inventory">Product inventory</a></h2>
+<p>Product → Service → Repository → Build → Release → Container → Dependency → Deployment → Environment.</p>
+<h2 id="sbom-management"><a class="anchor" href="#sbom-management">SBOM management</a></h2>
+<p>Per product and release: components, dependency versions, transitive dependencies, licenses,
+vulnerabilities, changes between releases (Product 4.1 → SBOM, 4.2 → SBOM, 4.3 → SBOM).</p>
+<h2 id="vulnerability-management"><a class="anchor" href="#vulnerability-management">Vulnerability management</a></h2>
+<p>Continuous correlation of vulnerability intelligence with customer products: which products,
+versions, repositories, container images, environments are affected; whether production is exposed;
+which team owns it. &quot;CVE-X affects Product A versions 3.2 and 3.3, 6 repositories, 2 container
+images, and the production Kubernetes deployment.&quot;</p>
+<h2 id="product-security-graph"><a class="anchor" href="#product-security-graph">Product Security Graph</a></h2>
+<p>Products → Services → Repositories → Builds → Components → Containers → Deployments → Environments
+→ Vulnerabilities → Teams: the actual business and technical impact of a security issue.</p>
+<h2 id="risk-analysis"><a class="anchor" href="#risk-analysis">Risk analysis</a></h2>
+<p>CVSS, active exploitation, exploit availability, production exposure, internet exposure, product
+criticality, environment, customer impact, compensating controls. Same vulnerability: development →
+Medium; internet-facing production → Critical.</p>
+<h2 id="security-policies"><a class="anchor" href="#security-policies">Security policies</a></h2>
+<p>No Critical vulnerabilities in Production; SBOM required before release; security scan required;
+approved dependencies / licenses only; container scan required; branch protection required;
+mandatory code review. Inherited Organization → Workspace → Team → Project.</p>
+<h2 id="ci-cd-security-gates"><a class="anchor" href="#ci-cd-security-gates">CI/CD security gates</a></h2>
+<p>Push → Build → Tests → Security Scan → SBOM → Vulnerability Analysis → Policy Evaluation →
+PASS / FAIL → Deployment. A violated policy blocks the pipeline with policy, component and CVE named.</p>
+<h2 id="security-runners"><a class="anchor" href="#security-runners">Security runners</a></h2>
+<p>Runners are the Execution Plane, the SaaS the Control Plane: scheduler → runner → scan → results.
+Managed runners for smaller customers; self-hosted runners inside enterprise infrastructure (code
+never has to leave; only findings, SBOM metadata and evidence come back; outbound HTTPS only, no
+public IP).</p>
+<h2 id="remediation"><a class="anchor" href="#remediation">Remediation</a></h2>
+<p>Vulnerability detected → product impact → responsible team → remediation task → SLA → fix → new
+build scanned → verified → evidence stored → finding closed. Jira integration.</p>
+<h2 id="cra-native-compliance-and-continuous-evidence"><a class="anchor" href="#cra-native-compliance-and-continuous-evidence">CRA-native compliance and continuous evidence</a></h2>
+<p>SBOM, vulnerability management, security update process, incident workflow, security testing,
+remediation history → CRA evidence, collected continuously and versioned from repositories, CI/CD,
+scans, runners, issue tracking, infrastructure, releases. Later: NIS2, ISO 27001, SOC 2, DORA.</p>
+<h2 id="agentic-ai-security-consultant"><a class="anchor" href="#agentic-ai-security-consultant">Agentic AI security consultant</a></h2>
+<p>24/7 consultant working only through platform tools and data, respecting RBAC: highest risks,
+products affected by CVE-X, why a pipeline failed, what to fix first, missing CRA evidence, what
+changed in 24 h. Controlled actions (analyze, prioritize, create remediation tasks, collect
+evidence, generate reports, explain policy failures, trigger approved scans); sensitive actions
+need human approval.</p>
+<h2 id="initial-product-scope"><a class="anchor" href="#initial-product-scope">Initial product scope</a></h2>
+<p>Workspaces / Projects → GitHub / GitLab integrations → Managed / Self-Hosted Runners → Product
+Inventory → SBOM → Vulnerability Correlation → Product Security Graph → Risk Analysis → Security
+Policies → CI/CD Security Gates → Remediation → CRA Evidence → Agentic AI Consultant.</p>
+<p>Core lifecycle: <strong>Code → Build → Runner → SBOM → Vulnerability → Product Impact → Risk → Policy →
+Remediation → CRA Evidence → AI Automation.</strong></p>
+<p>Initial customer: European company building its own software / IoT / embedded / connected products,
+30–500 employees, several engineering teams, GitHub / GitLab / Azure DevOps, regular releases,
+preparing for CRA.</p>
+</article>
+    <footer>Version 0.1.0 · generated from <code>docs/concept-v1.md</code></footer>
+  </main>
+  <nav class="toc"><div class="toc-title">On this page</div><ul><li class="d2"><a href="#core-structure">Core structure</a></li><li class="d2"><a href="#product-inventory">Product inventory</a></li><li class="d2"><a href="#sbom-management">SBOM management</a></li><li class="d2"><a href="#vulnerability-management">Vulnerability management</a></li><li class="d2"><a href="#product-security-graph">Product Security Graph</a></li><li class="d2"><a href="#risk-analysis">Risk analysis</a></li><li class="d2"><a href="#security-policies">Security policies</a></li><li class="d2"><a href="#ci-cd-security-gates">CI/CD security gates</a></li><li class="d2"><a href="#security-runners">Security runners</a></li><li class="d2"><a href="#remediation">Remediation</a></li><li class="d2"><a href="#cra-native-compliance-and-continuous-evidence">CRA-native compliance and continuous evidence</a></li><li class="d2"><a href="#agentic-ai-security-consultant">Agentic AI security consultant</a></li><li class="d2"><a href="#initial-product-scope">Initial product scope</a></li></ul></nav>
+</div>
+<script src="site.js" defer></script>
+</body>
+</html>

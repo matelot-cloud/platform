@@ -9,8 +9,6 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY apps/web/package.json apps/web/
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store pnpm install --frozen-lockfile --filter @secops/web
 COPY apps/web apps/web
-COPY docs docs
-COPY tools/docs-site tools/docs-site
 RUN pnpm --filter @secops/web build
 
 FROM nginxinc/nginx-unprivileged:1.27-alpine

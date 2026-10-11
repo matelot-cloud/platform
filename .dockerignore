@@ -5,6 +5,6 @@ apps/*/coverage
 .git
 .env
 deploy
-docs/roadmap
-docs/concept.md
+docs
+tools/docs-site
 scripts

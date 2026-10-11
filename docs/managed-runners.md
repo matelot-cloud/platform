@@ -32,7 +32,7 @@ Kubernetes clusters).
 managedRunners:
   enabled: true        # false removes the StatefulSet (the Secret is kept)
   replicas: 1          # 0 stops them
-  image: { repository: secops-runner, tag: "" }   # tag defaults to the chart appVersion
+  image: { repository: ghcr.io/matelot-io/runner, tag: "" }   # tag defaults to the chart appVersion
   tags: []
   secret: ""           # empty = generated and kept
   resources: { requests: { cpu: 250m, memory: 512Mi }, limits: { cpu: "2", memory: 2Gi } }

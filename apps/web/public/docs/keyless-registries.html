@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Keyless registry access · Documentation</title>
+<link rel="icon" href="logo.png">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="index.html"><img src="logo.png" alt=""><span id="product">Security Platform</span> <span class="dim">docs</span></a>
+  <div class="search"><input id="q" type="search" placeholder="Search the docs…" autocomplete="off" aria-label="Search"><div id="results" class="results" hidden></div></div>
+  <a class="app" href="/">Open the app →</a>
+</header>
+<div class="page">
+  <button class="nav-toggle" aria-expanded="false" aria-controls="side">Contents</button>
+  <nav class="side" id="side"><ul><li class="section"><span>Start here</span><ul><li><a href="index.html">Documentation</a></li><li><a href="product.html">What the platform does</a></li><li><a href="roles.html">Roles and permissions</a></li><li><a href="coverage.html">Service coverage</a></li></ul></li><li class="section"><span>CLI and automation</span><ul><li><a href="cli.html">CLI guide</a></li><li><a href="cli-reference.html">Command reference</a></li><li><a href="ci-integration.html">CI/CD integration</a></li><li><a href="access-tokens.html">Access tokens</a></li><li><a href="mcp.html">MCP server (AI assistants)</a></li></ul></li><li class="section"><span>Connections and registries</span><ul><li><a href="github-app.html">GitHub App</a></li><li class="current"><a href="keyless-registries.html">Keyless registry access</a></li><li><a href="release-process.html">Builds, releases, deployments</a></li></ul></li><li class="section"><span>Runners</span><ul><li><a href="managed-runners.html">Managed runners</a></li><li><a href="runner-protocol.html">Runner protocol</a></li></ul></li><li class="section"><span>Operating a cell</span><ul><li><a href="cell-provisioning.html">Provisioning a cell</a></li><li><a href="backup-restore.html">Backup and restore</a></li><li><a href="usage-and-limits.html">Usage and rate limits</a></li><li><a href="endpoints.html">Endpoints of a cell</a></li></ul></li><li class="section"><span>Reference</span><ul><li><a href="parity-matrix.html">UI / API / CLI / MCP parity</a></li><li><a href="adr-0001.html">ADR 1: tenancy and stack</a></li><li><a href="adr-0002.html">ADR 2: web app</a></li><li><a href="adr-0003.html">ADR 3: two-level RBAC</a></li></ul></li></ul></nav>
+  <main class="content">
+    <div class="crumbs">Connections and registries</div>
+    <article><h1 id="keyless-registry-connections-workload-identity-federation"><a class="anchor" href="#keyless-registry-connections-workload-identity-federation">Keyless registry connections (workload identity federation)</a></h1>
+<p>Matelot can pull from Google Artifact Registry, Amazon ECR and Azure Container Registry
+without storing a cloud secret. The platform is an OIDC identity provider; each connection
+gets its own identity, and the cloud trusts tokens Matelot signs for it.</p>
+<h2 id="how-it-works"><a class="anchor" href="#how-it-works">How it works</a></h2>
+<ul>
+<li>Issuer: <code>API_PUBLIC_URL</code> (must be public HTTPS — the cloud fetches the discovery document and keys).</li>
+<li>Discovery: <code>&lt;issuer&gt;/.well-known/openid-configuration</code>, keys: <code>&lt;issuer&gt;/.well-known/jwks.json</code>.</li>
+<li>Tokens: RS256, 10-minute lifetime, <code>sub = integration:&lt;connection id&gt;</code>, one audience per cloud.</li>
+<li>The signing key is stored encrypted with the cell key. If it can no longer be decrypted
+(cell key changed) a new key is generated; the old public key stays in the JWKS as retired.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Cloud</th>
+<th>Auth type</th>
+<th>Audience</th>
+<th>Exchange</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>GCP (GAR)</td>
+<td><code>gcp_wif</code></td>
+<td><code>https://iam.googleapis.com/&lt;provider resource&gt;</code></td>
+<td>STS token exchange → <code>generateAccessToken</code> for the service account → docker user <code>oauth2accesstoken</code></td>
+</tr>
+<tr>
+<td>AWS (ECR)</td>
+<td><code>aws_wif</code></td>
+<td><code>sts.amazonaws.com</code></td>
+<td><code>AssumeRoleWithWebIdentity</code> → temporary keys → ECR <code>GetAuthorizationToken</code></td>
+</tr>
+<tr>
+<td>Azure (ACR)</td>
+<td><code>azure_wif</code></td>
+<td><code>api://AzureADTokenExchange</code></td>
+<td>Entra ID client credentials with a client assertion → ACR refresh token</td>
+</tr>
+</tbody></table>
+<h2 id="setting-it-up"><a class="anchor" href="#setting-it-up">Setting it up</a></h2>
+<p>The cloud trusts the <strong>exact</strong> subject <code>integration:&lt;connection id&gt;</code>, and the id only exists once the connection
+is created. So a keyless connection is created first, unverified, and checked afterwards:</p>
+<ol>
+<li><strong>Create</strong> the connection with <strong>Keyless</strong> on (web: Connect → registry → Keyless), or via CLI
+<code>matelot connection create --body &#39;{&quot;provider&quot;:&quot;registry&quot;,&quot;baseUrl&quot;:&quot;…&quot;,&quot;auth&quot;:{&quot;type&quot;:&quot;aws_wif&quot;,&quot;roleArn&quot;:&quot;…&quot;,&quot;region&quot;:&quot;…&quot;}}&#39;</code>.
+Nothing is probed and nothing is signed at this point; the connection is <code>pending</code> with <code>settings.verified=false</code>,
+and the response carries <code>identity</code> (issuer, subject, audience, steps). &quot;Test connection&quot; is not available for
+keyless connections for the same reason.</li>
+<li><strong>Configure the trust</strong> in the cloud for that subject. Manage → <strong>Identity · keyless</strong> (or
+<code>matelot connection identity --id &lt;connection&gt;</code>) shows the concrete values:<ul>
+<li><strong>GCP</strong>: workload identity pool + OIDC provider with the issuer URL, mapping <code>google.subject=assertion.sub</code>; then
+<code>gcloud iam service-accounts add-iam-policy-binding SA --role=roles/iam.workloadIdentityUser --member=&quot;principal://iam.googleapis.com/&lt;pool&gt;/subject/integration:&lt;id&gt;&quot;</code>
+(the principal is filled in from the connection&#39;s provider path); the service account needs Artifact Registry Reader.</li>
+<li><strong>AWS</strong>: IAM OIDC identity provider (issuer URL, audience <code>sts.amazonaws.com</code>); the role&#39;s trust policy is shown as
+JSON with <code>StringEquals { &quot;&lt;issuer host&gt;:aud&quot;: &quot;sts.amazonaws.com&quot;, &quot;&lt;issuer host&gt;:sub&quot;: &quot;integration:&lt;id&gt;&quot; }</code>;
+attach <code>AmazonEC2ContainerRegistryReadOnly</code>.</li>
+<li><strong>Azure</strong>: a federated credential on the app registration — issuer, subject <code>integration:&lt;id&gt;</code> (exact match),
+audience <code>api://AzureADTokenExchange</code>; the <code>az ad app federated-credential create</code> command is shown ready to paste.
+Give the app <code>AcrPull</code> on the registry.</li>
+</ul>
+</li>
+<li><strong>Verify</strong>: the Verify button (Identity tab, the wizard&#39;s last step, or Manage → Actions), or
+<code>matelot connection verify --id &lt;connection&gt;</code>. It signs a token for the real subject and runs the exchange.
+A refusal is stored as the connection&#39;s last error and shown under Identity; success sets <code>verified</code> and starts the
+first sync. Until then syncs of the connection are a quiet no-op (no error state).</li>
+</ol>
+<p>The cell never signs a token for a placeholder subject: a keyless exchange without a real connection id is refused
+before any cloud call.</p>
+<h2 id="disconnect-and-delete"><a class="anchor" href="#disconnect-and-delete">Disconnect and delete</a></h2>
+<ul>
+<li><code>matelot connection disconnect --id X</code> (<code>POST /integrations/:id/disconnect</code>) keeps the connection and its repositories
+but forgets the credentials. A disconnected keyless connection shows only &quot;Disconnected — create the connection again&quot;
+with its non-secret parameters (client id, role ARN, provider / service account); it cannot be verified.</li>
+<li><code>matelot connection delete --id X</code> (<code>DELETE /integrations/:id</code>) removes the connection, its repositories and their
+service links. If container images pull through it, the API answers 409 listing them; <code>--force</code> (web: &quot;Detach images
+and delete&quot;) detaches them, and their next sync looks for another usable connection to the same registry.</li>
+<li>Status: a verified keyless connection becomes <code>connected</code> (pending reason cleared) after its first successful sync,
+source or image. Disconnected and unverified keyless connections are never picked for image pulls.</li>
+</ul>
+<p>The issuer must be reachable by the cloud provider. With <code>API_PUBLIC_URL</code> unset or not HTTPS,
+the Identity page shows a warning and verification will fail at the cloud&#39;s token exchange.</p>
+</article>
+    <footer>Version 0.1.0 · generated from <code>docs/keyless-registries.md</code></footer>
+  </main>
+  <nav class="toc"><div class="toc-title">On this page</div><ul><li class="d2"><a href="#how-it-works">How it works</a></li><li class="d2"><a href="#setting-it-up">Setting it up</a></li><li class="d2"><a href="#disconnect-and-delete">Disconnect and delete</a></li></ul></nav>
+</div>
+<script src="site.js" defer></script>
+</body>
+</html>

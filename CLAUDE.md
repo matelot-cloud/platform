@@ -5,10 +5,14 @@ design sessions so every new session starts with them.
 
 ## What this is
 
-A B2B Product Security / DevSecOps / Compliance SaaS platform. Each client gets **one dedicated
-"tenant cell"** (namespace `tenant-<slug>`: API, web app, Postgres, Redis, Keycloak) deployed as
-one release of the Helm chart in `deploy/helm/secops-cell`. We operate the cells; a control
-plane (not built yet) will provision them. Full product spec lives with the owner; the roadmap
+A B2B Product Security / DevSecOps / Compliance platform, **closed source and self-hosted**: a customer installs
+**one "cell"** per organization (namespace `tenant-<slug>`: API, worker, web app, managed runners, registry, Postgres,
+Redis, Keycloak) in their own cluster from the Helm chart `deploy/helm/secops-cell`, published as
+`oci://ghcr.io/matelot-io/charts/secops-cell` with images `ghcr.io/matelot-io/{api,web,worker,runner}`.
+Subscription per user: Free / Premium / Ultimate (licensing and entitlements are M13, not built yet).
+GitHub organization `matelot-io`: this private monorepo (`platform`) + public `matelot` (issues, discussions,
+releases), `helm-charts`, `website` (GitHub Pages), `.github` — all written by `.github/workflows/release.yml` and
+`docs-sync.yml`, see docs/release-process.md (internal). Full product spec lives with the owner; the roadmap
 below is the agreed build order.
 
 ## Stack (do not change without an ADR in docs/adr)
@@ -110,5 +114,10 @@ providers · 17 provisioning control plane.
 - The web app is tested in jsdom (test/render.mjs) and has been used in a real browser on kind; no full visual pass yet.
 - Product name is a placeholder ("Security Platform" / `secops`).
 - MCP server: apps/api/src/mcp (tools generated from OpenAPI; docs/mcp.md). CLI: `matelot mcp`.
-- Documentation site: `tools/docs-site/build.mjs` renders `docs/*.md` (sections in its SITE table) into `apps/web/public/docs/`
-  during the web build; served at `/docs/` on every cell. A new doc goes into the SITE table; `node tools/docs-site/build.mjs --check` verifies links.
+- Public website = the `matelot-io/website` repository (landing page from its `content.json` on the Luminary
+  template; https://matelot-io.github.io/website, custom domain = its `SITE_DOMAIN` variable). The docs are rendered
+  from `docs/*.md` here by `tools/docs-site/build.mjs` (page list: `SITE` table; public docs may not link into this
+  repo) and pushed there by `docs-sync.yml` (latest) and `release.yml` (`docs/vX.Y`). `make docs-check` is the CI gate;
+  `make docs-sync WEBSITE_DIR=../website` previews the whole site. The web app does not bundle docs; its sidebar link
+  is `docsUrl` from config.json (`web.docsUrl` in the chart, default the Pages URL).
+- A release = tag `vX.Y.Z` with a `## vX.Y.Z — …` section at the top of CHANGELOG.md; `release.yml` does the rest.

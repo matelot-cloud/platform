@@ -1,9 +1,0 @@
-apiVersion: v2
-name: secops-cell
-description: >-
-  One dedicated tenant cell of the Product Security, DevSecOps & Compliance platform:
-  API, Postgres, Redis and Keycloak in a single namespace. One Helm release per client.
-type: application
-version: 0.1.0
-appVersion: "0.1.0"
-keywords: [security, compliance, sbom, devsecops]

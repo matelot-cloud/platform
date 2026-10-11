@@ -33,9 +33,8 @@ spec:
           type: RuntimeDefault
       containers:
         - name: worker
-          image: {{ include "cell.image" . | quote }}
+          image: {{ include "cell.workerImage" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["node", "dist/worker.js"]
           envFrom:
             - configMapRef:
                 name: {{ .Release.Name }}-api-config

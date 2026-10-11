@@ -1,0 +1,37 @@
+# Keeps docs/latest/ of matelot-io/website equal to docs/ on main: renders the documentation and pushes it when it
+# changed (the website's Pages workflow deploys on that push). Release tags write docs/vX.Y/ via release.yml.
+# Secret: PUBLIC_REPOS_TOKEN (org secret, see docs/release-process.md).
+name: docs-sync
+on:
+  push:
+    branches: [main]
+    paths: ['docs/**', 'tools/docs-site/**', '.github/workflows/docs-sync.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: docs-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions: { contents: read }
+    env:
+      ORG: matelot-io
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile --filter @secops/web   # `marked`
+      - run: node tools/docs-site/test.mjs
+      - name: Render docs/latest into matelot-io/website
+        env:
+          TOKEN: ${{ secrets.PUBLIC_REPOS_TOKEN }}
+        run: |
+          git clone --depth 1 "https://x-access-token:${TOKEN}@github.com/$ORG/website.git" public
+          node tools/docs-site/build.mjs --out public/docs/latest --version latest
+          cd public && node tools/test.mjs && node tools/build.mjs --check
+          git config user.name "matelot-release[bot]"; git config user.email "release@matelot.io"
+          git add -A docs/latest
+          git diff --cached --quiet && echo "docs/latest unchanged" || { git commit -m "docs: latest from platform ${GITHUB_SHA::7}"; git push; }

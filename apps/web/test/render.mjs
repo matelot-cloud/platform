@@ -46,7 +46,7 @@ const coveredSvc = { serviceId: SERVICE, serviceName: 'Payment Service', service
 const bareSvc = { serviceId: 'svc-bare', serviceName: 'Ledger Worker', serviceSlug: 'ledger-worker', projectId: PROJECT, projectName: 'Payment API', workspaceId: WS, covered: false, gaps: ['repository', 'pipeline', 'sbom', 'deployment'], checks: [covCheck('repository', 'Repository attached', 'missing', 'no repository attached', `/projects/${PROJECT}/services`, 'matelot repository attach --service svc-bare --repository-id <id>'), covCheck('pipeline', 'Security pipeline', 'stale', 'last finished 40 days ago (older than 30 days)', `/projects/${PROJECT}/pipelines`, 'matelot pipeline --service svc-bare --template security --wait'), covCheck('sbom', 'SBOM', 'missing', 'no SBOM', `/projects/${PROJECT}/inventory`, 'matelot sbom --service svc-bare --file bom.json --target source'), covCheck('policy', 'Policy applies', 'ok', '1 policy applies (1 inherited)'), covCheck('deployment', 'Deployment recorded', 'missing', 'no environment', `/projects/${PROJECT}/environments`, 'matelot env create --service svc-bare --slug production --name Production --kind production')] };
 const covSummary = { days: 30, services: 2, covered: 1, checks: { repository: { title: 'Repository attached', ok: 1, stale: 0, missing: 1 }, pipeline: { title: 'Security pipeline', ok: 1, stale: 1, missing: 0 }, sbom: { title: 'SBOM', ok: 1, stale: 0, missing: 1 }, policy: { title: 'Policy applies', ok: 2, stale: 0, missing: 0 }, deployment: { title: 'Deployment recorded', ok: 1, stale: 0, missing: 1 } } };
 const routes = {
-  '/config.json': { productName: 'Security Platform', keycloakUrl: 'http://localhost:8080', realm: 'platform', clientId: 'platform-web', apiBaseUrl: '/api/v1' },
+  '/config.json': { productName: 'Security Platform', keycloakUrl: 'http://localhost:8080', realm: 'platform', clientId: 'platform-web', apiBaseUrl: '/api/v1', docsUrl: 'https://docs.example.test/docs/latest/' },
   '/api/v1/meta': { version: '0.1.0', rootOrganizationSlug: 'acme', roles: ['ORG_ADMIN', 'DEVELOPER'], scopeTypes: ['ORGANIZATION', 'WORKSPACE', 'TEAM', 'PROJECT'], criticalities: ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'], permissions: [], rolePermissions: {} },
   '/api/v1/me': { user, memberships: [{ id: 'm1', role: 'ORG_ADMIN', scopeType: 'ORGANIZATION', scopeId: ORG, scope: { type: 'ORGANIZATION', id: ORG, slug: 'acme', name: 'ACME Corp' } }] },
   '/api/v1/organizations': [{ id: ORG, slug: 'acme', name: 'ACME Corp', parentId: null, createdAt: now, updatedAt: now, archivedAt: null }],
@@ -222,6 +222,13 @@ try {
     console.log(`${missing.length ? 'FAIL' : 'ok  '} ${target}${missing.length ? ` — missing: ${missing.join(', ')}` : ''}`);
     if (missing.length) failed = true;
   }
+  // the sidebar's Documentation link opens the public site from config.json in a new tab
+  window.history.pushState({}, '', '/overview'); window.dispatchEvent(new window.PopStateEvent('popstate'));
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  const docsLink = [...window.document.querySelectorAll('a')].find((a) => a.textContent.trim() === 'Documentation');
+  const docsOk = docsLink && docsLink.getAttribute('href') === 'https://docs.example.test/docs/latest/' && docsLink.getAttribute('target') === '_blank';
+  console.log(`${docsOk ? 'ok  ' : 'FAIL'} sidebar Documentation → config.json docsUrl in a new tab`);
+  if (!docsOk) failed = true;
 } catch (error) {
   console.error('render smoke test crashed:', error);
   failed = true;

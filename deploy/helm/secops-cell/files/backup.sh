@@ -2,7 +2,7 @@
 # Cell backup (runs in the postgres image from the chart's CronJob): pg_dump --format=custom of every database in
 # $DATABASES plus the cell's Secrets mounted under $SECRETS_DIR, as one <cell>-<UTC stamp>.tar.gz in $OUT_DIR, with a
 # .sha256 next to it and a "latest.tar.gz" symlink; archives older than $RETENTION_DAYS days are pruned.
-# Restore with scripts/cell-restore.sh (docs/backup-restore.md).
+# Restore with scripts/cell-restore.sh from https://github.com/matelot-io/helm-charts (docs: backup-restore).
 set -euo pipefail
 # Connection: PGHOST/PGUSER/PGPASSWORD (bundled Postgres), or DATABASE_URL (external): postgresql://user:pass@host[:port]/db[?…]
 if [ -z "${PGHOST:-}" ] && [ -n "${DATABASE_URL:-}" ]; then

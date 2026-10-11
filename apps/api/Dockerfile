@@ -39,3 +39,8 @@ USER app
 WORKDIR /app/apps/api
 EXPOSE 3000
 CMD ["node", "dist/main.js"]
+
+# ---- worker: the same runtime with the worker entrypoint (published as ghcr.io/matelot-io/worker) -----------------
+FROM runtime AS worker
+CMD ["node", "dist/worker.js"]
+

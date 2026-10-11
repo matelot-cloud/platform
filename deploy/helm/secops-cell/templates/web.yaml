@@ -12,7 +12,8 @@ data:
       "keycloakUrl": {{ include "cell.keycloakPublicUrl" . | quote }},
       "realm": {{ .Values.keycloak.realm | quote }},
       "clientId": "platform-web",
-      "apiBaseUrl": "/api/v1"
+      "apiBaseUrl": "/api/v1",
+      "docsUrl": {{ .Values.web.docsUrl | quote }}
     }
 ---
 apiVersion: v1
@@ -52,7 +53,7 @@ spec:
         app.kubernetes.io/name: web
         secops.io/ingress-exposed: "true"
       annotations:
-        checksum/config: {{ printf "%s|%s|%s" (include "cell.productName" .) (include "cell.keycloakPublicUrl" .) .Values.keycloak.realm | sha256sum }}
+        checksum/config: {{ printf "%s|%s|%s|%s" (include "cell.productName" .) (include "cell.keycloakPublicUrl" .) .Values.keycloak.realm .Values.web.docsUrl | sha256sum }}
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:

@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Provisioning a cell · Documentation</title>
+<link rel="icon" href="logo.png">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="index.html"><img src="logo.png" alt=""><span id="product">Security Platform</span> <span class="dim">docs</span></a>
+  <div class="search"><input id="q" type="search" placeholder="Search the docs…" autocomplete="off" aria-label="Search"><div id="results" class="results" hidden></div></div>
+  <a class="app" href="/">Open the app →</a>
+</header>
+<div class="page">
+  <button class="nav-toggle" aria-expanded="false" aria-controls="side">Contents</button>
+  <nav class="side" id="side"><ul><li class="section"><span>Start here</span><ul><li><a href="index.html">Documentation</a></li><li><a href="product.html">What the platform does</a></li><li><a href="roles.html">Roles and permissions</a></li><li><a href="coverage.html">Service coverage</a></li></ul></li><li class="section"><span>CLI and automation</span><ul><li><a href="cli.html">CLI guide</a></li><li><a href="cli-reference.html">Command reference</a></li><li><a href="ci-integration.html">CI/CD integration</a></li><li><a href="access-tokens.html">Access tokens</a></li><li><a href="mcp.html">MCP server (AI assistants)</a></li></ul></li><li class="section"><span>Connections and registries</span><ul><li><a href="github-app.html">GitHub App</a></li><li><a href="keyless-registries.html">Keyless registry access</a></li><li><a href="release-process.html">Builds, releases, deployments</a></li></ul></li><li class="section"><span>Runners</span><ul><li><a href="managed-runners.html">Managed runners</a></li><li><a href="runner-protocol.html">Runner protocol</a></li></ul></li><li class="section"><span>Operating a cell</span><ul><li class="current"><a href="cell-provisioning.html">Provisioning a cell</a></li><li><a href="backup-restore.html">Backup and restore</a></li><li><a href="usage-and-limits.html">Usage and rate limits</a></li><li><a href="endpoints.html">Endpoints of a cell</a></li></ul></li><li class="section"><span>Reference</span><ul><li><a href="parity-matrix.html">UI / API / CLI / MCP parity</a></li><li><a href="adr-0001.html">ADR 1: tenancy and stack</a></li><li><a href="adr-0002.html">ADR 2: web app</a></li><li><a href="adr-0003.html">ADR 3: two-level RBAC</a></li></ul></li></ul></nav>
+  <main class="content">
+    <div class="crumbs">Operating a cell</div>
+    <article><h1 id="provisioning-a-tenant-cell"><a class="anchor" href="#provisioning-a-tenant-cell">Provisioning a tenant cell</a></h1>
+<p>Every customer gets one cell: a Helm release of <code>deploy/helm/secops-cell</code> in its own namespace <code>tenant-&lt;slug&gt;</code>,
+with its own API, web app, worker, managed runners, Postgres, Redis, Keycloak, registry and backups. Cells never
+share data. This runbook takes a cell from &quot;signed contract&quot; to &quot;customer logged in&quot;, and covers upgrades and
+decommissioning. The control plane that will automate it later (roadmap step 17) will run the same steps.</p>
+<h2 id="1-prerequisites-once-per-cluster"><a class="anchor" href="#1-prerequisites-once-per-cluster">1. Prerequisites (once per cluster)</a></h2>
+<table>
+<thead>
+<tr>
+<th>Need</th>
+<th>Why</th>
+<th>Check</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Kubernetes 1.28+, <code>kubectl</code> and <code>helm</code> 3 with access</td>
+<td></td>
+<td><code>kubectl config current-context</code></td>
+</tr>
+<tr>
+<td>An ingress controller, class <code>nginx</code> by default</td>
+<td>one Ingress per host per cell</td>
+<td><code>kubectl get ingressclass</code></td>
+</tr>
+<tr>
+<td>cert-manager with a <code>ClusterIssuer</code> (e.g. <code>letsencrypt</code>)</td>
+<td>TLS for <code>&lt;slug&gt;.&lt;domain&gt;</code>, <code>auth-&lt;slug&gt;.&lt;domain&gt;</code>, <code>registry-&lt;slug&gt;.&lt;domain&gt;</code></td>
+<td><code>kubectl get clusterissuer</code></td>
+</tr>
+<tr>
+<td>A wildcard DNS record <code>*.&lt;domain&gt;</code> → the ingress</td>
+<td>one record covers every cell</td>
+<td><code>dig +short x.&lt;domain&gt;</code></td>
+</tr>
+<tr>
+<td>A default StorageClass (or set <code>*.storageClassName</code>)</td>
+<td>Postgres, registry, backups</td>
+<td><code>kubectl get storageclass</code></td>
+</tr>
+<tr>
+<td>The three images in a registry the cluster can pull from</td>
+<td><code>secops-api</code>, <code>secops-web</code>, <code>secops-runner</code> at the same tag</td>
+<td><code>imagePullSecrets</code> per namespace if private</td>
+</tr>
+<tr>
+<td>For backups off-site: an S3 bucket and credentials or pod identity</td>
+<td>docs/backup-restore.md</td>
+<td></td>
+</tr>
+<tr>
+<td>Optional: an SMTP relay for e-mail notifications</td>
+<td><code>api.extraEnv</code> SMTP_*</td>
+<td></td>
+</tr>
+</tbody></table>
+<p>Cells are isolated by NetworkPolicy (nothing outside the namespace reaches a cell except the ingress controller),
+so the ingress controller&#39;s namespace must match <code>ingress.controllerNamespace</code> (default <code>ingress-nginx</code>).</p>
+<h2 id="2-inputs-per-cell"><a class="anchor" href="#2-inputs-per-cell">2. Inputs per cell</a></h2>
+<table>
+<thead>
+<tr>
+<th>Input</th>
+<th>Example</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>slug</td>
+<td><code>globex</code></td>
+<td>DNS label, immutable, becomes the namespace, release name, hostnames and root organization slug</td>
+</tr>
+<tr>
+<td>name</td>
+<td><code>Globex Corporation</code></td>
+<td>root organization display name</td>
+</tr>
+<tr>
+<td>domain</td>
+<td><code>platform.example.com</code></td>
+<td>the shared platform domain; hosts are derived from it</td>
+</tr>
+<tr>
+<td>admin e-mails</td>
+<td><code>ciso@globex.com</code></td>
+<td>first login of each becomes ORG_ADMIN of the root organization (<code>BOOTSTRAP_ADMIN_EMAILS</code>)</td>
+</tr>
+<tr>
+<td>image tag</td>
+<td><code>0.2.0</code></td>
+<td>one tag for the three images</td>
+</tr>
+<tr>
+<td>database</td>
+<td>bundled or managed</td>
+<td>production: managed Postgres, <code>postgres.bundled=false</code> + <code>externalUrl</code> / <code>externalKeycloakJdbcUrl</code></td>
+</tr>
+<tr>
+<td>secrets</td>
+<td><code>DB_PASSWORD</code>, <code>KC_ADMIN_PASSWORD</code>, SMTP password…</td>
+<td>environment variables at apply time, never in the values file</td>
+</tr>
+<tr>
+<td>backups</td>
+<td>PVC and/or S3 prefix <code>cells/&lt;slug&gt;</code></td>
+<td>on by default in the template</td>
+</tr>
+</tbody></table>
+<h2 id="3-create-the-cell"><a class="anchor" href="#3-create-the-cell">3. Create the cell</a></h2>
+<pre><code>scripts/cell-provision.sh new --slug globex --name &quot;Globex Corporation&quot; --domain platform.example.com --admin ciso@globex.com
+</code></pre>
+<p>writes <code>deploy/cells/globex.values.yaml</code> from <code>deploy/cells/_template.values.yaml</code>. Edit it: image repositories and
+tag, TLS issuer, database (managed in production), backups (S3), SMTP, replicas. Commit it: <code>deploy/cells/</code> is
+the inventory of cells.</p>
+<pre><code>export DB_PASSWORD=… KC_ADMIN_PASSWORD=…            # from the secret manager
+scripts/cell-provision.sh apply --slug globex --dry-run   # preflight + render, nothing applied
+scripts/cell-provision.sh apply --slug globex             # for real
+</code></pre>
+<p><code>apply</code> runs a <strong>preflight</strong> (every <code>${VAR}</code> placeholder has a value, ingress class and ClusterIssuer exist, whether
+the three hostnames resolve yet), fills the placeholders into a temporary copy of the values file, runs
+<code>helm upgrade --install</code>, <strong>waits for the workloads</strong> with a progress line every 15 s (what is not ready yet, and a
+warning the moment something is stuck: ImagePullBackOff, CrashLoopBackOff, a pod Pending for minutes), on a new cell runs the
+<strong>first backup</strong> (an existing cell is backed up <em>before</em> the upgrade instead), then the <strong>checks</strong>: API and worker rolled out, no restarting pods, the API answers
+<code>/api/v1/health/ready</code> from inside the cluster, the backup CronJob exists; it prints the chart&#39;s notes and the
+handover pointers. <code>make provision TENANT=globex</code> is the same thing.</p>
+<p><code>apply</code> deliberately does not use helm&#39;s own <code>--wait</code>. With backups on a PVC and a StorageClass whose
+<code>volumeBindingMode</code> is <code>WaitForFirstConsumer</code> (kind&#39;s <code>standard</code>, EKS gp3, GKE <code>standard-rwo</code>, AKS <code>managed-csi</code>),
+the backups PVC stays Pending until the first backup Job mounts it, and <code>helm install --wait</code> waits for every PVC to
+be Bound: a plain <code>helm install --wait</code> or <code>make deploy … --wait</code> of this chart sits there until its timeout. The
+script waits for Deployments and StatefulSets instead, and the first backup it runs binds the PVC.</p>
+<p>First boot takes a few minutes: Keycloak imports the realm, the API&#39;s init container runs the migrations, the
+managed runner registers once the API answers (it retries with backoff).</p>
+<h2 id="4-verify"><a class="anchor" href="#4-verify">4. Verify</a></h2>
+<pre><code>scripts/cell-provision.sh check --slug globex
+API=https://globex.platform.example.com/api/v1 KC=https://auth-globex.platform.example.com KC_USER=… KC_PASS=… scripts/smoke.sh
+make backup TENANT=globex          # the first backup, downloaded and checksum-verified
+</code></pre>
+<p>Then open <code>https://globex.platform.example.com</code>: the login goes to the cell&#39;s Keycloak. Until an IdP is configured
+there is no user to log in with on a production cell (<code>seedUsers: []</code>), which is the next step.</p>
+<h2 id="5-handover"><a class="anchor" href="#5-handover">5. Handover</a></h2>
+<ol>
+<li><strong>Identity.</strong> Open <code>https://auth-globex.platform.example.com</code> as the Keycloak admin (<code>KC_ADMIN_PASSWORD</code>),
+realm <code>platform</code>, and add the customer&#39;s identity provider (SAML or OIDC: Entra ID, Okta, Google…) with
+&quot;first login flow&quot; creating users. E-mail must be mapped: the platform keys users on it.</li>
+<li><strong>First administrator.</strong> The person listed in <code>tenant.adminEmails</code> logs in; their first login grants ORG_ADMIN on
+the root organization (audit events <code>organization.bootstrapped</code> and <code>membership.granted</code>). From there they invite the team (Members).</li>
+<li><strong>Setup card.</strong> The Overview shows the organization setup to administrators: connect source code (GitHub App,
+GitLab…), check the managed runner, alerts, team. Service coverage shows what each service still lacks.</li>
+<li><strong>Tell them what they own.</strong> Hostnames, the registry (<code>registry-globex.…</code>, <code>matelot registry login</code>), where backups
+go and how long they are kept, and the support channel.</li>
+</ol>
+<h2 id="6-day-2"><a class="anchor" href="#6-day-2">6. Day 2</a></h2>
+<ul>
+<li><strong>Upgrade one cell:</strong> change the tag in <code>deploy/cells/&lt;slug&gt;.values.yaml</code> and <code>scripts/cell-provision.sh apply --slug &lt;slug&gt;</code> (or <code>apply --tag X</code> for a one-off). <code>apply</code> takes a <strong>pre-upgrade backup</strong> first (<code>--no-backup</code> to
+skip), then upgrades. Migrations run in the API&#39;s init container. An image release rolls only the api, worker, web
+and managed-runner pods: Postgres, Keycloak, Redis and the registry keep running (their pod templates carry no
+version label; <code>make helm-lint</code> asserts it).</li>
+<li><strong>Upgrade all cells:</strong> <code>for f in deploy/cells/*.values.yaml; do s=$(basename &quot;$f&quot; .values.yaml); [ &quot;$s&quot; = _template ] || scripts/cell-provision.sh apply --slug &quot;$s&quot; --tag X; done</code> — one at a time, checks included, stops at the first
+unhealthy cell.</li>
+<li><strong>Scale:</strong> <code>api.replicas</code>, <code>web.replicas</code>, <code>managedRunners.replicas</code>; resources per component in the values file.</li>
+<li><strong>Rotate the Keycloak admin password:</strong> change it in Keycloak, update the secret manager; the chart value is only
+the bootstrap value.</li>
+<li><strong>Restore:</strong> docs/backup-restore.md.</li>
+</ul>
+<h2 id="7-decommission"><a class="anchor" href="#7-decommission">7. Decommission</a></h2>
+<pre><code>scripts/cell-decommission.sh --slug globex                 # final backup to ./decommissioned/globex, helm uninstall; data kept
+scripts/cell-decommission.sh --slug globex --purge         # … and delete the namespace with every volume
+</code></pre>
+<p>Without <code>--purge</code> the namespace and its PVCs (Postgres, registry blobs, backups) and the kept Secrets stay for the
+retention period agreed with the customer; the script lists exactly what remains. <code>--purge</code> later (with the release
+already gone it skips the backup, deletes the namespace and waits for the PVs to disappear) removes them. Then remove
+<code>deploy/cells/globex.values.yaml</code>, the DNS records if any were specific, the S3 prefix after retention, and the
+customer-side IdP client.</p>
+<h2 id="8-conventions"><a class="anchor" href="#8-conventions">8. Conventions</a></h2>
+<ul>
+<li>Namespace <code>tenant-&lt;slug&gt;</code>, release <code>&lt;slug&gt;</code>, hosts <code>&lt;slug&gt;.&lt;domain&gt;</code>, <code>auth-&lt;slug&gt;.&lt;domain&gt;</code>,
+<code>registry-&lt;slug&gt;.&lt;domain&gt;</code>. One wildcard certificate per cell is not needed: cert-manager issues per host.</li>
+<li>Secrets generated by the chart (encryption key, registry token key pair, events secret, managed-runner secret)
+are created on the first install and reused on every upgrade; they are in every backup. Provide <code>encryptionKey</code>
+etc. explicitly only when migrating a cell from elsewhere.</li>
+<li>Resource defaults in the chart fit a small cell on one node; the template sets 20Gi volumes. Size up in the
+values file, never in the chart.</li>
+</ul>
+<h2 id="reference"><a class="anchor" href="#reference">Reference</a></h2>
+<table>
+<thead>
+<tr>
+<th>Piece</th>
+<th>Where</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Provision / check</td>
+<td><code>scripts/cell-provision.sh</code>, <code>make provision TENANT=…</code></td>
+</tr>
+<tr>
+<td>Decommission</td>
+<td><code>scripts/cell-decommission.sh</code>, <code>make decommission TENANT=…</code></td>
+</tr>
+<tr>
+<td>Cell inventory</td>
+<td><code>deploy/cells/&lt;slug&gt;.values.yaml</code> (template <code>_template.values.yaml</code>)</td>
+</tr>
+<tr>
+<td>Chart</td>
+<td><code>deploy/helm/secops-cell</code> (<code>make helm-lint</code> renders every supported configuration)</td>
+</tr>
+<tr>
+<td>Backups</td>
+<td>docs/backup-restore.md · Managed runners: docs/managed-runners.md · Usage: docs/usage-and-limits.md</td>
+</tr>
+</tbody></table>
+</article>
+    <footer>Version 0.1.0 · generated from <code>docs/cell-provisioning.md</code></footer>
+  </main>
+  <nav class="toc"><div class="toc-title">On this page</div><ul><li class="d2"><a href="#1-prerequisites-once-per-cluster">1. Prerequisites (once per cluster)</a></li><li class="d2"><a href="#2-inputs-per-cell">2. Inputs per cell</a></li><li class="d2"><a href="#3-create-the-cell">3. Create the cell</a></li><li class="d2"><a href="#4-verify">4. Verify</a></li><li class="d2"><a href="#5-handover">5. Handover</a></li><li class="d2"><a href="#6-day-2">6. Day 2</a></li><li class="d2"><a href="#7-decommission">7. Decommission</a></li><li class="d2"><a href="#8-conventions">8. Conventions</a></li><li class="d2"><a href="#reference">Reference</a></li></ul></nav>
+</div>
+<script src="site.js" defer></script>
+</body>
+</html>

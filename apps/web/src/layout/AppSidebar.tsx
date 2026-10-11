@@ -3,6 +3,7 @@ import { Mascot } from "@/components/common/Mascot";
 import { useSidebar } from "@/context/SidebarContext";
 import { BoltIcon, BoxCubeIcon, CheckCircleIcon, ChevronLeftIcon, DataBaseIcon, DocsIcon, FolderIcon, GridIcon, GroupIcon, HorizontaLDots, ListIcon, LockIcon, PieChartIcon, PlugInIcon, SettingsAltIcon, ShootingStarIcon, TaskIcon, UserCircleIcon } from "@/icons";
 import { useMe } from "@/platform/api/hooks";
+import { docsUrl, useRuntimeConfig } from "@/platform/runtime-config";
 import { CriticalityBadge } from "@/platform/components/ui";
 import { useRouteContext } from "@/platform/state/context";
 import { useCurrentOrganization } from "@/platform/state/useCurrentOrganization";
@@ -15,7 +16,7 @@ type NavItem = { name: string; icon: ReactNode; path: string; soon?: boolean; ex
 type NavGroup = { title: string; items: NavItem[] };
 
 
-function organizationGroups(isAdmin: boolean): NavGroup[] {
+function organizationGroups(isAdmin: boolean, docs: string): NavGroup[] {
   return [
     {
       title: "Organization",
@@ -29,7 +30,7 @@ function organizationGroups(isAdmin: boolean): NavGroup[] {
         { name: "Members", icon: <GroupIcon fontSize={24} />, path: "/members" },
         { name: "Audit trail", icon: <DocsIcon fontSize={24} />, path: "/audit" },
         { name: "Usage", icon: <PieChartIcon fontSize={24} />, path: "/usage" },
-        { name: "Documentation", icon: <DocsIcon fontSize={24} />, path: "/docs/", external: true }, // the static site built from docs/ (tools/docs-site)
+        { name: "Documentation", icon: <DocsIcon fontSize={24} />, path: docs, external: true }, // the public site (config.json docsUrl)
       ],
     },
     ...(isAdmin ? [{ title: "Administration", items: [{ name: "Users", icon: <UserCircleIcon fontSize={24} />, path: "/admin/users" }] }] : []),
@@ -120,8 +121,9 @@ const AppSidebar: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.pathname]);
 
+  const config = useRuntimeConfig();
   const isAdmin = me.data?.user.platformRole === "admin";
-  const groups = ctx.projectId ? projectGroups(ctx.projectId) : ctx.workspaceId ? workspaceGroups(ctx.workspaceId) : organizationGroups(isAdmin);
+  const groups = ctx.projectId ? projectGroups(ctx.projectId) : ctx.workspaceId ? workspaceGroups(ctx.workspaceId) : organizationGroups(isAdmin, docsUrl(config));
   const isActive = (item: NavItem) => (item.exact ? location.pathname === item.path : location.pathname === item.path || location.pathname.startsWith(`${item.path}/`));
 
   const contextCard = ctx.projectId ? (

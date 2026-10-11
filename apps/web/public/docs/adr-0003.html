@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ADR 3: two-level RBAC · Documentation</title>
+<link rel="icon" href="logo.png">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="index.html"><img src="logo.png" alt=""><span id="product">Security Platform</span> <span class="dim">docs</span></a>
+  <div class="search"><input id="q" type="search" placeholder="Search the docs…" autocomplete="off" aria-label="Search"><div id="results" class="results" hidden></div></div>
+  <a class="app" href="/">Open the app →</a>
+</header>
+<div class="page">
+  <button class="nav-toggle" aria-expanded="false" aria-controls="side">Contents</button>
+  <nav class="side" id="side"><ul><li class="section"><span>Start here</span><ul><li><a href="index.html">Documentation</a></li><li><a href="product.html">What the platform does</a></li><li><a href="roles.html">Roles and permissions</a></li><li><a href="coverage.html">Service coverage</a></li></ul></li><li class="section"><span>CLI and automation</span><ul><li><a href="cli.html">CLI guide</a></li><li><a href="cli-reference.html">Command reference</a></li><li><a href="ci-integration.html">CI/CD integration</a></li><li><a href="access-tokens.html">Access tokens</a></li><li><a href="mcp.html">MCP server (AI assistants)</a></li></ul></li><li class="section"><span>Connections and registries</span><ul><li><a href="github-app.html">GitHub App</a></li><li><a href="keyless-registries.html">Keyless registry access</a></li><li><a href="release-process.html">Builds, releases, deployments</a></li></ul></li><li class="section"><span>Runners</span><ul><li><a href="managed-runners.html">Managed runners</a></li><li><a href="runner-protocol.html">Runner protocol</a></li></ul></li><li class="section"><span>Operating a cell</span><ul><li><a href="cell-provisioning.html">Provisioning a cell</a></li><li><a href="backup-restore.html">Backup and restore</a></li><li><a href="usage-and-limits.html">Usage and rate limits</a></li><li><a href="endpoints.html">Endpoints of a cell</a></li></ul></li><li class="section"><span>Reference</span><ul><li><a href="parity-matrix.html">UI / API / CLI / MCP parity</a></li><li><a href="adr-0001.html">ADR 1: tenancy and stack</a></li><li><a href="adr-0002.html">ADR 2: web app</a></li><li class="current"><a href="adr-0003.html">ADR 3: two-level RBAC</a></li></ul></li></ul></nav>
+  <main class="content">
+    <div class="crumbs">Reference</div>
+    <article><h1 id="adr-0003-two-level-access-control-gitlab-model"><a class="anchor" href="#adr-0003-two-level-access-control-gitlab-model">ADR 0003 — Two-level access control (GitLab model)</a></h1>
+<p><strong>Status:</strong> accepted · <strong>Date:</strong> 2026-09-18</p>
+<h2 id="decision"><a class="anchor" href="#decision">Decision</a></h2>
+<p>Access control has two levels, like GitLab&#39;s instance admins + group/project access levels.</p>
+<ol>
+<li><strong>Cell level (instance).</strong> Every user is <code>user</code> or <code>admin</code> (<code>users.platform_role</code>).
+<em>Administrators</em> see and can do everything in the cell and own the Administration area
+(users, and from step 02/03 on: integrations, runners, cell settings). <em>Users</em> see nothing
+until they hold a role somewhere. Admins can disable a user (they keep their memberships but
+cannot sign in). Bootstrap emails (<code>BOOTSTRAP_ADMIN_EMAILS</code>) become administrators on first
+sign-in and owners (<code>ORG_ADMIN</code>) of the root organization.</li>
+<li><strong>Scoped level.</strong> Memberships = user × role × scope at organization, workspace, team, project,
+service or environment. A role applies to its scope and everything below (groups → subgroups →
+projects); the effective permissions at a point are the union of all roles up the chain (GitLab&#39;s
+&quot;highest access level wins&quot;); nothing flows upward; a member can always <em>see</em> the path to what
+they own. Roles are the concept&#39;s eleven (<code>ORG_ADMIN</code> = owner of a subtree, <code>TEAM_LEAD</code> ≈
+maintainer, <code>DEVELOPER</code>, <code>READ_ONLY</code> ≈ reporter, plus the security/compliance roles).</li>
+</ol>
+<h2 id="why"><a class="anchor" href="#why">Why</a></h2>
+<ul>
+<li>Enterprise expectation and a model every developer already understands.</li>
+<li>The cell admin is the operator&#39;s and customer IT&#39;s handle on the instance without granting
+organization roles that show up in security dashboards.</li>
+<li>Scoped roles keep least privilege for everyone else, including the AI (step 15 inherits them).</li>
+</ul>
+<h2 id="consequences"><a class="anchor" href="#consequences">Consequences</a></h2>
+<ul>
+<li><code>AccessContext.isPlatformAdmin</code> short-circuits <code>AuthorizationService</code>; every listing that filters
+by visibility automatically includes everything for admins.</li>
+<li>Guards must not assume an admin holds any membership; audit shows admin actions as the user.</li>
+<li>Cell-level actions (<code>user.*</code>) are audited without an organization id.</li>
+</ul>
+</article>
+    <footer>Version 0.1.0 · generated from <code>docs/adr/0003-rbac-two-levels.md</code></footer>
+  </main>
+  <nav class="toc"><div class="toc-title">On this page</div><ul><li class="d2"><a href="#decision">Decision</a></li><li class="d2"><a href="#why">Why</a></li><li class="d2"><a href="#consequences">Consequences</a></li></ul></nav>
+</div>
+<script src="site.js" defer></script>
+</body>
+</html>

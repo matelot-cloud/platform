@@ -30,7 +30,7 @@ export const envSchema = z.object({
 
   CORS_ORIGINS: z.string().default(''),
   /** Runner image offered in the registration commands (published releases, or a locally built tag). */
-  RUNNER_IMAGE: z.string().default('ghcr.io/secops-platform/runner:latest'),
+  RUNNER_IMAGE: z.string().default('ghcr.io/matelot-io/runner:latest'),
   // Shared secret of the cell's managed runners (Helm chart): they register into the "Managed" pool with it. Unset = no managed runners.
   MANAGED_RUNNER_SECRET: z.preprocess(emptyToUndefined, z.string().min(32, 'MANAGED_RUNNER_SECRET must be at least 32 characters').optional()),
 

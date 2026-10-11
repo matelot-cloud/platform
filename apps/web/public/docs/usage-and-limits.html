@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Usage and rate limits · Documentation</title>
+<link rel="icon" href="logo.png">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="index.html"><img src="logo.png" alt=""><span id="product">Security Platform</span> <span class="dim">docs</span></a>
+  <div class="search"><input id="q" type="search" placeholder="Search the docs…" autocomplete="off" aria-label="Search"><div id="results" class="results" hidden></div></div>
+  <a class="app" href="/">Open the app →</a>
+</header>
+<div class="page">
+  <button class="nav-toggle" aria-expanded="false" aria-controls="side">Contents</button>
+  <nav class="side" id="side"><ul><li class="section"><span>Start here</span><ul><li><a href="index.html">Documentation</a></li><li><a href="product.html">What the platform does</a></li><li><a href="roles.html">Roles and permissions</a></li><li><a href="coverage.html">Service coverage</a></li></ul></li><li class="section"><span>CLI and automation</span><ul><li><a href="cli.html">CLI guide</a></li><li><a href="cli-reference.html">Command reference</a></li><li><a href="ci-integration.html">CI/CD integration</a></li><li><a href="access-tokens.html">Access tokens</a></li><li><a href="mcp.html">MCP server (AI assistants)</a></li></ul></li><li class="section"><span>Connections and registries</span><ul><li><a href="github-app.html">GitHub App</a></li><li><a href="keyless-registries.html">Keyless registry access</a></li><li><a href="release-process.html">Builds, releases, deployments</a></li></ul></li><li class="section"><span>Runners</span><ul><li><a href="managed-runners.html">Managed runners</a></li><li><a href="runner-protocol.html">Runner protocol</a></li></ul></li><li class="section"><span>Operating a cell</span><ul><li><a href="cell-provisioning.html">Provisioning a cell</a></li><li><a href="backup-restore.html">Backup and restore</a></li><li class="current"><a href="usage-and-limits.html">Usage and rate limits</a></li><li><a href="endpoints.html">Endpoints of a cell</a></li></ul></li><li class="section"><span>Reference</span><ul><li><a href="parity-matrix.html">UI / API / CLI / MCP parity</a></li><li><a href="adr-0001.html">ADR 1: tenancy and stack</a></li><li><a href="adr-0002.html">ADR 2: web app</a></li><li><a href="adr-0003.html">ADR 3: two-level RBAC</a></li></ul></li></ul></nav>
+  <main class="content">
+    <div class="crumbs">Operating a cell</div>
+    <article><h1 id="usage-metering-and-rate-limits"><a class="anchor" href="#usage-metering-and-rate-limits">Usage metering and rate limits</a></h1>
+<h2 id="usage-organization-usage-matelot-usage-get-organizations-id-usage"><a class="anchor" href="#usage-organization-usage-matelot-usage-get-organizations-id-usage">Usage (Organization → Usage, <code>matelot usage</code>, <code>GET /organizations/:id/usage</code>)</a></h2>
+<p>Per organization and calendar month (UTC):</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Definition</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Active seats</td>
+<td>Members of the organization (a role anywhere in its tree, account not disabled) who made at least one authenticated request that month — in the web app, with a personal token, or through MCP. CI tokens and runners are never seats; platform administrators without a role in the organization are not counted.</td>
+</tr>
+<tr>
+<td>Members</td>
+<td>Distinct people with a role in the organization&#39;s tree (not disabled), at computation time.</td>
+</tr>
+<tr>
+<td>Runner minutes</td>
+<td>Sum of <code>finished − started</code> for jobs run by a runner that finished in the month (also per job type). Platform jobs (policy evaluation) count as jobs but use no runner minutes.</td>
+</tr>
+<tr>
+<td>Jobs / Pipelines / SBOMs</td>
+<td>Finished jobs, pipelines started, SBOMs stored in the month.</td>
+</tr>
+<tr>
+<td>Projects / Services / Environments</td>
+<td>Inventory size (not archived) at computation time.</td>
+</tr>
+</tbody></table>
+<p>The current month is computed live. The worker writes a snapshot of every organization&#39;s current month every hour and
+finalises the previous month on its first pass after the month ends, so history survives job and pipeline pruning.
+<code>?month=YYYY-MM</code> selects a month, <code>?format=csv</code> exports the 12-month history
+(<code>month,seats_active,seats_members,projects,services,environments,pipelines,jobs,runner_minutes,sboms</code>).
+Visible with <code>audit:read</code> (organization and security administrators, compliance officers, CISO, auditors).</p>
+<h2 id="rate-limits"><a class="anchor" href="#rate-limits">Rate limits</a></h2>
+<p>Fixed one-minute windows per caller, counted in Redis (shared by all API replicas; if Redis is unreachable each process
+counts on its own and logs it once):</p>
+<table>
+<thead>
+<tr>
+<th>Class</th>
+<th>Key</th>
+<th>Default / min</th>
+<th>Env</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>read (GET/HEAD)</td>
+<td>user, or CI token</td>
+<td>1200</td>
+<td><code>RATE_LIMIT_READ_PER_MINUTE</code></td>
+</tr>
+<tr>
+<td>write</td>
+<td>user, or CI token</td>
+<td>300</td>
+<td><code>RATE_LIMIT_WRITE_PER_MINUTE</code></td>
+</tr>
+<tr>
+<td>runner</td>
+<td>runner</td>
+<td>1200</td>
+<td><code>RATE_LIMIT_RUNNER_PER_MINUTE</code></td>
+</tr>
+<tr>
+<td>anonymous</td>
+<td>client IP</td>
+<td>120</td>
+<td><code>RATE_LIMIT_ANONYMOUS_PER_MINUTE</code></td>
+</tr>
+<tr>
+<td>failed authentication (401)</td>
+<td>client IP</td>
+<td>30</td>
+<td><code>RATE_LIMIT_AUTH_FAILURES_PER_MINUTE</code></td>
+</tr>
+</tbody></table>
+<p><code>0</code> disables a class, <code>RATE_LIMIT_ENABLED=false</code> disables all. Successful requests to <code>/health</code>, <code>/webhooks/*</code>,
+<code>/registry/token</code>, <code>/registry/events</code> and <code>/.well-known/*</code> are never counted (docker pulls are bursty).</p>
+<p><strong>Failed authentication</strong> is counted separately, on every path: a 401 (bad or expired bearer token, wrong docker-login
+password on <code>/registry/token</code>, bad webhook signature or registry events secret) counts against the client IP; past the
+limit the 401 becomes a 429 with <code>Retry-After</code>. Requests that authenticate are never affected by their address&#39;s
+failures. A 403 (authenticated, not allowed) counts against the caller&#39;s own read / write bucket. These are counted in
+the global exception filter, because the guards reject them before the rate-limit interceptor runs. Responses carry <code>RateLimit-Limit</code>, <code>RateLimit-Remaining</code>, <code>RateLimit-Reset</code>;
+over the limit the API answers <code>429</code> with <code>Retry-After</code>. The request is refused before it runs, so the CLI (2.16.0+)
+waits for <code>Retry-After</code> (≤ 60 s, up to 3 times) and repeats it — also for writes.</p>
+</article>
+    <footer>Version 0.1.0 · generated from <code>docs/usage-and-limits.md</code></footer>
+  </main>
+  <nav class="toc"><div class="toc-title">On this page</div><ul><li class="d2"><a href="#usage-organization-usage-matelot-usage-get-organizations-id-usage">Usage (Organization → Usage, matelot usage, GET /organizations/:id/usage)</a></li><li class="d2"><a href="#rate-limits">Rate limits</a></li></ul></nav>
+</div>
+<script src="site.js" defer></script>
+</body>
+</html>

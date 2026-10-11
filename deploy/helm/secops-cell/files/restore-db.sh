@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Restore every <database>.dump of a cell backup into the server PG* points at (run inside the postgres pod by
-# scripts/cell-restore.sh, or anywhere pg_restore can reach the server). Each database is dropped and recreated, so
+# scripts/cell-restore.sh from matelot-io/helm-charts, or anywhere pg_restore can reach the server). Each database is dropped and recreated, so
 # nothing may be connected to it: the restore script scales the API, worker and Keycloak down first.
 #   restore-db.sh <dir with *.dump> [database …]   (default: every dump in the directory)
 set -euo pipefail

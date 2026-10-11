@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backup and restore · Documentation</title>
+<link rel="icon" href="logo.png">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="index.html"><img src="logo.png" alt=""><span id="product">Security Platform</span> <span class="dim">docs</span></a>
+  <div class="search"><input id="q" type="search" placeholder="Search the docs…" autocomplete="off" aria-label="Search"><div id="results" class="results" hidden></div></div>
+  <a class="app" href="/">Open the app →</a>
+</header>
+<div class="page">
+  <button class="nav-toggle" aria-expanded="false" aria-controls="side">Contents</button>
+  <nav class="side" id="side"><ul><li class="section"><span>Start here</span><ul><li><a href="index.html">Documentation</a></li><li><a href="product.html">What the platform does</a></li><li><a href="roles.html">Roles and permissions</a></li><li><a href="coverage.html">Service coverage</a></li></ul></li><li class="section"><span>CLI and automation</span><ul><li><a href="cli.html">CLI guide</a></li><li><a href="cli-reference.html">Command reference</a></li><li><a href="ci-integration.html">CI/CD integration</a></li><li><a href="access-tokens.html">Access tokens</a></li><li><a href="mcp.html">MCP server (AI assistants)</a></li></ul></li><li class="section"><span>Connections and registries</span><ul><li><a href="github-app.html">GitHub App</a></li><li><a href="keyless-registries.html">Keyless registry access</a></li><li><a href="release-process.html">Builds, releases, deployments</a></li></ul></li><li class="section"><span>Runners</span><ul><li><a href="managed-runners.html">Managed runners</a></li><li><a href="runner-protocol.html">Runner protocol</a></li></ul></li><li class="section"><span>Operating a cell</span><ul><li><a href="cell-provisioning.html">Provisioning a cell</a></li><li class="current"><a href="backup-restore.html">Backup and restore</a></li><li><a href="usage-and-limits.html">Usage and rate limits</a></li><li><a href="endpoints.html">Endpoints of a cell</a></li></ul></li><li class="section"><span>Reference</span><ul><li><a href="parity-matrix.html">UI / API / CLI / MCP parity</a></li><li><a href="adr-0001.html">ADR 1: tenancy and stack</a></li><li><a href="adr-0002.html">ADR 2: web app</a></li><li><a href="adr-0003.html">ADR 3: two-level RBAC</a></li></ul></li></ul></nav>
+  <main class="content">
+    <div class="crumbs">Operating a cell</div>
+    <article><h1 id="backup-and-restore-of-a-tenant-cell"><a class="anchor" href="#backup-and-restore-of-a-tenant-cell">Backup and restore of a tenant cell</a></h1>
+<p>A cell&#39;s state lives in three places: the <strong>platform database</strong> (everything the product shows), the <strong>Keycloak
+database</strong> (users, realm, sessions) and a handful of <strong>Kubernetes Secrets</strong>, one of which, the cell encryption key, is
+the only way to read the stored connection credentials (GitHub tokens, registry passwords, Jira tokens, SMTP…). A
+backup without the key restores a cell whose connections all say &quot;cannot decrypt&quot;.</p>
+<p>The chart ships a scheduled backup that captures all three into one archive, and the repository ships the restore.</p>
+<h2 id="what-is-in-an-archive"><a class="anchor" href="#what-is-in-an-archive">What is in an archive</a></h2>
+<p><code>&lt;slug&gt;-&lt;UTC stamp&gt;.tar.gz</code> (plus <code>.sha256</code>):</p>
+<pre><code>acme-20261009T021700Z/
+  manifest.txt                  cell, time, databases, pg_dump and server versions
+  db/platform.dump              pg_dump --format=custom (compressed, restorable with pg_restore)
+  db/keycloak.dump
+  secrets/acme-cell-key/CELL_ENCRYPTION_KEY
+  secrets/acme-managed-runner/MANAGED_RUNNER_SECRET
+  secrets/acme-registry/{registry.key,registry.crt,REGISTRY_EVENTS_SECRET,REGISTRY_HOST,…}
+  secrets/acme-postgres/{POSTGRES_DB,POSTGRES_USER,POSTGRES_PASSWORD}
+  secrets/acme-keycloak/{KC_BOOTSTRAP_ADMIN_*,KC_DB_*}
+  secrets/acme-api-secrets/{DATABASE_URL,REDIS_URL,GITHUB_APP_*}
+</code></pre>
+<p><strong>Not included:</strong> the registry&#39;s image blobs (PVC <code>&lt;release&gt;-registry</code>). Images are rebuildable from source and the
+platform re-scans what is pushed; if you need them kept, back the registry&#39;s volume up with your storage&#39;s snapshots or
+run the registry on object storage. Redis holds only queues and caches.</p>
+<p><strong>The archive is sensitive.</strong> It contains the encryption key, database passwords and the Keycloak admin password.
+Keep the PVC and the bucket restricted to the operators of the cell, turn on server-side encryption on the bucket, and
+never attach an archive to a ticket.</p>
+<h2 id="turning-backups-on"><a class="anchor" href="#turning-backups-on">Turning backups on</a></h2>
+<pre><code class="language-yaml">backup:
+  enabled: true
+  schedule: &quot;17 2 * * *&quot;      # cron, UTC
+  retentionDays: 14           # archives older than this are pruned from the PVC
+  pvc: { enabled: true, size: 10Gi }
+  s3:                         # optional off-site copy of every archive
+    enabled: true
+    bucket: acme-cell-backups
+    prefix: cells/acme
+    region: eu-central-1
+    credentialsSecret: &quot;&quot;     # Secret with AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY, or empty for IRSA / workload identity
+    endpoint: &quot;&quot;              # S3-compatible endpoint for MinIO / Ceph
+</code></pre>
+<p><code>make deploy</code> (or <code>helm upgrade</code>) creates the CronJob <code>&lt;release&gt;-backup</code>, the PVC <code>&lt;release&gt;-backups</code> (kept on
+uninstall) and the script ConfigMap. On a StorageClass with <code>volumeBindingMode: WaitForFirstConsumer</code> (kind, EKS gp3,
+GKE, AKS defaults) that PVC stays <strong>Pending until the first backup runs</strong> — normal, but it means <code>helm … --wait</code> on
+this chart waits for it: use <code>scripts/cell-provision.sh apply</code> (which waits on the workloads and runs the first
+backup) or run <code>make backup</code> right after a plain install. The job runs <code>pg_dump</code> with the chart&#39;s own Postgres image, so client and server
+versions match. With S3, the dump is an init container and the upload the main container, so an upload never starts
+before the dump has finished. Retention on S3 is the bucket&#39;s lifecycle rule; the chart does not delete from buckets.</p>
+<p>For an <strong>external database</strong> (<code>postgres.bundled=false</code>) the job dumps the platform database through the API&#39;s
+<code>DATABASE_URL</code>. The Keycloak database of an external server is not dumped: rely on the managed database&#39;s own
+snapshots, which you should have anyway in that setup, or point a second CronJob at it.</p>
+<p>Verify the first run before trusting the schedule:</p>
+<pre><code>make backup TENANT=acme                 # runs the job now, waits, downloads the archive to ./backups and checks its sha256
+scripts/cell-backup.sh -r acme -n tenant-acme --list
+</code></pre>
+<p>Both need <code>kubectl</code> access to the namespace. <code>--download</code> and <code>--list</code> use a short-lived pod that mounts the PVC, so
+they need <code>backup.pvc.enabled</code>.</p>
+<h2 id="restoring"><a class="anchor" href="#restoring">Restoring</a></h2>
+<p>Everything goes through <code>scripts/cell-restore.sh</code> (<code>make restore TENANT=acme ARCHIVE=…</code>). It verifies the checksum,
+shows the manifest and asks for confirmation (<code>--yes</code> to skip), then:</p>
+<ol>
+<li>recreates every Secret from the archive, with Helm&#39;s ownership labels so a later <code>helm upgrade</code> or <code>helm install</code>
+adopts them and, thanks to the chart&#39;s lookup-reuse, keeps their values;</li>
+<li>scales the API, worker, Keycloak and managed runners to 0 and waits for their pods to go;</li>
+<li>copies the dumps into the Postgres pod and, for each database, checks that the dump is readable, drops and recreates
+the database, and runs <code>pg_restore</code>; a corrupt dump stops the restore before anything is dropped;</li>
+<li>scales everything back to the replica counts it found and waits for the API, whose init container applies any
+migrations newer than the backup.</li>
+</ol>
+<p>If anything fails the workloads are scaled back up (the EXIT trap), so a failed restore leaves the cell running on
+whatever the databases hold at that point: the old data when the failure was before the drop, so check the output.</p>
+<h3 id="case-1-roll-back-the-data-of-a-running-cell"><a class="anchor" href="#case-1-roll-back-the-data-of-a-running-cell">Case 1: roll back the data of a running cell</a></h3>
+<pre><code>make restore TENANT=acme ARCHIVE=backups/acme-20261009T021700Z.tar.gz
+</code></pre>
+<p>Expect a few minutes of downtime: the cell is down from step 2 to step 4. Users&#39; sessions survive only if the Keycloak
+dump is from the same realm, which it is for the cell&#39;s own backups.</p>
+<h3 id="case-2-rebuild-the-cell-on-a-new-cluster-disaster-recovery"><a class="anchor" href="#case-2-rebuild-the-cell-on-a-new-cluster-disaster-recovery">Case 2: rebuild the cell on a new cluster (disaster recovery)</a></h3>
+<p>The order matters: the Secrets must exist <strong>before</strong> the first <code>helm install</code>, otherwise the chart generates a fresh
+encryption key and the restored connections cannot be decrypted.</p>
+<pre><code>scripts/cell-restore.sh -r acme -n tenant-acme --secrets-only backups/acme-20261009T021700Z.tar.gz
+make deploy TENANT=acme          # same values as before: slug, domain, images
+scripts/cell-restore.sh -r acme -n tenant-acme --databases-only backups/acme-20261009T021700Z.tar.gz
+</code></pre>
+<p><code>--secrets-only</code> creates the namespace&#39;s Secrets (<code>kubectl create namespace tenant-acme</code> first if it does not exist).
+Then point DNS at the new ingress and re-register any self-hosted runners whose tokens were not in the backup
+(managed runners pick up the restored <code>MANAGED_RUNNER_SECRET</code> by themselves).</p>
+<h3 id="case-3-external-database"><a class="anchor" href="#case-3-external-database">Case 3: external database</a></h3>
+<p>With <code>postgres.bundled=false</code> there is no Postgres pod. Stop the API, worker and Keycloak (<code>kubectl scale … --replicas=0</code>),
+then from a machine that reaches the server:</p>
+<pre><code>tar -xzf acme-20261009T021700Z.tar.gz
+PGHOST=globex-db.internal PGUSER=platform PGPASSWORD=… deploy/helm/secops-cell/files/restore-db.sh acme-20261009T021700Z/db
+</code></pre>
+<p>and scale the workloads back. <code>restore-db.sh</code> takes the database names as extra arguments to restore only some of them.</p>
+<h3 id="after-any-restore"><a class="anchor" href="#after-any-restore">After any restore</a></h3>
+<ul>
+<li><code>scripts/smoke.sh</code> against the cell (login, create a workspace, read the audit trail).</li>
+<li>Connections page: every connection shows its status and none says &quot;cannot decrypt&quot;. If they do, the restored
+<code>CELL_ENCRYPTION_KEY</code> is not the one the data was encrypted with: restore the Secrets from the right archive and
+restart the API.</li>
+<li><code>matelot runners list</code>: managed runners online; self-hosted runners may need a new registration token.</li>
+<li>The audit trail records nothing about the restore itself (it happened below the API); note it in your change log.</li>
+</ul>
+<h2 id="testing-the-backup"><a class="anchor" href="#testing-the-backup">Testing the backup</a></h2>
+<p>A backup that has never been restored is a hope, not a backup. Once a quarter, or before any risky upgrade:</p>
+<pre><code>make backup TENANT=acme BACKUP_DIR=./drill
+helm install acme-drill deploy/helm/secops-cell -n tenant-acme-drill --create-namespace --set tenant.slug=acme-drill …
+scripts/cell-restore.sh -r acme-drill -n tenant-acme-drill ./drill/acme-….tar.gz
+</code></pre>
+<p>The drill cell should show the same projects, connections and findings. Uninstall it afterwards and delete its
+namespace (the PVCs are kept on uninstall by design).</p>
+<h2 id="reference"><a class="anchor" href="#reference">Reference</a></h2>
+<table>
+<thead>
+<tr>
+<th>Piece</th>
+<th>Where</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Backup job script</td>
+<td><code>deploy/helm/secops-cell/files/backup.sh</code> (ConfigMap <code>&lt;release&gt;-backup-script</code>)</td>
+</tr>
+<tr>
+<td>In-database restore</td>
+<td><code>deploy/helm/secops-cell/files/restore-db.sh</code></td>
+</tr>
+<tr>
+<td>Operator scripts</td>
+<td><code>scripts/cell-backup.sh</code>, <code>scripts/cell-restore.sh</code>; <code>make backup</code>, <code>make restore</code></td>
+</tr>
+<tr>
+<td>Chart values</td>
+<td><code>backup.*</code> in <code>values.yaml</code>; example in <code>values-production.example.yaml</code></td>
+</tr>
+</tbody></table>
+</article>
+    <footer>Version 0.1.0 · generated from <code>docs/backup-restore.md</code></footer>
+  </main>
+  <nav class="toc"><div class="toc-title">On this page</div><ul><li class="d2"><a href="#what-is-in-an-archive">What is in an archive</a></li><li class="d2"><a href="#turning-backups-on">Turning backups on</a></li><li class="d2"><a href="#restoring">Restoring</a></li><li class="d3"><a href="#case-1-roll-back-the-data-of-a-running-cell">Case 1: roll back the data of a running cell</a></li><li class="d3"><a href="#case-2-rebuild-the-cell-on-a-new-cluster-disaster-recovery">Case 2: rebuild the cell on a new cluster (disaster recovery)</a></li><li class="d3"><a href="#case-3-external-database">Case 3: external database</a></li><li class="d3"><a href="#after-any-restore">After any restore</a></li><li class="d2"><a href="#testing-the-backup">Testing the backup</a></li><li class="d2"><a href="#reference">Reference</a></li></ul></nav>
+</div>
+<script src="site.js" defer></script>
+</body>
+</html>

@@ -3,5 +3,6 @@
   "keycloakUrl": "http://localhost:8080",
   "realm": "platform",
   "clientId": "platform-web",
-  "apiBaseUrl": "/api/v1"
+  "apiBaseUrl": "/api/v1",
+  "docsUrl": "https://matelot-io.github.io/website/docs/latest/"
 }

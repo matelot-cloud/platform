@@ -8,7 +8,7 @@ IMAGE_RUNNER ?= secops-runner
 IMAGE_WORKER ?= secops-worker
 TAG ?= dev
 
-.PHONY: help install dev-infra dev dev-stop worker runner runner-image registry-keys web migrate build test token smoke kind-up kind-down image kind-load deploy provision decommission backup restore undeploy helm-lint docs-check docs-sync
+.PHONY: help install dev-infra dev dev-stop worker runner runner-image registry-keys web migrate build test token smoke kind-up kind-down image kind-load deploy provision decommission backup restore undeploy helm-lint docs-check docs-sync check-layout
 
 help: ## List targets
 > @grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
@@ -116,6 +116,9 @@ docs-check: ## Render docs/ to a temp dir and check every link (what CI runs)
 docs-sync: ## Render docs/ into a local clone of matelot-io/website (WEBSITE_DIR=../website) as docs/latest, then build the site there to preview it
 > node tools/docs-site/build.mjs --out $(WEBSITE_DIR)/docs/latest --version latest
 > cd $(WEBSITE_DIR) && node tools/build.mjs && echo "preview: npx serve $(WEBSITE_DIR)/dist"
+
+check-layout: ## Fail on stale top-level directories left by old drops (what CI runs)
+> bash scripts/check-layout.sh
 
 helm-lint: ## Lint and render the chart in every supported configuration (defaults, production, backups, S3, external DB, TLS)
 > bash scripts/chart-test.sh

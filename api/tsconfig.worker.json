@@ -1,7 +1,0 @@
-{
-  "//": "make worker / pnpm dev:worker: its own outDir, so the worker's compile never rewrites dist/ under the API watcher",
-  "extends": "./tsconfig.build.json",
-  "compilerOptions": {
-    "outDir": "./dist-worker"
-  }
-}

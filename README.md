@@ -248,9 +248,13 @@ OpenAPI: `/api/docs` (UI) and `/api/docs-json`.
 
 ```bash
 # edit apps/api/src/database/schema.ts, then:
-pnpm db:generate            # writes apps/api/drizzle/000N_<name>.sql + meta snapshot — commit both
+pnpm db:generate            # writes apps/api/drizzle/000N_<name>.sql + meta/000N_snapshot.json + journal — commit all three
 make migrate                # apply locally
 ```
+
+CI runs `drizzle-kit generate` and fails unless it is a no-op, so a schema change always ships with its snapshot.
+Hand-written SQL (data migrations, partial indexes) still needs `schema.ts` to match and a regenerated snapshot:
+`scripts/regen-snapshot.sh` after writing the SQL.
 
 In Kubernetes the API pod's init container applies migrations before the app starts, so a
 rollout of a new image version carries its schema changes with it.

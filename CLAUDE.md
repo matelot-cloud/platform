@@ -55,7 +55,8 @@ make worker         background worker (BullMQ: GitHub sync + webhooks, job sweep
                     `make dev-stop` stops every leftover API / worker watcher of this checkout
 make web            web app on :5173 (proxies /api)
 make test           unit tests (RBAC matrix)
-pnpm db:generate    after editing apps/api/src/database/schema.ts
+pnpm db:generate    after editing apps/api/src/database/schema.ts (see Working on the schema — never hand-write a migration without the snapshot)
+make check-layout   fail on stale top-level directories (CI does too)
 make kind-up / kind-load / deploy TENANT=acme
 make backup TENANT=acme / restore TENANT=acme ARCHIVE=…   cell backup (CronJob in the chart) and restore; docs/backup-restore.md
 make provision TENANT=globex / decommission TENANT=globex   real cells from deploy/cells/<slug>.values.yaml; docs/cell-provisioning.md
@@ -70,6 +71,27 @@ API e2e without Keycloak: `node apps/api/test/fake-idp.js serve` + a token from
   `platform/components/ui.tsx` — never define button classes locally. Tables use `th`/`td`/`trBorder`;
   flush cards use `Toolbar`, `Note`, `Tabs`, `EmptyState`; KPI tiles use `Kpi` from `Dashboard.tsx`; background work is shown by the header `ActivityIndicator` (`useActiveJobs` refreshes all queries when a job finishes) and inline via `usePendingSboms` + `Spinner` — never leave a result slot silently empty while a job runs; the project layout owns the **global service selector** (`useProject().service` = chosen or null for all, `focusService` = chosen or first; never add per-page service dropdowns); logs and histories use `TerminalLog` (black panel, line numbers, streams); provider logos via `BrandIcon` (`EnvironmentManager.tsx`); per-row management goes in a `Manage` window (`EnvironmentManager`, `IntegrationManager`), never inline link rows.
 - Card headers: title + one-line description, actions right-aligned; content padding 24 px (`px-6`).
+
+## Working on the schema (hard rule)
+
+**Every schema change = `schema.ts` edit + migration SQL + regenerated `drizzle/meta` snapshot, in the same commit.**
+Run `pnpm db:generate` after editing `apps/api/src/database/schema.ts`: it writes `drizzle/000N_<name>.sql`,
+`drizzle/meta/000N_snapshot.json` and the journal entry — commit all three (rename the SQL if you like; the
+journal `tag` must match). CI runs `drizzle-kit generate` and fails unless it reports "No schema changes": a
+hand-written SQL file without its snapshot (what happened for 0026–0047, fixed by regenerating `0047_snapshot.json`)
+makes every later `generate` propose a duplicate migration that would fail on existing databases. If you must hand-write
+SQL (data migration, `IF NOT EXISTS`, a partial index), still edit `schema.ts` to match (`index(...).where(sql\`…\`)`,
+`primaryKey`, …) and regenerate the snapshot: generate the migration, keep its `meta/000N_snapshot.json` as the snapshot
+of your hand-written `000N`, delete the generated SQL and journal entry (`scripts/regen-snapshot.sh` does this).
+Name constraints the drizzle way (`<table>_<col>_<ref>_<refcol>_fk`, `<table>_<cols>_pk`, index names from
+`schema.ts`) so a later generated DROP finds them. Never ship a migration that re-creates applied objects.
+
+## Repository layout (hard rule)
+
+Top level is exactly `.github apps deploy docs packages scripts tools` plus root files; `scripts/check-layout.sh`
+(CI job `layout`, `make check-layout`) fails on anything else. Drops are copied over the clone with rsync, which
+never deletes: a moved or renamed folder must be removed in the same change (`git rm -r <old>`), and a drop must
+mirror this layout exactly — nothing at the root that is not in the repository.
 
 ## Conventions
 

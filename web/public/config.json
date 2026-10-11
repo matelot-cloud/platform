@@ -1,7 +1,0 @@
-{
-  "productName": "Matelot",
-  "keycloakUrl": "http://localhost:8080",
-  "realm": "platform",
-  "clientId": "platform-web",
-  "apiBaseUrl": "/api/v1"
-}

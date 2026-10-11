@@ -392,7 +392,7 @@ export const runnerPools = pgTable(
     createdById: uuid('created_by_id').references(() => users.id, { onDelete: 'set null' }),
     ...timestamps,
   },
-  (t) => [uniqueIndex('runner_pools_scope_slug_key').on(t.scopeType, t.scopeId, t.slug), index('runner_pools_org_idx').on(t.organizationId)],
+  (t) => [uniqueIndex('runner_pools_scope_slug_key').on(t.scopeType, t.scopeId, t.slug), index('runner_pools_org_idx').on(t.organizationId), uniqueIndex('runner_pools_one_managed').on(t.managed).where(sql`${t.managed}`)],
 );
 
 export const runnerRegistrationTokens = pgTable('runner_registration_tokens', {
@@ -792,7 +792,7 @@ export const findings = pgTable(
     statusChangedAt: timestamp('status_changed_at', { withTimezone: true }),
     note: text('note'),
   },
-  (t) => [uniqueIndex('findings_key').on(t.serviceId, t.componentId, t.advisoryId), index('findings_org_status_idx').on(t.organizationId, t.status, t.severity), index('findings_service_idx').on(t.serviceId, t.status)],
+  (t) => [uniqueIndex('findings_key').on(t.serviceId, t.componentId, t.advisoryId), index('findings_org_status_idx').on(t.organizationId, t.status, t.severity), index('findings_service_idx').on(t.serviceId, t.status), index('findings_running_idx').on(t.serviceId, t.status, t.running), index('findings_canonical_idx').on(t.serviceId, t.canonicalId)],
 );
 
 /** Which SBOMs (releases / images) contain the finding. */

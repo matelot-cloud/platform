@@ -26,8 +26,13 @@ jobs:
       - name: Migrations apply on a fresh database
         run: node apps/api/dist/migrate.js
         env: { DATABASE_URL: "postgresql://platform:platform@localhost:5432/platform" }
-      - name: Schema and migrations are in sync
-        run: pnpm --filter @secops/api db:generate && git diff --exit-code apps/api/drizzle
+      - name: Schema, migrations and snapshot are in sync (drizzle-kit generate must be a no-op)
+        run: |
+          pnpm --filter @secops/api db:generate
+          if [ -n "$(git status --porcelain apps/api/drizzle)" ]; then
+            echo "::error::drizzle-kit generate produced changes: the schema differs from the last snapshot. Every schema change ships its migration SQL and the regenerated snapshot in the same commit (CLAUDE.md § Working on the schema)."
+            git status --porcelain apps/api/drizzle; exit 1
+          fi
 
   web:
     runs-on: ubuntu-latest
@@ -43,6 +48,13 @@ jobs:
       - run: pnpm --filter @secops/web test
       - name: Documentation renders and every link resolves
         run: node tools/docs-site/test.mjs && node tools/docs-site/build.mjs --check
+
+  layout:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Only the monorepo's top-level directories exist (stale copies from old drops fail here)
+        run: bash scripts/check-layout.sh
 
   chart:
     runs-on: ubuntu-latest

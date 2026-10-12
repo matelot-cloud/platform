@@ -44,11 +44,18 @@ if [ -d "$SECRETS_DIR" ]; then
 fi
 echo "secrets: $n"
 
+# Registry image blobs (Docker Compose cells set REGISTRY_DIR; the Kubernetes CronJob does not: blobs stay on their PVC)
+if [ -n "${REGISTRY_DIR:-}" ] && [ -d "$REGISTRY_DIR" ]; then
+  echo "archiving registry blobs from $REGISTRY_DIR"
+  tar -C "$REGISTRY_DIR" -cf "$WORK/$NAME/registry.tar" . 2> /dev/null || tar -C "$REGISTRY_DIR" -cf "$WORK/$NAME/registry.tar" --ignore-failed-read .
+fi
+
 {
   echo "cell=$CELL"
   echo "created=$STAMP"
   echo "databases=$DATABASES"
   echo "secrets=$(ls "$WORK/$NAME/secrets" | tr '\n' ' ')"
+  echo "registry=$([ -f "$WORK/$NAME/registry.tar" ] && echo included || echo excluded)"
   echo "pg_dump=$(pg_dump --version)"
   echo "server=$(psql -d postgres -Atc 'select version()')"
 } > "$WORK/$NAME/manifest.txt"

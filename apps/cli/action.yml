@@ -5,7 +5,7 @@ inputs:
   url: { description: Cell URL (https://acme.platform.example.com), required: true }
   key-id: { description: CI token key id (sk_…), required: true }
   secret: { description: CI token secret (sec_…) — store it as a GitHub secret, required: true }
-  version: { description: "Tag of this repository to install (v2.19.2 or the moving v2); defaults to the ref this action was used with", required: false, default: "" }
+  version: { description: "Tag of this repository to install (v2.20.0 or the moving v2); defaults to the ref this action was used with", required: false, default: "" }
 runs:
   using: composite
   steps:

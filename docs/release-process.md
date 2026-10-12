@@ -9,7 +9,7 @@ cross-repository token is rotated. (The *product* concepts — builds, releases 
 | Repository | Visibility | Holds | Written by |
 | --- | --- | --- | --- |
 | `matelot-cloud/platform` | private | this monorepo: code, chart, scripts, docs sources, workflows | people |
-| `matelot-cloud/matelot` | public | README, EULA, SECURITY, CODE_OF_CONDUCT, SUPPORT, CHANGELOG, issue templates; **issues, discussions, releases** | people (files), `release.yml` (releases) |
+| `matelot-cloud/matelot` | public | README, EULA, SECURITY, CODE_OF_CONDUCT, SUPPORT, CHANGELOG, issue templates; **issues, discussions, releases**; `docker/` = the Compose stack | people (files), `release.yml` (releases, `docker/`) |
 | `matelot-cloud/helm-charts` | public | `charts/secops-cell/` (copy of `deploy/helm/secops-cell`), `scripts/` (cell-backup, cell-restore + lib), README | `release.yml` (chart + scripts), people (README) |
 | `matelot-cloud/website` | public, GitHub Pages | landing page sources (`content.json`, template, assets), **generated** `docs/latest/` and `docs/vX.Y/` | people (landing), `docs-sync.yml` + `release.yml` (docs) |
 | `matelot-cloud/.github` | public | organization profile, default community files | people |
@@ -47,6 +47,8 @@ released. Issues, discussions and releases live in `matelot-cloud/matelot` and a
    - **chart**: `helm lint`, `helm package --version X.Y.Z --app-version X.Y.Z`, `helm push` to
      `oci://ghcr.io/matelot-cloud/charts`, `cosign sign` of the chart digest, then the chart folder and the two operator
      scripts are copied into a clone of `helm-charts`, committed and tagged `secops-cell-X.Y.Z`.
+   - **compose**: `deploy/compose/` plus `cell-backup.sh`, `cell-restore.sh` and their lib are copied into
+     `matelot/docker/`, `.env.example` pinned to `MATELOT_VERSION=X.Y.Z`, committed and pushed.
    - **docs**: `tools/docs-site/build.mjs` renders `docs/` into `website/docs/vX.Y/` (major.minor: a patch release
      overwrites its line) and `website/docs/latest/`, runs the website's own test + link check against the result,
      commits and pushes. The website's `pages.yml` deploys on that push.
@@ -121,6 +123,7 @@ The same procedure applies at expiry; GitHub e-mails the token owner a week befo
 | `helm-charts/README.md`, `LICENSE` | the public repository | by hand |
 | `matelot/*` files | the public repository | by hand; `CHANGELOG.md` there gets a short summary per release line, the detailed log stays here |
 | GitHub Release in `matelot` | `CHANGELOG.md` section + digests | `release.yml` |
+| `matelot/docker/` | `deploy/compose/`, `scripts/cell-backup.sh`, `scripts/cell-restore.sh`, `scripts/lib/{compose.sh,wait.sh,cellwait.py}` | `release.yml` (version stamped into `.env.example`) |
 | `setup-cli/*` except README | `apps/cli` (src, **compiled `dist/`**, examples, package.json without `prepare`/devDependencies, tsconfig, action.yml, LICENSE) | `publish-cli.yml` on `cli-v*` tags: push, tags `vX.Y.Z` + moving `v<major>`, then a GitHub Release `vX.Y.Z` in `setup-cli` with `matelot-cli-X.Y.Z.tgz` and `matelot-cli.tgz` (fixed name for `releases/latest/download/`); the `install-test` job then runs the documented commands on a clean runner (pinned asset, latest asset, the major tag's source archive) and checks `matelot --version` / `secops --version` |
 | `setup-cli/README.md` | the public repository | by hand |
 
@@ -154,7 +157,8 @@ link to the public repositories or the site instead. `make docs-check` is what C
 
 ```bash
 pnpm -r typecheck && pnpm -r test && pnpm -r build
-make helm-lint          # scripts/chart-test.sh: every configuration, install == upgrade, tag change rolls only app pods
+make helm-lint          # scripts/chart-test.sh: every configuration, install == upgrade, tag change rolls only app pods, compose copies
+deploy/compose/smoke.sh # with local images: MATELOT_VERSION=local MATELOT_REGISTRY_PREFIX=secops in deploy/compose/.env (CI job `compose`)
 make docs-check         # docs render + every link resolves
 scripts/changelog-section.sh vX.Y.Z
 ```

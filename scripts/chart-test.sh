@@ -86,4 +86,7 @@ for k in ("StatefulSet/acme-postgres", "Deployment/acme-keycloak", "Deployment/a
     assert k in pa and pa[k] == pb[k], f"{k} pod template differs across tags"
 print("   an image tag change rolls only", ", ".join(changed))
 PY
+# the Docker Compose stack ships copies of the chart's backup scripts: they must be identical (release.yml publishes both)
+for f in backup.sh restore-db.sh; do cmp -s "$CHART/files/$f" "deploy/compose/backup/$f" || { echo "deploy/compose/backup/$f differs from $CHART/files/$f (copy it over)" >&2; exit 1; }; done
+docker compose -f deploy/compose/compose.yaml --env-file deploy/compose/.env.example config --quiet 2>/dev/null && echo "   compose.yaml renders" || echo "   (docker compose not available: compose.yaml not rendered here)"
 echo "chart ok ($OUT)"

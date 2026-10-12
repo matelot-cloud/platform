@@ -8,6 +8,7 @@ Path flags: `--org`, `--project`, `--service`, `--env`, `--id` (or a positional 
 | Command | Does |
 |---|---|
 | `matelot whoami` | identity and permissions of the token |
+| `matelot doctor [--url URL]` | health of a cell after an install or upgrade: API ready, version, login, organization, runners online, registry; exit 1 when a check fails (`--json` for scripts) |
 | `matelot pipeline --service ID [--template security] [--ref SHA] [--wait --timeout S]` | run the security pipeline; non-zero exit when it fails |
 | `matelot deploy --env ID [--version V] [--image REF@DIGEST] [--commit SHA]` | record a deployment; a new version becomes a release; rejected by policies with *reject deployments* |
 | `matelot promote --env ID --tag TAG` | copy a build image into the environment repository (= deploy); recorded immediately |

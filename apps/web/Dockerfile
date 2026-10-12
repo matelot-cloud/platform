@@ -14,4 +14,6 @@ RUN pnpm --filter @secops/web build
 FROM nginxinc/nginx-unprivileged:1.27-alpine
 COPY apps/web/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /repo/apps/web/dist /usr/share/nginx/html
+# runtime config lives outside the html root so a cell can mount its own file without touching the bundle
+COPY apps/web/public/config.json /matelot/web/config.json
 EXPOSE 8080

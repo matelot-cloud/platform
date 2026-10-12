@@ -91,7 +91,7 @@ spec:
               drop: ["ALL"]
           volumeMounts:
             - name: config
-              mountPath: /usr/share/nginx/html/config.json
+              mountPath: /matelot/web/config.json
               subPath: config.json
               readOnly: true
             - name: tmp

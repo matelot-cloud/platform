@@ -29,6 +29,9 @@ export const envSchema = z.object({
   BOOTSTRAP_ADMIN_EMAILS: z.string().default(''),
 
   CORS_ORIGINS: z.string().default(''),
+  /** Licence key (M13). Accepted and ignored until entitlements ship: every cell runs as the Free tier. Set from the
+   *  chart / compose .env or later through Settings → License. */
+  MATELOT_LICENSE: z.preprocess(emptyToUndefined, z.string().optional()),
   /** Runner image offered in the registration commands (published releases, or a locally built tag). */
   RUNNER_IMAGE: z.string().default('ghcr.io/matelot-cloud/runner:latest'),
   // Shared secret of the cell's managed runners (Helm chart): they register into the "Managed" pool with it. Unset = no managed runners.

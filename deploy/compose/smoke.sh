@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# End-to-end check of a Docker Compose cell, the way a new user would do it (CI runs it with freshly built images):
+#   up → wait for the cell through Caddy → sign in as the generated administrator → matelot doctor → create a
+#   workspace/team/project → backup (--compose) → destroy everything (down -v) → restore → the project is back.
+#   deploy/compose/smoke.sh [--keep]          (env: MATELOT_CLI="node ../../apps/cli/dist/index.js" to use a checkout)
+# Needs: docker compose v2, curl, python3 (JSON), the matelot CLI (or MATELOT_CLI), and ports 80/5000 free.
+set -euo pipefail
+cd "$(dirname "$0")"
+KEEP=0; [ "${1:-}" = "--keep" ] && KEEP=1
+CLI="${MATELOT_CLI:-matelot}"
+# cell-backup.sh / cell-restore.sh: ../../scripts in the platform checkout, ./scripts in the published docker/ folder
+SCRIPTS="${CELL_SCRIPTS:-}"; [ -n "$SCRIPTS" ] || { if [ -f ../../scripts/cell-backup.sh ]; then SCRIPTS="$(cd ../../scripts && pwd)"; else SCRIPTS="$(pwd)/scripts"; fi; }
+[ -f .env ] || cp .env.example .env
+BASE="http://localhost:${MATELOT_HTTP_PORT:-80}"
+log() { printf '\n== %s\n' "$*"; }
+cleanup() { if [ "$KEEP" = 0 ]; then log "down -v"; docker compose down -v --remove-orphans > /dev/null 2>&1 || true; fi; }
+trap cleanup EXIT
+
+wait_ready() { # through the proxy, as a browser would
+  for i in $(seq 1 90); do
+    if curl -fsS -o /dev/null "$BASE/api/v1/health/ready" && curl -fsS -o /dev/null "$BASE/healthz"; then return 0; fi
+    sleep 5
+  done
+  echo "the cell did not become ready through $BASE in 450 s" >&2; docker compose ps >&2; docker compose logs --tail 50 api keycloak caddy >&2; return 1
+}
+token() { # password grant on the web client (enabled for evaluation installs): the CLI accepts the Keycloak token as MATELOT_TOKEN
+  local pw; pw="$(docker compose run --rm --no-deps init show | sed -n 's/^Admin password: *//p')"
+  curl -fsS -X POST "$BASE/auth/realms/platform/protocol/openid-connect/token" -d client_id=platform-web -d grant_type=password -d "username=admin" -d "password=$pw" \
+    | python3 -c 'import sys,json; print(json.load(sys.stdin)["access_token"])'
+}
+
+log "docker compose up -d"
+docker compose up -d
+log "waiting for $BASE"; wait_ready
+docker compose logs welcome | tail -12
+log "matelot doctor"
+export MATELOT_URL="$BASE" MATELOT_CREDENTIALS=/nonexistent
+MATELOT_TOKEN="$(token)"; export MATELOT_TOKEN
+$CLI doctor
+log "create workspace / team / project"
+ORG="$($CLI request GET /api/v1/organizations --json | python3 -c 'import sys,json; print(json.load(sys.stdin)[0]["id"])')"
+WS="$($CLI workspace create --org "$ORG" --slug smoke --name Smoke --json | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')"
+TEAM="$($CLI team create --workspace "$WS" --slug platform --name Platform --json | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')"
+PROJECT="$($CLI project create --team "$TEAM" --slug payments --name Payments --json | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')"
+echo "project $PROJECT"
+log "backup --compose"
+rm -rf ./smoke-backups; bash "$SCRIPTS/cell-backup.sh" --compose . -d ./smoke-backups
+ARCHIVE="$(ls ./smoke-backups/*.tar.gz)"
+log "destroy: docker compose down -v"
+docker compose down -v
+log "restore --compose $ARCHIVE"
+bash "$SCRIPTS/cell-restore.sh" --compose . --yes "$ARCHIVE"
+wait_ready
+MATELOT_TOKEN="$(token)"; export MATELOT_TOKEN     # same generated password: the secrets came back with the archive
+$CLI doctor
+$CLI request GET "/api/v1/projects/$PROJECT" --json | python3 -c 'import sys,json; p=json.load(sys.stdin); assert p["slug"]=="payments", p; print("project restored:", p["name"])'
+rm -rf ./smoke-backups
+log "smoke test passed"

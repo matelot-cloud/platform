@@ -41,6 +41,9 @@ managedRunners:
     limits: { cpu: "2", memory: 2Gi }
   workDirSize: 4Gi           # emptyDir for checkouts and image layers
 
+# Licence key (M13): empty = Free tier. Accepted and ignored until entitlements ship; also settable in Settings → License.
+license: ""
+
 # Encryption key for integration credentials at rest (64 hex chars). Leave empty to let the chart
 # generate one on first install and keep it across upgrades (the Secret is reused, never rotated).
 encryptionKey: ""

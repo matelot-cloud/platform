@@ -4,11 +4,14 @@
 #   scripts/cell-restore.sh -r acme -n tenant-acme acme-20261009T021700Z.tar.gz          # secrets + databases
 #   scripts/cell-restore.sh -r acme -n tenant-acme --secrets-only ARCHIVE                 # new cluster: before helm install
 #   scripts/cell-restore.sh -r acme -n tenant-acme --databases-only ARCHIVE               # … after helm install
+#   scripts/cell-restore.sh --compose [DIR] [--secrets-only|--databases-only] ARCHIVE      # Docker Compose cell
 # Databases: the API, worker, managed runners and Keycloak are scaled to 0 while each database is dropped and recreated
 # from its dump inside the postgres pod, then scaled back. Needs kubectl; --yes skips the confirmation.
 set -euo pipefail
-RELEASE="${RELEASE:-}"; NAMESPACE="${NAMESPACE:-}"; MODE=all; YES=0; ARCHIVE=""
-usage() { sed -n '2,8p' "$0"; exit "${1:-0}"; }
+RELEASE="${RELEASE:-}"; NAMESPACE="${NAMESPACE:-}"; MODE=all; YES=0; ARCHIVE=""; COMPOSE=""
+# shellcheck source=scripts/lib/compose.sh
+source "$(dirname "$0")/lib/compose.sh"
+usage() { sed -n '2,9p' "$0"; exit "${1:-0}"; }
 while [ $# -gt 0 ]; do
   case "$1" in
     -r|--release) RELEASE="$2"; shift 2;;
@@ -16,12 +19,14 @@ while [ $# -gt 0 ]; do
     --secrets-only) MODE=secrets; shift;;
     --databases-only) MODE=databases; shift;;
     -y|--yes) YES=1; shift;;
+    --compose) COMPOSE="."; if [ $# -gt 1 ] && [ "${2#-}" = "$2" ] && [ -d "$2" ]; then COMPOSE="$2"; shift; fi; shift;;
     -h|--help) usage;;
     -*) echo "unknown argument: $1" >&2; usage 1;;
     *) ARCHIVE="$1"; shift;;
   esac
 done
-[ -n "$RELEASE" ] && [ -n "$NAMESPACE" ] && [ -n "$ARCHIVE" ] || { echo "--release, --namespace and the archive are required" >&2; usage 1; }
+if [ -n "$COMPOSE" ]; then [ -n "$ARCHIVE" ] || { echo "the archive is required" >&2; usage 1; }; compose_restore "$COMPOSE" "$ARCHIVE" "$MODE" "$YES"; exit $?; fi
+[ -n "$RELEASE" ] && [ -n "$NAMESPACE" ] && [ -n "$ARCHIVE" ] || { echo "--release, --namespace and the archive are required (or --compose for a Docker Compose cell)" >&2; usage 1; }
 [ -f "$ARCHIVE" ] || { echo "no such file: $ARCHIVE" >&2; exit 1; }
 K=(kubectl -n "$NAMESPACE")
 
@@ -45,6 +50,7 @@ if [ "$MODE" != databases ]; then
   for dir in "$ROOT"/secrets/*/; do
     [ -d "$dir" ] || continue
     name="$(basename "$dir")"
+    case "$name" in "$RELEASE-"*) ;; *) name="$RELEASE-$name";; esac   # a Compose archive names secrets without the release prefix
     # server-side apply: Helm-created Secrets have no last-applied annotation, so a client-side apply warns on each
     "${K[@]}" create secret generic "$name" --from-file="$dir" --dry-run=client -o yaml \
       | "${K[@]}" apply --server-side --force-conflicts --field-manager=cell-restore -f - > /dev/null

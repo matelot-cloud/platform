@@ -16,6 +16,7 @@ data:
   BOOTSTRAP_ORG_NAME: {{ .Values.tenant.name | quote }}
   BOOTSTRAP_ADMIN_EMAILS: {{ join "," .Values.tenant.adminEmails | quote }}
   CORS_ORIGINS: {{ join "," .Values.api.corsOrigins | quote }}
+  MATELOT_LICENSE: {{ .Values.license | quote }}
   WEB_BASE_URL: {{ printf "%s://%s" (include "cell.scheme" .) (include "cell.apiHost" .) | quote }}
   GITHUB_APP_ID: {{ .Values.github.appId | quote }}
   GITHUB_APP_SLUG: {{ .Values.github.slug | quote }}

@@ -3,12 +3,15 @@
 #   scripts/cell-backup.sh -r acme -n tenant-acme                 # run now, wait, print the log
 #   scripts/cell-backup.sh -r acme -n tenant-acme -d ./backups    # … and copy the newest archive (+ .sha256) to ./backups
 #   scripts/cell-backup.sh -r acme -n tenant-acme --list          # archives on the PVC
+#   scripts/cell-backup.sh --compose [DIR] [-d ./backups] [--list] # Docker Compose cell (DIR = folder with compose.yaml, default .)
 # Needs: kubectl with access to the namespace; backup.enabled=true in the release. See docs/backup-restore.md.
 set -euo pipefail
-RELEASE="${RELEASE:-}"; NAMESPACE="${NAMESPACE:-}"; DOWNLOAD=""; LIST=0; TIMEOUT="${TIMEOUT:-1800}"
+RELEASE="${RELEASE:-}"; NAMESPACE="${NAMESPACE:-}"; DOWNLOAD=""; LIST=0; TIMEOUT="${TIMEOUT:-1800}"; COMPOSE=""
 # shellcheck source=scripts/lib/wait.sh
 source "$(dirname "$0")/lib/wait.sh"
-usage() { sed -n '2,7p' "$0"; exit "${1:-0}"; }
+# shellcheck source=scripts/lib/compose.sh
+source "$(dirname "$0")/lib/compose.sh"
+usage() { sed -n '2,8p' "$0"; exit "${1:-0}"; }
 while [ $# -gt 0 ]; do
   case "$1" in
     -r|--release) RELEASE="$2"; shift 2;;
@@ -16,11 +19,13 @@ while [ $# -gt 0 ]; do
     -d|--download) DOWNLOAD="$2"; shift 2;;
     --list) LIST=1; shift;;
     --timeout) TIMEOUT="$2"; shift 2;;
+    --compose) COMPOSE="."; if [ $# -gt 1 ] && [ "${2#-}" = "$2" ]; then COMPOSE="$2"; shift; fi; shift;;
     -h|--help) usage;;
     *) echo "unknown argument: $1" >&2; usage 1;;
   esac
 done
-[ -n "$RELEASE" ] && [ -n "$NAMESPACE" ] || { echo "--release and --namespace are required" >&2; usage 1; }
+if [ -n "$COMPOSE" ]; then compose_backup "$COMPOSE" "$DOWNLOAD" "$LIST"; exit $?; fi
+[ -n "$RELEASE" ] && [ -n "$NAMESPACE" ] || { echo "--release and --namespace are required (or --compose for a Docker Compose cell)" >&2; usage 1; }
 K=(kubectl -n "$NAMESPACE")
 "${K[@]}" get cronjob "$RELEASE-backup" > /dev/null || { echo "no CronJob $RELEASE-backup in $NAMESPACE: set backup.enabled=true and upgrade the release" >&2; exit 1; }
 

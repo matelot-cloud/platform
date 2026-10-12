@@ -2,6 +2,7 @@
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { CliError, configFromEnv, request, VERSION } from './client';
+import type { Config } from './client';
 import { signatureHeader } from './signing';
 import { readZip } from './zip-read';
 import { credentialsPath, freshToken, login, logout } from './login';
@@ -22,6 +23,7 @@ Environment: MATELOT_URL + MATELOT_KEY_ID, MATELOT_SECRET (CI token)  or  MATELO
 
 Commands
   whoami                                                 identity and permissions of the token
+  doctor   [--url URL]                                   health of a cell: API, version, login, organization, runners, registry (exit 1 when something is wrong)
   login    --url URL [--scope read|write|sudo] [--no-browser]   sign in through the browser (OAuth; prints the link when no browser can be opened); logout revokes it
   mcp      [--check]                                    how to connect Claude (Code / Desktop) to this cell's MCP server; --check runs the handshake
   vulnerabilities recorrelate [--org ID | --service ID] [--wait]   re-run advisory correlation (asynchronous job)
@@ -102,6 +104,7 @@ async function main() {
     out({ url: creds.url, requestedScope: scope, scope: creds.scope, narrowed, expiresAt: creds.expiresAt, refreshToken: !!creds.refreshToken, user: me?.user.email ?? null }, `logged in to ${creds.url}${me ? ` as ${me.user.email}` : ''} (scope ${creds.scope}${narrowed ? `, requested ${scope}` : ''}, expires ${creds.expiresAt}); stored in ${credentialsPath()}`);
     return;
   }
+  if (command === 'doctor') { await doctor(str(flags.url), !!flags.json); return; }
   const config = configFromEnv();
   if (config.fromLogin) { const t = await freshToken(config.url); if (!t) throw new CliError(`your login to ${config.url} expired: run matelot login --url ${config.url}`); config.token = t; }
 
@@ -613,4 +616,61 @@ function onboardingText(r: OnboardingReport, verb: string): string {
   for (const s of r.steps) lines.push(`  [${s.done ? 'x' : ' '}] ${s.title}${s.optional ? ' (optional)' : ''}${s.detail ? `  — ${s.detail}` : ''}`);
   if (r.next) lines.push('', `next: ${r.next.title}`, ...(r.next.cli ? [`  ${r.next.cli}`] : []));
   return lines.join('\n');
+}
+
+/** `matelot doctor`: what an operator checks after `docker compose up -d` / `helm install` — unauthenticated probes
+ * first (reachability, readiness, version), then everything the credentials allow (login, organization, runners,
+ * registry). Prints one line per check; exit 1 when a check fails. */
+async function doctor(urlFlag: string | undefined, json: boolean): Promise<void> {
+  const url = (urlFlag ?? process.env.MATELOT_URL ?? process.env.SECOPS_URL ?? '').replace(/\/$/, '');
+  if (!url) throw new CliError('usage: matelot doctor --url https://matelot.example (or MATELOT_URL)');
+  const checks: { name: string; ok: boolean | null; detail: string }[] = [];
+  const add = (name: string, ok: boolean | null, detail: string) => { checks.push({ name, ok, detail }); if (!json) console.log(`${ok === null ? '  --' : ok ? '  OK' : 'FAIL'}  ${name.padEnd(14)} ${detail}`); };
+  const get = async (path: string, token?: string) => {
+    const r = await fetch(`${url}${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : {}, signal: AbortSignal.timeout(15_000) });
+    const text = await r.text();
+    let body: unknown = text; try { body = JSON.parse(text); } catch { /* not json */ }
+    return { status: r.status, body };
+  };
+  // 1. reachable + ready
+  try {
+    const r = await get('/api/v1/health/ready');
+    add('api', r.status === 200, r.status === 200 ? `${url} ready` : `${url}/api/v1/health/ready → HTTP ${r.status}`);
+    if (r.status !== 200) return finish();
+  } catch (e) { add('api', false, `${url} unreachable: ${(e as Error).message}`); return finish(); }
+  // 2. version
+  let version = '?';
+  try { const r = await get('/api/v1/meta'); const b = r.body as { version?: string } | undefined; version = b?.version ?? '?'; add('version', r.status === 200, `API ${version} · CLI ${VERSION}`); }
+  catch (e) { add('version', false, (e as Error).message); }
+  // 3. credentials (optional: without any, the remaining checks are skipped, not failed)
+  let config: Config | null = null;
+  try { config = configFromEnv(); if (config.fromLogin) { const t = await freshToken(config.url); if (!t) throw new Error('stored login expired'); config.token = t; } }
+  catch (e) { add('login', null, `skipped: ${(e as Error).message.split('\n')[0]} — run matelot login --url ${url} to check the rest`); return finish(); }
+  config.url = url;
+  let me: { kind: string; email?: string; name?: string } | null = null;
+  try { me = await request(config, 'GET', '/api/v1/api-tokens/whoami'); add('login', true, me!.kind === 'token' ? `CI token "${me!.name}"` : `user ${me!.email}`); }
+  catch (e) { add('login', false, (e as Error).message); return finish(); }
+  // 4. organization + runners + registry
+  let orgs: { id: string; slug: string; name: string }[] = [];
+  try { orgs = await request(config, 'GET', '/api/v1/organizations'); add('organization', orgs.length > 0, orgs.length ? orgs.map((o) => o.slug).join(', ') : 'no organization visible to these credentials'); }
+  catch (e) { add('organization', false, (e as Error).message); }
+  if (orgs[0]) {
+    try {
+      const pools = await request<{ name: string; managed?: boolean; runners: { name: string; status: string }[] }[]>(config, 'GET', `/api/v1/organizations/${orgs[0].id}/runner-pools`);
+      const online = pools.flatMap((p) => p.runners.filter((r) => r.status === 'online'));
+      const managed = pools.find((p) => p.managed);
+      add('runners', online.length > 0, online.length ? `${online.length} online (${online.map((r) => r.name).join(', ')})${managed ? '' : ' · no managed pool'}` : 'no runner online: pipelines will queue (docker compose logs runner / the managed runner StatefulSet)');
+    } catch (e) { add('runners', false, (e as Error).message); }
+  }
+  try {
+    const info = await request<{ available: boolean; host: string | null }>(config, 'GET', '/api/v1/registry/info');
+    add('registry', info.available, info.available ? `${info.host} (matelot registry login)` : 'built-in registry not configured');
+  } catch (e) { add('registry', false, (e as Error).message); }
+  return finish();
+  function finish(): void {
+    const failed = checks.filter((c) => c.ok === false);
+    if (json) console.log(JSON.stringify({ url, version, checks, ok: failed.length === 0 }, null, 2));
+    else console.log(failed.length ? `\n${failed.length} check(s) failed` : `\nall checks passed (${url})`);
+    if (failed.length) process.exitCode = 1;
+  }
 }

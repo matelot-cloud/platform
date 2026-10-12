@@ -7,8 +7,10 @@ design sessions so every new session starts with them.
 
 A B2B Product Security / DevSecOps / Compliance platform, **closed source and self-hosted**: a customer installs
 **one "cell"** per organization (namespace `tenant-<slug>`: API, worker, web app, managed runners, registry, Postgres,
-Redis, Keycloak) in their own cluster from the Helm chart `deploy/helm/secops-cell`, published as
-`oci://ghcr.io/matelot-cloud/charts/secops-cell` with images `ghcr.io/matelot-cloud/{api,web,worker,runner}`.
+Redis, Keycloak) on their own infrastructure: **Docker Compose on one host** (`deploy/compose`, published as
+`matelot-cloud/matelot` → `docker/`; the quick start for evaluation and small teams) or the Helm chart
+`deploy/helm/secops-cell` (production), published as `oci://ghcr.io/matelot-cloud/charts/secops-cell`; both use the
+images `ghcr.io/matelot-cloud/{api,web,worker,runner}` and the same backup archive format.
 Subscription per user: Free / Premium / Ultimate (licensing and entitlements are M13, not built yet).
 GitHub organization `matelot-cloud`: this private monorepo (`platform`) + public `matelot` (issues, discussions,
 releases), `helm-charts`, `website` (GitHub Pages), `.github` — all written by `.github/workflows/release.yml` and
@@ -63,6 +65,7 @@ pnpm db:generate    after editing apps/api/src/database/schema.ts (see Working o
 make check-layout   fail on stale top-level directories (CI does too)
 make kind-up / kind-load / deploy TENANT=acme
 make backup TENANT=acme / restore TENANT=acme ARCHIVE=…   cell backup (CronJob in the chart) and restore; docs/backup-restore.md
+deploy/compose/smoke.sh   the Compose quick start end to end (up → doctor → project → backup → down -v → restore); CI job `compose`
 make provision TENANT=globex / decommission TENANT=globex   real cells from deploy/cells/<slug>.values.yaml; docs/cell-provisioning.md
 ```
 
@@ -118,7 +121,10 @@ mirror this layout exactly — nothing at the root that is not in the repository
   Outlet; the sidebar (`src/layout/AppSidebar.tsx`) picks its menu from the route; the navbar
   switcher is `src/platform/header/ContextSwitcher.tsx`. New section = page under the right layout
   + hooks in `src/platform/api/hooks.ts`; respect 403 with an explanatory empty state.
-- Keep the Helm chart deployable with defaults on kind; anything production-only is a values switch.
+- Keep the Helm chart deployable with defaults on kind; anything production-only is a values switch. The Compose
+  stack (`deploy/compose`) mirrors the chart: same env names, same generated-secret layout (`secrets/<name>/<KEY>`),
+  same backup/restore scripts (`backup/*.sh` are copies of the chart's files — chart-test fails when they differ);
+  a new API setting goes into `api-configmap.yaml` **and** `compose-init.sh` (`env/api.env`).
 
 ## v1 focus (read first)
 

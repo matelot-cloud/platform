@@ -83,3 +83,36 @@ jobs:
         with: { context: ., file: apps/web/Dockerfile, push: false, tags: secops-web:ci }
       - uses: docker/build-push-action@v7
         with: { context: apps/runner, file: apps/runner/Dockerfile, push: false, tags: secops-runner:ci }
+
+  compose:
+    # the Docker Compose quick start, end to end, with the images built from this commit (deploy/compose/smoke.sh)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with: { context: ., file: apps/api/Dockerfile, target: runtime, load: true, tags: "secops/api:ci", cache-from: "type=gha,scope=api", cache-to: "type=gha,scope=api,mode=max" }
+      - uses: docker/build-push-action@v7
+        with: { context: ., file: apps/api/Dockerfile, target: worker, load: true, tags: "secops/worker:ci", cache-from: "type=gha,scope=api" }
+      - uses: docker/build-push-action@v7
+        with: { context: ., file: apps/web/Dockerfile, load: true, tags: "secops/web:ci", cache-from: "type=gha,scope=web", cache-to: "type=gha,scope=web,mode=max" }
+      - uses: docker/build-push-action@v7
+        with: { context: apps/runner, file: apps/runner/Dockerfile, load: true, tags: "secops/runner:ci", cache-from: "type=gha,scope=runner", cache-to: "type=gha,scope=runner,mode=max" }
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile --filter matelot-cli && pnpm --filter matelot-cli build
+      - name: docker compose config renders with the example .env
+        run: cd deploy/compose && docker compose --env-file .env.example config --quiet
+      - name: Smoke test (up → doctor → project → backup → down -v → restore)
+        working-directory: deploy/compose
+        env:
+          MATELOT_CLI: node ../../apps/cli/dist/index.js
+        run: |
+          cp .env.example .env
+          printf 'MATELOT_VERSION=ci\nMATELOT_REGISTRY_PREFIX=secops\n' >> .env
+          bash smoke.sh
+      - name: Logs on failure
+        if: failure()
+        working-directory: deploy/compose
+        run: docker compose ps; docker compose logs --tail 200

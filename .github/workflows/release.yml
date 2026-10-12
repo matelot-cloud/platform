@@ -4,6 +4,7 @@
 #            cosign-signed (keyless, GitHub OIDC), SPDX SBOM attached as an attestation (syft)
 #   chart    oci://ghcr.io/matelot-cloud/charts/secops-cell:X.Y.Z (appVersion X.Y.Z, signed); chart folder + backup/restore
 #            scripts synced to matelot-cloud/helm-charts
+#   compose  deploy/compose (+ backup/restore scripts) synced to matelot-cloud/matelot → docker/, .env.example pinned to X.Y.Z
 #   docs     rendered into matelot-cloud/website: docs/vX.Y/ and docs/latest/ (Pages deploys on that push)
 #   release  GitHub Release vX.Y.Z in matelot-cloud/matelot: the CHANGELOG section + image and chart digests
 #
@@ -153,6 +154,30 @@ jobs:
           git diff --cached --quiet && echo "chart unchanged" || { git commit -m "secops-cell $VERSION (from platform ${GITHUB_SHA::7})"; git push; }
           git tag -f "$CHART_NAME-$VERSION" && git push -f origin "$CHART_NAME-$VERSION"
 
+  compose:
+    needs: version
+    runs-on: ubuntu-24.04
+    permissions: { contents: read }
+    steps:
+      - uses: actions/checkout@v7
+      - name: Sync the Docker Compose stack to matelot-cloud/matelot (docker/)
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          TOKEN: ${{ secrets.PUBLIC_REPOS_TOKEN }}
+        run: |
+          git clone --depth 1 "https://x-access-token:${TOKEN}@github.com/$ORG/matelot.git" public
+          rm -rf public/docker; mkdir -p public/docker/scripts/lib
+          cp -r deploy/compose/. public/docker/
+          rm -f public/docker/.env
+          cp scripts/cell-backup.sh scripts/cell-restore.sh public/docker/scripts/
+          cp scripts/lib/compose.sh scripts/lib/wait.sh scripts/lib/cellwait.py public/docker/scripts/lib/
+          # the published stack runs this release (a pre-release keeps `latest` out of the example)
+          sed -i "s/^MATELOT_VERSION=.*/MATELOT_VERSION=$VERSION/" public/docker/.env.example
+          cd public
+          git config user.name "matelot-release[bot]"; git config user.email "release@matelot.io"
+          git add -A docker
+          git diff --cached --quiet && echo "compose unchanged" || { git commit -m "docker compose stack $VERSION (from platform ${GITHUB_SHA::7})"; git push; }
+
   docs:
     needs: version
     runs-on: ubuntu-24.04
@@ -179,7 +204,7 @@ jobs:
           git diff --cached --quiet && echo "docs unchanged" || { git commit -m "docs: $LINE from platform v$VERSION"; git push; }
 
   release:
-    needs: [version, images, chart, docs]
+    needs: [version, images, chart, compose, docs]
     runs-on: ubuntu-24.04
     permissions: { contents: read }
     steps:
@@ -209,6 +234,8 @@ jobs:
             echo "cosign verify ghcr.io/$ORG/api:$VERSION --certificate-identity-regexp 'https://github.com/$ORG/platform/' --certificate-oidc-issuer https://token.actions.githubusercontent.com"
             echo "cosign verify-attestation --type spdxjson ghcr.io/$ORG/api:$VERSION --certificate-identity-regexp 'https://github.com/$ORG/platform/' --certificate-oidc-issuer https://token.actions.githubusercontent.com"
             echo '```'
+            echo
+            echo "Docker Compose: https://github.com/$ORG/matelot/tree/main/docker (compose.yaml for $VERSION; \`MATELOT_VERSION=$VERSION\` in .env, then \`docker compose pull && docker compose up -d\`)."
             echo
             echo "Install or upgrade: $SITE/docs/${{ needs.version.outputs.line }}/install.html"
           } >> notes.md

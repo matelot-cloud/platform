@@ -30,8 +30,10 @@ assert.doesNotMatch(prov, /secops-platform\/blob|\/platform\/blob\//, 'a link in
 const install = readFileSync(join(out, 'install.html'), 'utf8');
 assert.match(install, /<a class="current" href="install\.html">Install<\/a>/);
 assert.match(install, /oci:\/\/ghcr\.io\/matelot-cloud\/charts\/secops-cell/);
-assert.match(install, /<li class="d2"><a href="#2-choose-the-cell-s-values">2\. Choose the cell's values<\/a>/, "TOC entry with an apostrophe is not re-escaped");
-assert.match(install, /<h2 id="2-choose-the-cell-s-values">/);
+assert.match(install, /<h2 id="option-a-docker-compose">/);
+assert.match(install, /docker compose up -d/);
+assert.match(install, /<li class="d3"><a href="#b2-choose-the-cell-s-values">B2\. Choose the cell's values<\/a>/, "TOC entry with an apostrophe is not re-escaped");
+assert.match(install, /<h3 id="b2-choose-the-cell-s-values">/);
 assert.match(readFileSync(join(out, 'index.html'), 'utf8'), new RegExp(`Everything about ${PRODUCT}`));
 
 // search index without entities; CLI table rows with an escaped pipe

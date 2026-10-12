@@ -1,0 +1,274 @@
+# Matelot — one cell on one host with Docker Compose (evaluation and small teams; Kubernetes/Helm is the production path).
+#   cp .env.example .env   # set MATELOT_DOMAIN (or keep localhost) and MATELOT_ADMIN_EMAIL
+#   docker compose up -d && docker compose logs -f welcome
+# Everything secret is generated on first start into the `config` volume (service `init`); nothing here is a default
+# password. One published port pair (80/443, Caddy); 5000 only serves the registry when MATELOT_DOMAIN is localhost.
+# Images are pinned to the release in .env (MATELOT_VERSION). Upgrade: edit it, `docker compose pull && up -d`.
+name: matelot
+
+x-app-image: &app-image
+  pull_policy: missing
+x-restart: &restart
+  restart: unless-stopped
+x-logging: &logging
+  logging: { driver: json-file, options: { max-size: "20m", max-file: "5" } }
+x-config-env: &config-env
+  MATELOT_VERSION: ${MATELOT_VERSION:-latest}
+  MATELOT_DOMAIN: ${MATELOT_DOMAIN:-localhost}
+  MATELOT_SCHEME: ${MATELOT_SCHEME:-https}
+  MATELOT_ADMIN_EMAIL: ${MATELOT_ADMIN_EMAIL:-admin@localhost}
+  MATELOT_ADMIN_PASSWORD: ${MATELOT_ADMIN_PASSWORD:-}
+  MATELOT_ORG_SLUG: ${MATELOT_ORG_SLUG:-main}
+  MATELOT_ORG_NAME: ${MATELOT_ORG_NAME:-My organization}
+  MATELOT_ACME_EMAIL: ${MATELOT_ACME_EMAIL:-}
+  MATELOT_REGISTRY_PORT: ${MATELOT_REGISTRY_PORT:-5000}
+  MATELOT_DOCS_URL: ${MATELOT_DOCS_URL:-https://matelot-cloud.github.io/website/docs/latest/}
+  MATELOT_LOG_LEVEL: ${MATELOT_LOG_LEVEL:-info}
+  MATELOT_LICENSE: ${MATELOT_LICENSE:-}   # M13: licence key (Free tier when empty); also Settings → License in the app
+# api / worker entrypoint: load the generated secrets and config from the volume (eval'd by `sh -c`), then start
+x-load-env: &load-env |
+  set -e
+  set -a; . /matelot/env/api.env; set +a
+  for f in /matelot/secrets/*/*; do k="$$(basename "$$f")"; case "$$k" in *.*) continue;; esac; export "$$k=$$(cat "$$f")"; done
+
+services:
+  init:
+    image: ${MATELOT_REGISTRY_PREFIX:-ghcr.io/matelot-cloud}/api:${MATELOT_VERSION:-latest}
+    <<: *app-image
+    user: "0:0"                   # the only root container: writes the config volume and sets volume ownership, then exits
+    entrypoint: ["bash", "/init/compose-init.sh"]
+    environment: *config-env
+    volumes:
+      - ./init:/init:ro
+      - config:/matelot
+      - postgres:/volumes/postgres
+      - registry:/volumes/registry
+      - backups:/volumes/backups
+      - caddy-data:/volumes/caddy-data
+      - caddy-config:/volumes/caddy-config
+      - runner-data:/volumes/runner-data
+      - runner-work:/volumes/runner-work
+    restart: "no"
+
+  postgres:
+    image: postgres:16
+    <<: [*restart, *logging]
+    user: "999:999"
+    environment:
+      POSTGRES_USER_FILE: /matelot/secrets/postgres/POSTGRES_USER
+      POSTGRES_PASSWORD_FILE: /matelot/secrets/postgres/POSTGRES_PASSWORD
+      POSTGRES_DB_FILE: /matelot/secrets/postgres/POSTGRES_DB
+    volumes:
+      - postgres:/var/lib/postgresql/data
+      - config:/matelot:ro
+      - ./postgres:/docker-entrypoint-initdb.d:ro   # creates the keycloak database on first start
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U platform -d platform"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    deploy: { resources: { limits: { memory: 512M } } }
+    depends_on:
+      init: { condition: service_completed_successfully }
+
+  redis:
+    image: redis:7-alpine
+    <<: [*restart, *logging]
+    user: "999:999"
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "96mb", "--maxmemory-policy", "noeviction"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    deploy: { resources: { limits: { memory: 128M } } }
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    <<: [*restart, *logging]
+    # settings and secrets come from the config volume (keycloak.env written by init); the realm is imported on the
+    # first start only (Keycloak skips an existing realm)
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -e; set -a; . /matelot/keycloak/keycloak.env; set +a
+        mkdir -p /opt/keycloak/data/import && cp /matelot/keycloak/import/realm.json /opt/keycloak/data/import/realm.json
+        exec /opt/keycloak/bin/kc.sh start --import-realm
+    environment:
+      JAVA_OPTS_KC_HEAP: "-XX:MaxRAMPercentage=70"
+    volumes:
+      - config:/matelot:ro
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q '\"UP\"' <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 60s
+    deploy: { resources: { limits: { memory: 1G } } }
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  api:
+    image: ${MATELOT_REGISTRY_PREFIX:-ghcr.io/matelot-cloud}/api:${MATELOT_VERSION:-latest}
+    <<: [*app-image, *restart, *logging]
+    command: ["sh", "-c", "eval \"$$LOAD_ENV\" && node dist/migrate.js && exec node dist/main.js"]
+    environment:
+      LOAD_ENV: *load-env
+    volumes:
+      - config:/matelot:ro
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/v1/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    deploy: { resources: { limits: { memory: 512M } } }
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      keycloak: { condition: service_healthy }
+
+  worker:
+    image: ${MATELOT_REGISTRY_PREFIX:-ghcr.io/matelot-cloud}/worker:${MATELOT_VERSION:-latest}
+    <<: [*app-image, *restart, *logging]
+    command: ["sh", "-c", "eval \"$$LOAD_ENV\" && exec node dist/worker.js"]
+    environment:
+      LOAD_ENV: *load-env
+    volumes:
+      - config:/matelot:ro
+    deploy: { resources: { limits: { memory: 512M } } }
+    depends_on:
+      api: { condition: service_healthy }
+
+  web:
+    image: ${MATELOT_REGISTRY_PREFIX:-ghcr.io/matelot-cloud}/web:${MATELOT_VERSION:-latest}
+    <<: [*app-image, *restart, *logging]
+    volumes:
+      - config:/matelot:ro                 # nginx serves /matelot/web/config.json as /config.json
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    deploy: { resources: { limits: { memory: 64M } } }
+
+  runner:
+    image: ${MATELOT_REGISTRY_PREFIX:-ghcr.io/matelot-cloud}/runner:${MATELOT_VERSION:-latest}
+    <<: [*app-image, *restart, *logging]
+    command: ["sh", "-c", "export RUNNER_MANAGED_SECRET=$$(cat /matelot/secrets/managed-runner/MANAGED_RUNNER_SECRET) && exec node dist/index.js"]
+    environment:
+      RUNNER_URL: http://api:3000/api/v1
+      RUNNER_NAME: compose-runner-1
+      RUNNER_TAGS: ""
+      RUNNER_DATA_DIR: /data
+      RUNNER_WORKDIR: /work
+      HOME: /work
+    volumes:
+      - config:/matelot:ro
+      - runner-data:/data
+      - runner-work:/work
+    stop_grace_period: 10m        # finishes the current job, then exits
+    deploy: { resources: { limits: { memory: 1G } } }
+    depends_on:
+      api: { condition: service_healthy }
+
+  registry:
+    image: registry:2.8.3
+    <<: [*restart, *logging]
+    user: "10001:10001"
+    command: ["serve", "/matelot/registry/config.yml"]
+    volumes:
+      - config:/matelot:ro
+      - registry:/var/lib/registry
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:5000/"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    deploy: { resources: { limits: { memory: 256M } } }
+    depends_on:
+      init: { condition: service_completed_successfully }
+
+  caddy:
+    image: caddy:2.9-alpine
+    <<: [*restart, *logging]
+    user: "10001:10001"
+    sysctls: { net.ipv4.ip_unprivileged_port_start: 0 }   # bind 80/443 without root
+    command: ["caddy", "run", "--config", "/matelot/caddy/Caddyfile", "--adapter", "caddyfile"]
+    ports:
+      - "${MATELOT_HTTP_PORT:-80}:80"
+      - "${MATELOT_HTTPS_PORT:-443}:443"
+      - "${MATELOT_REGISTRY_PORT:-5000}:5000"           # registry on localhost only; a real domain uses registry.<domain>:443
+    volumes:
+      - config:/matelot:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2019/config/"]   # admin API: up once the Caddyfile is loaded
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    deploy: { resources: { limits: { memory: 128M } } }
+    depends_on:
+      init: { condition: service_completed_successfully }
+      web: { condition: service_healthy }
+
+  # prints the URL and the first administrator's login once the cell answers; `docker compose logs welcome` shows it again
+  welcome:
+    image: ${MATELOT_REGISTRY_PREFIX:-ghcr.io/matelot-cloud}/api:${MATELOT_VERSION:-latest}
+    <<: *app-image
+    entrypoint: ["bash", "-c"]
+    command:
+      - |
+        . /matelot/env/cell.env
+        for i in $$(seq 1 120); do
+          node -e "fetch('http://api:3000/api/v1/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" && break
+          sleep 5
+        done
+        echo "=============================================================="
+        echo " Matelot is up:    $$BASE_URL"
+        echo " Sign in as:       $$ADMIN_EMAIL"
+        echo " Password:         $$(cat /matelot/secrets/keycloak/SEED_ADMIN_PASSWORD)"
+        echo " Registry:         $$REGISTRY_HOST   (matelot registry login)"
+        echo " Keycloak admin:   $$BASE_URL/auth/admin/  (user admin, password in config volume: secrets/keycloak/KC_BOOTSTRAP_ADMIN_PASSWORD)"
+        echo " CLI:              npm install -g https://github.com/matelot-cloud/setup-cli/releases/latest/download/matelot-cli.tgz"
+        echo "                   matelot login --url $$BASE_URL && matelot doctor"
+        echo "=============================================================="
+    volumes:
+      - config:/matelot:ro
+    restart: "no"
+    depends_on:
+      caddy: { condition: service_healthy }
+      api: { condition: service_healthy }
+
+  # `docker compose --profile backup run --rm backup`: pg_dump of both databases + secrets + registry blobs → backups volume
+  backup:
+    image: postgres:16
+    profiles: [backup]
+    user: "10001:10001"
+    entrypoint: ["bash", "-c", "export PGUSER=$$(cat /matelot/secrets/postgres/POSTGRES_USER) PGPASSWORD=$$(cat /matelot/secrets/postgres/POSTGRES_PASSWORD) && exec bash /backup/backup.sh"]
+    environment:
+      PGHOST: postgres
+      DATABASES: platform keycloak
+      SECRETS_DIR: /matelot/secrets
+      REGISTRY_DIR: /registry
+      OUT_DIR: /backups
+      CELL: ${MATELOT_ORG_SLUG:-main}
+      RETENTION_DAYS: ${MATELOT_BACKUP_RETENTION_DAYS:-14}
+    volumes:
+      - ./backup:/backup:ro
+      - config:/matelot:ro
+      - registry:/registry:ro
+      - backups:/backups
+    depends_on:
+      postgres: { condition: service_healthy }
+
+volumes:
+  config:        # generated secrets and configuration — part of every backup
+  postgres:      # both databases
+  registry:      # image blobs
+  backups:       # archives written by the backup profile
+  caddy-data:    # Let's Encrypt certificates
+  caddy-config:
+  runner-data:
+  runner-work:

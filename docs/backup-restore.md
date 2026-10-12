@@ -11,7 +11,8 @@ demand, download archives and restore them.
 **Docker Compose cells.** The same two scripts with `--compose [DIR]` (DIR = the folder with `compose.yaml`,
 default `.`): `cell-backup.sh --compose . -d ./backups` runs the backup profile of the stack (pg_dump of both
 databases, the secrets from the `config` volume, **and the registry blobs** as `registry.tar`) and downloads the
-archive; `cell-restore.sh --compose . ARCHIVE` restores the secrets into the `config` volume (`init restore-secrets`),
+archive (streamed out of the backups volume and sha256-verified on the host — no bind mount, so it works whoever runs
+it); `cell-restore.sh --compose . ARCHIVE` restores the secrets into the `config` volume (`init restore-secrets`),
 the databases inside the postgres container and the registry blobs, then starts the stack. The archive format is
 the one described below, so a Compose archive restores into a Helm cell (`cell-restore.sh -r … -n …`; secret names get
 the release prefix; `registry.tar` is ignored there) and a Kubernetes archive restores into a Compose cell

@@ -59,6 +59,8 @@ jobs:
         run: bash scripts/check-forbidden.sh
       - name: Compose init script (generated files survive hostile values; secrets generated once)
         run: bash deploy/compose/init/compose-init.test.sh
+      - name: Compose backup/restore helpers (archive copy-out / secrets copy-in stream through the container, no bind mounts; runs as the unprivileged runner user)
+        run: bash scripts/lib/compose.test.sh
       - name: Shell scripts parse and pass shellcheck (operator scripts, compose stack, chart hooks)
         run: |
           set -e

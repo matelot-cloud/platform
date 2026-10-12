@@ -17,10 +17,26 @@ compose_backup() { # compose_backup DIR DOWNLOAD_DIR LIST
   if [ "$list" = 1 ]; then "${DC[@]}" --profile backup run --rm --no-deps --entrypoint sh backup -c 'ls -lh /backups | grep -v "^total"'; return 0; fi
   echo "running the backup job (postgres, secrets, registry blobs → backups volume)"
   "${DC[@]}" --profile backup run --rm backup | sed 's/^/  /'
-  if [ -n "$download" ]; then
-    mkdir -p "$download"; download="$(cd "$download" && pwd)"
-    "${DC[@]}" --profile backup run --rm --no-deps --entrypoint sh -v "$download:/out" backup -c 'n="$(basename "$(readlink -f /backups/latest.tar.gz)")"; cp "/backups/$n" "/backups/$n.sha256" /out/ && echo "$n"' | tail -1 | { read -r name; ( cd "$download" && sha256sum -c "$name.sha256" ); echo "downloaded $download/$name"; }
-  fi
+  if [ -n "$download" ]; then compose_download "$download"; fi
+}
+
+# Copies the newest archive out of the backups volume into DIR on the host. Streamed through the container's stdout
+# (`run -T … cat`), never a bind mount: a bind-mounted host directory belongs to the invoking user while the backup
+# container runs as 10001, so `cp … /out/` failed with "Permission denied" on every machine where the two differ
+# (CI runners, laptops). Verifies the sha256 after the copy and prints the final host path.
+compose_download() { # compose_download DIR [NAME]  (NAME defaults to the archive latest.tar.gz points at)
+  local download="$1" name="${2:-}"
+  mkdir -p "$download"; download="$(cd "$download" && pwd)"
+  [ -n "$name" ] || name="$(compose_backup_sh 'basename "$(readlink -f /backups/latest.tar.gz)"' | tail -1)"
+  [ -n "$name" ] && [ "$name" != latest.tar.gz ] || { echo "no backup in the backups volume (latest.tar.gz missing)" >&2; return 1; }
+  compose_backup_sh 'cat "/backups/$1"' "$name" > "$download/$name"
+  compose_backup_sh 'cat "/backups/$1.sha256"' "$name" > "$download/$name.sha256"
+  ( cd "$download" && sha256sum -c --quiet "$name.sha256" ) || { echo "sha256 mismatch after the copy: $download/$name" >&2; return 1; }
+  echo "downloaded $download/$name ($(du -h "$download/$name" | cut -f1), sha256 $(cut -d' ' -f1 "$download/$name.sha256"))"
+}
+compose_backup_sh() { # compose_backup_sh SCRIPT [ARGS…]: run SCRIPT with sh in the backup service (its volumes, no TTY, stdin/stdout passed through)
+  local script="$1"; shift
+  "${DC[@]}" --profile backup run --rm -T --no-deps --entrypoint sh backup -c "$script" sh "$@"
 }
 
 compose_restore() { # compose_restore DIR ARCHIVE MODE(all|secrets|databases) YES
@@ -41,7 +57,9 @@ compose_restore() { # compose_restore DIR ARCHIVE MODE(all|secrets|databases) YE
   # secrets → config volume (init's restore-secrets mode maps Kubernetes names such as acme-cell-key to cell-key),
   # then init regenerates the derived configuration from the restored values
   if [ "$mode" != databases ]; then
-    "${DC[@]}" run --rm --no-deps -v "$root/secrets:/restore:ro" init restore-secrets /restore | sed 's/^/  /'
+    # streamed in over stdin (no bind mount of the temp dir: it is 0700 of the invoking user, unreadable by a container uid)
+    [ -d "$root/secrets" ] || { echo "the archive has no secrets/ directory" >&2; return 1; }
+    tar -C "$root/secrets" -cf - . | "${DC[@]}" run --rm -T --no-deps --entrypoint sh init -c 'set -e; rm -rf /tmp/restore; mkdir -p /tmp/restore; tar -C /tmp/restore -xf -; exec bash /init/compose-init.sh restore-secrets /tmp/restore' | sed 's/^/  /'
     [ "$mode" = secrets ] && { echo "secrets done. Now: docker compose up -d, then run again with --databases-only."; return 0; }
   fi
   # databases: postgres up, everything that holds a connection stopped, dumps restored inside the postgres container
@@ -54,7 +72,7 @@ compose_restore() { # compose_restore DIR ARCHIVE MODE(all|secrets|databases) YE
   "${DC[@]}" exec -T postgres bash -c 'set -e; export PGHOST=localhost PGUSER="$(cat /matelot/secrets/postgres/POSTGRES_USER)" PGPASSWORD="$(cat /matelot/secrets/postgres/POSTGRES_PASSWORD)"; bash /tmp/restore/restore-db.sh /tmp/restore; rm -rf /tmp/restore' | sed 's/^/  /'
   if [ -f "$root/registry.tar" ]; then
     echo "restoring registry blobs"
-    "${DC[@]}" run --rm --no-deps -v "$root:/restore:ro" --entrypoint sh registry -c 'rm -rf /var/lib/registry/* && tar -C /var/lib/registry -xf /restore/registry.tar && echo "  $(find /var/lib/registry -type f | wc -l) files"'
+    "${DC[@]}" run --rm -T --no-deps --entrypoint sh registry -c 'rm -rf /var/lib/registry/* && tar -C /var/lib/registry -xf - && echo "  $(find /var/lib/registry -type f | wc -l) files"' < "$root/registry.tar"
   fi
   "${DC[@]}" up -d
   echo "restore done from $(basename "$archive"): docker compose logs -f welcome"

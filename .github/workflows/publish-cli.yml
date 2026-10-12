@@ -12,6 +12,7 @@ env:
   ORG: matelot-cloud
 jobs:
   publish:
+    outputs: { version: "${{ steps.v.outputs.version }}" }
     runs-on: ubuntu-24.04
     defaults: { run: { working-directory: apps/cli } }
     steps:
@@ -22,10 +23,11 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build && pnpm test
       - name: Tag matches package.json
+        id: v
         run: |
-          TAG=${GITHUB_REF_NAME#cli-v}
+          TAG=${GITHUB_REF_NAME#cli-v}; echo "version=$TAG" >> "$GITHUB_OUTPUT"
           node -e "const p=require('./package.json'); if(p.version!=='$TAG'){console.error('package.json version '+p.version+' != tag '+'$TAG'); process.exit(1)}"
-      - name: Publish to matelot-cloud/setup-cli
+      - name: Publish to matelot-cloud/setup-cli (source + compiled dist/, no build on install)
         env:
           TOKEN: ${{ secrets.PUBLIC_REPOS_TOKEN }}
         run: |
@@ -34,9 +36,13 @@ jobs:
           cd /tmp/setup-cli
           find . -mindepth 1 -maxdepth 1 ! -name .git ! -name README.md -exec rm -rf {} +
           S="$GITHUB_WORKSPACE/apps/cli"
-          cp -r "$S/src" "$S/examples" "$S/package.json" "$S/package-lock.json" "$S/tsconfig.json" "$S/action.yml" "$S/LICENSE" .
+          cp -r "$S/src" "$S/examples" "$S/package-lock.json" "$S/tsconfig.json" "$S/action.yml" "$S/LICENSE" .
+          mkdir dist && find "$S/dist" -name '*.js' ! -name '*.test.js' -exec cp {} dist/ \;
+          # the published package carries dist/: `npm install -g github:…#tag` runs no build, so no `prepare`, no devDependencies
+          node -e "const p=require('$S/package.json'); delete p.scripts.prepare; delete p.scripts.prepublishOnly; delete p.devDependencies; p.files=['dist','README.md']; require('fs').writeFileSync('package.json', JSON.stringify(p,null,2)+'\n')"
           [ -f README.md ] || cp "$S/README.md" README.md   # the public README is maintained in the public repo
-          printf 'node_modules/\ndist/\n' > .gitignore
+          printf 'node_modules/\n' > .gitignore
+          chmod +x dist/index.js
           git config user.name "matelot-release[bot]"; git config user.email "release@matelot.io"
           git add -A
           git diff --cached --quiet && echo "unchanged" || git commit -m "matelot-cli $VERSION (from platform ${GITHUB_SHA::7})"
@@ -48,3 +54,16 @@ jobs:
         run: |
           if [ -z "$NODE_AUTH_TOKEN" ]; then echo "NPM_TOKEN not set: skipping npm publish"; exit 0; fi
           npm publish --access public --provenance
+
+  install-test:
+    # what a customer does, on a machine that has nothing but Node: no checkout, no pnpm, no devDependencies
+    needs: publish
+    runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ needs.publish.outputs.version }}
+    steps:
+      - uses: actions/setup-node@v7
+        with: { node-version: 20 }
+      - run: npm install -g "github:$ORG/setup-cli#v$VERSION"
+      - run: test "$(matelot --version)" = "$VERSION" && test "$(secops --version)" = "$VERSION"
+      - run: npm uninstall -g matelot-cli && npm install -g "github:$ORG/setup-cli#v${VERSION%%.*}" && test "$(matelot --version)" = "$VERSION"

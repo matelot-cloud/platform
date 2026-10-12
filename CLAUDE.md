@@ -90,8 +90,10 @@ Name constraints the drizzle way (`<table>_<col>_<ref>_<refcol>_fk`, `<table>_<c
 
 ## Repository layout (hard rule)
 
-Top level is exactly `.github apps deploy docs packages scripts tools` plus root files; `scripts/check-layout.sh`
-(CI job `layout`, `make check-layout`) fails on anything else, and `scripts/check-forbidden.sh` (same job) fails on
+Top level is exactly `.github apps deploy docs packages scripts tools` plus a fixed set of root files (README, CHANGELOG,
+CLAUDE.md, SETUP.md, Makefile, package.json, pnpm-*.yaml, .npmrc, .gitignore, .dockerignore, docker-compose.yml,
+.env.example, LICENSE*, tsconfig*.json — the list is in the script); `scripts/check-layout.sh` (CI job `layout`,
+`make check-layout`) fails on any other directory *or file* at the root (git-ignored entries excepted), and `scripts/check-forbidden.sh` (same job, scope `git ls-files`) fails on
 any retired name (the previous organization slug, the old CLI mirror, the old domain) — add the old name there whenever something is
 renamed. The organization is named once per place that needs it: `ORG`/`SITE` env in the workflows, `ORG` in
 `tools/docs-site/build.mjs`, `org` in the website's `content.json` (`{{org}}` elsewhere in that file); chart values,

@@ -33,7 +33,9 @@ released. Issues, discussions and releases live in `matelot-cloud/matelot` and a
    (`version` / `appVersion`) carry the development version; the pipeline stamps the tag's version on the chart it
    publishes, so these only need to match for `make deploy` on kind. The CLI has its own version and release:
    bump `apps/cli/package.json`, tag `cli-vX.Y.Z` → `publish-cli.yml` builds, tests and publishes the package to
-   `matelot-cloud/setup-cli` (tags `vX.Y.Z` and the moving `vX`), and to npm when `NPM_TOKEN` is set.
+   `matelot-cloud/setup-cli` with the compiled `dist/` committed — a git install runs no build, so customers need
+   nothing but Node (tags `vX.Y.Z` and the moving `vX`) — and to npm when `NPM_TOKEN` is set; the workflow's
+   `install-test` job proves the tag installs on a clean runner.
 4. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`. A release candidate is `vX.Y.Z-rc.N`: everything is
    published the same way except the `latest` image tags, and the GitHub Release is marked pre-release.
 5. Watch `release.yml` (Actions → release). Jobs:
@@ -118,7 +120,7 @@ The same procedure applies at expiry; GitHub e-mails the token owner a week befo
 | `helm-charts/README.md`, `LICENSE` | the public repository | by hand |
 | `matelot/*` files | the public repository | by hand; `CHANGELOG.md` there gets a short summary per release line, the detailed log stays here |
 | GitHub Release in `matelot` | `CHANGELOG.md` section + digests | `release.yml` |
-| `setup-cli/*` except README | `apps/cli` (src, examples, package.json, tsconfig, action.yml, LICENSE) | `publish-cli.yml` on `cli-v*` tags; `v<major>` tag moved to the newest release |
+| `setup-cli/*` except README | `apps/cli` (src, **compiled `dist/`**, examples, package.json without `prepare`/devDependencies, tsconfig, action.yml, LICENSE) | `publish-cli.yml` on `cli-v*` tags; `v<major>` tag moved to the newest release; an `install-test` job then installs the tag on a clean runner (`npm install -g github:…#vX.Y.Z`, no checkout, no pnpm) and checks `matelot --version` |
 | `setup-cli/README.md` | the public repository | by hand |
 
 The docs page list is the `SITE` table in `tools/docs-site/build.mjs`: a new page is added there and in the

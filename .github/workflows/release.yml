@@ -59,12 +59,12 @@ jobs:
           - { name: runner, context: apps/runner, file: apps/runner/Dockerfile, target: "" }
     steps:
       - uses: actions/checkout@v7
-      - uses: docker/setup-qemu-action@v4
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/login-action@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
         with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
       - id: meta
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ matrix.name }}
           flavor: latest=${{ needs.version.outputs.prerelease == 'false' }}
@@ -79,7 +79,7 @@ jobs:
             org.opencontainers.image.source=https://github.com/matelot-io/matelot
             org.opencontainers.image.licenses=LicenseRef-Matelot-EULA
       - id: build
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
@@ -119,7 +119,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: azure/setup-helm@v5
       - uses: sigstore/cosign-installer@v3
-      - uses: docker/login-action@v4   # cosign reads Docker's credential store; `helm registry login` does not write it
+      - uses: docker/login-action@v3   # cosign reads Docker's credential store; `helm registry login` does not write it
         with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
       - name: Package and push the chart as OCI
         id: push

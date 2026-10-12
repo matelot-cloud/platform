@@ -8,7 +8,7 @@
 compose_dir() { # compose_dir [DIR] → cd into the project, fail when it is not one
   local dir="${1:-${COMPOSE_DIR:-.}}"
   [ -f "$dir/compose.yaml" ] || { echo "no compose.yaml in $dir (use --compose DIR, or run from the docker/ folder)" >&2; return 1; }
-  cd "$dir"
+  cd "$dir" || return 1
 }
 DC=(docker compose)
 

@@ -8,7 +8,6 @@ last=$(node -p "const j=require('./drizzle/meta/_journal.json'); j.entries[j.ent
 idx=${last%%_*}
 [ -f "drizzle/$last.sql" ] || { echo "drizzle/$last.sql missing (journal and files disagree)" >&2; exit 1; }
 cp drizzle/meta/_journal.json /tmp/journal.$$.json
-before=$(ls drizzle/*.sql | wc -l)
 pnpm drizzle-kit generate > /tmp/gen.$$.log 2>&1 || { cat /tmp/gen.$$.log; exit 1; }
 if grep -q "No schema changes" /tmp/gen.$$.log; then echo "snapshot already matches schema.ts"; rm -f /tmp/journal.$$.json /tmp/gen.$$.log; exit 0; fi
 new=$(ls drizzle/*.sql | tail -1); newidx=$(basename "$new" | cut -d_ -f1)

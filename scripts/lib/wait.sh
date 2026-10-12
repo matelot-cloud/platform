@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Progress-printing waits for the cell scripts. Source it; needs python3 and kubectl.
 #   wait_cell <namespace> <release> <timeout-seconds>     until every Deployment / StatefulSet of the release is ready
 #   wait_job  <namespace> <job> <timeout-seconds>         until the Job completes (fails when the Job fails)

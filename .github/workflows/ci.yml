@@ -59,6 +59,20 @@ jobs:
         run: bash scripts/check-forbidden.sh
       - name: Compose init script (generated files survive hostile values; secrets generated once)
         run: bash deploy/compose/init/compose-init.test.sh
+      - name: Shell scripts parse and pass shellcheck (operator scripts, compose stack, chart hooks)
+        run: |
+          set -e
+          files=$(ls scripts/*.sh scripts/lib/*.sh deploy/compose/*.sh deploy/compose/*/*.sh deploy/helm/secops-cell/files/*.sh)
+          for f in $files; do bash -n "$f"; done
+          shellcheck --version | head -2
+          shellcheck -S warning $files
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile --filter matelot-cli
+      - run: pnpm --filter matelot-cli build
+      - name: smoke.sh resolves a multi-word MATELOT_CLI (--check runs no Docker; exit 127 here was the compose job's failure)
+        run: MATELOT_CLI="node ../../apps/cli/dist/index.js" bash deploy/compose/smoke.sh --check
 
   chart:
     runs-on: ubuntu-24.04

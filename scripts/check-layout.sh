@@ -10,7 +10,9 @@ ALLOWED_FILES="README.md CHANGELOG.md CLAUDE.md SETUP.md Makefile package.json p
 ALLOWED_FILE_GLOBS="LICENSE* tsconfig*.json"
 in_git=0; git rev-parse --is-inside-work-tree > /dev/null 2>&1 && in_git=1
 ignored() { # git-ignored (or, outside git, the usual local entries)
-  if [ $in_git = 1 ]; then git check-ignore -q "$1"; else case " node_modules dist backups .pnpm-store .env " in *" $1 "*) return 0;; esac; return 1; fi
+  if [ $in_git = 1 ]; then git check-ignore -q "$1"; return; fi
+  local local_entries=" node_modules dist backups .pnpm-store .env "
+  case "$local_entries" in *" $1 "*) return 0;; esac; return 1
 }
 stale=()
 for e in * .*; do
@@ -20,7 +22,12 @@ for e in * .*; do
     case " $ALLOWED_DIRS " in *" $e "*) continue;; esac
   else
     case " $ALLOWED_FILES " in *" $e "*) continue;; esac
-    ok=0; for g in $ALLOWED_FILE_GLOBS; do [[ "$e" == $g ]] && ok=1; done; [ $ok = 1 ] && continue
+    ok=0
+    for g in $ALLOWED_FILE_GLOBS; do
+      # shellcheck disable=SC2053  # $g is a glob pattern on purpose
+      [[ "$e" == $g ]] && ok=1
+    done
+    [ $ok = 1 ] && continue
   fi
   ignored "$e" && continue
   stale+=("$e")

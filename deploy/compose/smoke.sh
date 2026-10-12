@@ -3,11 +3,16 @@
 #   up → wait for the cell through Caddy → sign in as the generated administrator → matelot doctor → create a
 #   workspace/team/project → backup (--compose) → destroy everything (down -v) → restore → the project is back.
 #   deploy/compose/smoke.sh [--keep]          (env: MATELOT_CLI="node ../../apps/cli/dist/index.js" to use a checkout)
+#   deploy/compose/smoke.sh --check           only resolves the CLI and prints its version (no Docker): CI's self-test
 # Needs: docker compose v2, curl, python3 (JSON), the matelot CLI (or MATELOT_CLI), and ports 80/5000 free.
 set -euo pipefail
 cd "$(dirname "$0")"
-KEEP=0; [ "${1:-}" = "--keep" ] && KEEP=1
-CLI="${MATELOT_CLI:-matelot}"
+KEEP=0; CHECK=0
+case "${1:-}" in --keep) KEEP=1 ;; --check) CHECK=1 ;; '') ;; *) echo "usage: smoke.sh [--keep|--check]" >&2; exit 2 ;; esac
+# The CLI command is a word list, never one string: MATELOT_CLI="node ../../apps/cli/dist/index.js" has a space, and
+# "$MATELOT_CLI" would look for a program named `node ../../apps/cli/dist/index.js` (exit 127). Split on purpose, once.
+read -ra CLI <<< "${MATELOT_CLI:-matelot}"
+cli() { "${CLI[@]}" "$@"; }   # every CLI call in this script goes through here (or cli_json below)
 # cell-backup.sh / cell-restore.sh: ../../scripts in the platform checkout, ./scripts in the published docker/ folder
 SCRIPTS="${CELL_SCRIPTS:-}"; [ -n "$SCRIPTS" ] || { if [ -f ../../scripts/cell-backup.sh ]; then SCRIPTS="$(cd ../../scripts && pwd)"; else SCRIPTS="$(pwd)/scripts"; fi; }
 [ -f .env ] || cp .env.example .env
@@ -22,17 +27,18 @@ log() { printf '\n== %s\n' "$*"; }
 cli_json() {
   local expr="$1"; shift; [ "${1:-}" = "--" ] && shift
   local out err rc=0
-  out="$("$CLI" "$@" --json 2> ./.smoke-cli.err)" || rc=$?
+  out="$(cli "$@" --json 2> ./.smoke-cli.err)" || rc=$?
   err="$(cat ./.smoke-cli.err 2>/dev/null || true)"; rm -f ./.smoke-cli.err
   if [ "$rc" != 0 ]; then printf 'matelot %s failed (exit %s)\nstderr: %s\nstdout: %s\n' "$*" "$rc" "$err" "$out" >&2; return "$rc"; fi
   [ -z "$err" ] || printf '%s\n' "$err" >&2
   printf '%s' "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); $expr"
 }
+if [ "$CHECK" = 1 ]; then printf 'CLI command: %q' "${CLI[0]}"; printf ' %q' "${CLI[@]:1}"; echo; cli --version; exit 0; fi
 cleanup() { rm -f ./.smoke-login.err ./.smoke-cli.err ./.smoke-credentials.json; if [ "$KEEP" = 0 ]; then log "down -v"; docker compose down -v --remove-orphans > /dev/null 2>&1 || true; fi; }
 trap cleanup EXIT
 
 wait_ready() { # through the proxy, as a browser would
-  for i in $(seq 1 90); do
+  for _ in $(seq 1 90); do
     if curl -fsS -o /dev/null "$BASE/api/v1/health/ready" && curl -fsS -o /dev/null "$BASE/healthz"; then return 0; fi
     sleep 5
   done
@@ -57,7 +63,7 @@ docker compose logs welcome | tail -12
 log "matelot doctor (before login: the public checks)"
 export MATELOT_URL="$BASE"
 export MATELOT_CREDENTIALS="$PWD/.smoke-credentials.json"; rm -f "$MATELOT_CREDENTIALS"
-$CLI doctor || true
+cli doctor || true
 log "OAuth discovery through the proxy"
 curl -fsS "$BASE/.well-known/oauth-authorization-server" | python3 -c '
 import sys, json
@@ -75,9 +81,9 @@ log "matelot login through the proxy (OAuth code flow, consent approved with the
 # `matelot login --no-browser` prints the authorize link and waits for the browser callback on 127.0.0.1; this script
 # plays the browser: follow the link (API → consent page redirect), approve with the signed-in administrator, call back.
 KC_TOKEN="$(token)"
-$CLI login --url "$BASE" --no-browser --scope write 2> ./.smoke-login.err &
+cli login --url "$BASE" --no-browser --scope write 2> ./.smoke-login.err &
 LOGIN_PID=$!
-AUTH_URL=""; for i in $(seq 1 30); do AUTH_URL="$(grep -o 'http[^ ]*/api/v1/oauth/authorize?[^ ]*' ./.smoke-login.err | head -1 || true)"; [ -n "$AUTH_URL" ] && break; sleep 1; done
+AUTH_URL=""; for _ in $(seq 1 30); do AUTH_URL="$(grep -o 'http[^ ]*/api/v1/oauth/authorize?[^ ]*' ./.smoke-login.err | head -1 || true)"; [ -n "$AUTH_URL" ] && break; sleep 1; done
 [ -n "$AUTH_URL" ] || { echo "matelot login printed no authorize link:" >&2; cat ./.smoke-login.err >&2; kill $LOGIN_PID 2>/dev/null; exit 1; }
 echo "authorize link: $AUTH_URL"
 CONSENT="$(curl -sS -o /dev/null -w '%{redirect_url}' "$AUTH_URL")" || { echo "could not follow the authorize link $AUTH_URL (curl exit $?)" >&2; echo "discovery document:" >&2; curl -sS "$BASE/.well-known/oauth-authorization-server" >&2 || true; kill $LOGIN_PID 2>/dev/null; exit 1; }
@@ -88,9 +94,9 @@ curl -fsS -o /dev/null "$REDIRECT"            # the CLI's local callback: it exc
 wait $LOGIN_PID || { echo "matelot login failed:" >&2; cat ./.smoke-login.err >&2; exit 1; }
 rm -f ./.smoke-login.err
 log "matelot doctor (with the stored login)"
-$CLI whoami
-$CLI cells
-$CLI doctor
+cli whoami
+cli cells
+cli doctor
 log "runners stay online: doctor again after the stale threshold (the sweeper marks silent runners offline after 60 s)"
 sleep 75
 cli_json 'r=[c for c in d["checks"] if c["name"]=="runners"][0]; assert r["ok"], r["detail"]; print("runners:", r["detail"])' -- doctor
@@ -101,7 +107,7 @@ TEAM="$(cli_json 'print(d["id"])' -- team create --workspace "$WS" --slug platfo
 PROJECT="$(cli_json 'print(d["id"])' -- project create --team "$TEAM" --slug payments --name Payments)"
 echo "project $PROJECT"
 log "the write scope stops at destructive operations: archiving the project must be refused (403), not done"
-if "$CLI" request DELETE "/api/v1/projects/$PROJECT" --json > ./.smoke-cli.err 2>&1; then echo "a write-scoped token archived a project" >&2; cat ./.smoke-cli.err >&2; exit 1; fi
+if cli request DELETE "/api/v1/projects/$PROJECT" --json > ./.smoke-cli.err 2>&1; then echo "a write-scoped token archived a project" >&2; cat ./.smoke-cli.err >&2; exit 1; fi
 grep -q "sudo" ./.smoke-cli.err || { echo "unexpected refusal:" >&2; cat ./.smoke-cli.err >&2; exit 1; }; rm -f ./.smoke-cli.err; echo "refused as expected"
 log "backup --compose"
 rm -rf ./smoke-backups; bash "$SCRIPTS/cell-backup.sh" --compose . -d ./smoke-backups
@@ -112,7 +118,7 @@ log "restore --compose $ARCHIVE"
 bash "$SCRIPTS/cell-restore.sh" --compose . --yes "$ARCHIVE"
 wait_ready
 MATELOT_TOKEN="$(token)"; export MATELOT_TOKEN     # same generated password: the secrets came back with the archive
-$CLI doctor
+cli doctor
 cli_json 'assert d["slug"]=="payments", d; print("project restored:", d["name"])' -- request GET "/api/v1/projects/$PROJECT"
 rm -rf ./smoke-backups
 log "smoke test passed"

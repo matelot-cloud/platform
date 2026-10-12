@@ -49,7 +49,10 @@ test('cells: whoami/doctor never pick the first (expired) entry; --url, MATELOT_
     // MATELOT_URL works the same
     assert.match((await run('node', [cli, 'whoami'], { env: { ...baseEnv, MATELOT_URL: fresh.url } })).stdout, /user new@localhost/);
     // `use` sets the current cell: whoami and doctor follow it
-    assert.match((await run('node', [cli, 'use', fresh.url], { env: baseEnv })).stdout, /current cell: /);
+    // `use` echoes the normalised URL (trailing slash, upper-case host, default port all collapse to one spelling)
+    const spelled = `${fresh.url.replace('http://', 'HTTP://').replace('127.0.0.1', '127.0.0.1')}/`;
+    assert.equal((await run('node', [cli, 'use', spelled], { env: baseEnv })).stdout.trim(), `current cell: ${normalizeCellUrl(spelled)}`);
+    assert.equal(normalizeCellUrl(spelled), fresh.url);
     assert.equal(JSON.parse(readFileSync(file, 'utf8')).current, fresh.url);
     assert.match((await run('node', [cli, 'whoami'], { env: baseEnv })).stdout, /user new@localhost/);
     assert.match((await run('node', [cli, 'doctor'], { env: baseEnv })).stdout, /OK {2}login +user new@localhost on /);

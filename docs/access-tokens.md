@@ -6,13 +6,17 @@
 | **Personal access token** (user menu → Access tokens) | people: scripts, the API, `secops` on a laptop | the user | see scopes below |
 
 ## Personal token scopes
-* **read** — `GET`/`HEAD` only, within the user's memberships.
-* **write** — the full API as the user, within the user's **workspace / team / project memberships**.
-  Organization-admin and security-admin roles and the platform admin flag are **not** carried.
-* **sudo** — administrators only: the user's full rights, including organization / platform administration.
+The scope is a mask over the user's own roles (never a different role) — the full permission × scope table is in
+[roles.md](roles.md#token-scopes-personal-tokens-matelot-login-claude-ai-connectors):
+* **read** — `GET`/`HEAD` only: everything the user can see, nothing changes.
+* **write** (default of `matelot login`) — everything the user's roles allow **except** administration (organization
+  settings, members and roles, integrations, policies / channels / SLAs, approvals, runner pools, compliance) and any
+  `DELETE` (archiving or removing). An administrator's write token creates workspaces, teams and projects, runs
+  pipelines and pushes to the registry.
+* **sudo** — administrators only: the user's full rights, including organization / platform administration and deletes.
 
-A normal user's token therefore reaches exactly the projects they are assigned to. An admin's everyday
-token behaves like a member token; admin power is opt-in per (short-lived) sudo token.
+A normal user's token therefore reaches exactly the projects they are assigned to; an admin's everyday token does the
+day-to-day work without being able to administer or delete, and admin power is opt-in per (short-lived) sudo token.
 
 ## Security properties
 * `spt_` + 240 random bits; only the SHA-256 is stored; shown once.

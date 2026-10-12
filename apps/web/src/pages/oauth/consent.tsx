@@ -10,8 +10,8 @@ import { useSearchParams } from "react-router";
 const SCOPES: { value: "read" | "write" | "sudo"; title: string; text: string }[] = [
   // Exactly the scope × action matrix asserted by apps/api/src/rbac/token-scope-matrix.spec.ts — keep them in sync.
   { value: "read", title: "Read only", text: "See everything you can see in the app — findings, gates, queues, readiness, evidence. Nothing is changed." },
-  { value: "write", title: "Read & write", text: "Also decide on findings, create and update remediations and open issues, request exceptions, run pipelines. Not: approve exceptions, change policies, SLAs, channels or memberships (those need the app or an administrator token)." },
-  { value: "sudo", title: "Administrator", text: "Everything your account can do, including approving exceptions, policies and memberships. Only for platform administrators." },
+  { value: "write", title: "Read & write", text: "Everything your roles allow for day-to-day work: create workspaces, teams and projects, run pipelines, push to the registry, decide on findings, remediations and issues, request exceptions. Not: approving exceptions, policies, SLAs, channels, memberships, integrations, organization settings, runner pools — and nothing is archived or deleted (those need the app or an administrator token)." },
+  { value: "sudo", title: "Administrator", text: "Everything your account can do, including approving exceptions, policies, memberships and archiving. Only for platform administrators." },
 ];
 
 /**

@@ -2,8 +2,9 @@ import { currentRequestContext } from '../common/request-context';
 import { Inject, Injectable } from '@nestjs/common';
 import { eq, inArray } from 'drizzle-orm';
 import { DATABASE, Database } from '../database/database.module';
-import { apiTokens, environments, Membership, memberships, organizations, projects, Role, ScopeType, services, teams, users, workspaces } from '../database/schema';
+import { apiTokens, environments, Membership, memberships, projects, Role, ScopeType, services, teams, users, workspaces } from '../database/schema';
 import { ScopeRef } from './scope.types';
+import type { TokenScope } from './permissions';
 
 export type MembershipLike = Pick<Membership, 'scopeType' | 'scopeId' | 'role'> & Partial<Membership>;
 
@@ -31,6 +32,8 @@ export class AccessContext {
     readonly isPlatformAdmin = false,
     /** CI/API token: a fixed permission set at one scope (and below), no roles. */
     readonly tokenGrant?: { scopeType: ScopeType; scopeId: string; permissions: ReadonlySet<string> },
+    /** Personal / OAuth token scope: a mask over whatever the memberships (or admin mode) grant; undefined = unrestricted. */
+    readonly tokenScope?: TokenScope,
   ) {
     for (const m of memberships) {
       const k = key({ type: m.scopeType, id: m.scopeId });
@@ -71,21 +74,14 @@ export class AccessService {
       this.db.select().from(memberships).where(eq(memberships.userId, userId)),
       this.db.select({ platformRole: users.platformRole }).from(users).where(eq(users.id, userId)).limit(1),
     ]);
-    // Personal / OAuth token without sudo: the user keeps the SAME visibility (every scope they are a member of) but
-    // administrative roles are downgraded — read → AUDITOR (reads everywhere they can see), write → PRODUCT_SECURITY_ENGINEER
-    // (decisions, remediations, policies; no membership / token / connection administration). Dropping admin memberships
-    // entirely made a `write` token of an ORG_ADMIN useless (403 on findings the same user reads in the UI).
+    // Personal / OAuth token: the user keeps their own memberships and visibility (and admin mode); the token's scope is
+    // a MASK over the permissions (permissions.ts: read = reads, write = all but SUDO_ONLY, sudo = everything). A fixed
+    // downgraded role was tried before and kept breaking first-run flows (an administrator with the default `write`
+    // login could not create a workspace or see the runners).
     const pat = currentRequestContext()?.personalToken;
-    const restricted = !!pat && pat.userId === userId && pat.scope !== 'sudo';
-    const downgrade = pat?.scope === 'read' ? 'AUDITOR' : 'PRODUCT_SECURITY_ENGINEER';
-    const effective = restricted ? rows.map((r) => (r.role === 'ORG_ADMIN' || r.role === 'SECURITY_ADMIN' ? { ...r, role: downgrade as typeof r.role } : r)) : rows;
-    // A cell administrator without memberships: a non-sudo token still sees every organization of the cell, downgraded the same way.
-    if (restricted && user?.platformRole === 'admin' && !effective.length) {
-      const orgs = await this.db.select({ id: organizations.id }).from(organizations);
-      effective.push(...orgs.map((o) => ({ id: `admin:${o.id}`, userId, role: downgrade, scopeType: 'ORGANIZATION', scopeId: o.id } as unknown as typeof rows[number])));
-    }
-    const ctx = new AccessContext(userId, effective, !restricted && user?.platformRole === 'admin');
-    await this.hydrateVisibility(ctx, effective);
+    const scope = pat && pat.userId === userId ? (pat.scope as TokenScope) : undefined;
+    const ctx = new AccessContext(userId, rows, user?.platformRole === 'admin', undefined, scope);
+    await this.hydrateVisibility(ctx, rows);
     return ctx;
   }
 

@@ -47,7 +47,7 @@ Typical flows:
 - "accept a risk": exceptions create (time-boxed, reason required) → exceptions approve.
 - "prove compliance": cra readiness → releases list → evidence summary / vex.
 - Deployments are recorded by CI (deploy / promote); avoid recording deployments from a conversation unless the user explicitly asks. A gate evaluation with only a version (no image/digest) registers that version as a release; prefer reading the latest gate result (environments / policies latest) over running a new one.
-- Token scope: a "read" token is read-only; "write" lets you decide on findings, create remediations / issues, request exceptions and run pipelines, but not approve exceptions, change policies / SLAs / channels / memberships (sudo). See docs/roles.md.
+- Token scope is a mask over the user's own roles: a "read" token is read-only; "write" does everything the roles allow for day-to-day work (create workspaces / teams / projects, run pipelines, push to the registry, decide on findings, remediations / issues, request exceptions) but cannot administer (approve exceptions, policies / SLAs / channels, memberships, integrations, organization settings, runner pools) nor archive / delete anything — those need "sudo". See docs/roles.md.
 
 Large lists: every GET tool accepts max_items (default 50) and fields (comma list) to keep answers small; use the tool's own filters (severity, status, kev, q, running) first.
 - Call matelot_start_here first in a new session: it returns these instructions plus who the token acts as and its memberships.
@@ -171,7 +171,7 @@ export class McpService {
     const who = `${p.displayName ?? p.email} <${p.email}>`;
     const power = p.effectiveAdmin ? 'PLATFORM ADMINISTRATOR of this Matelot cell: every organization, workspace, team, project and admin route is available.' : p.tokenScope === 'read' ? 'read-only token: querying only, no tool that changes anything is available.' : 'regular member: only the scopes listed below (and what they contain) are visible or changeable; admin routes are hidden.';
     const rows = p.memberships.slice(0, 60).map((m) => `- ${m.role} on ${m.scopeType.toLowerCase()} ${m.name ?? ''} (${m.scopeId})`).join('\n');
-    return `\n\nYou are acting as ${who} — ${power}\nToken scope: ${p.tokenScope}. Actions are audited under this user.${rows ? `\nMemberships:\n${rows}` : p.effectiveAdmin ? '\nMemberships: none needed (platform administrator).' : '\nMemberships: none. Nothing is visible with this token: the user needs a workspace, team or project membership (organization-admin roles do not count on read/write tokens; administrators use a sudo token).'}${p.memberships.length > 60 ? `\n… ${p.memberships.length - 60} more` : ''}\nWhen the user asks about something outside these scopes, say it is not visible to them rather than guessing.`;
+    return `\n\nYou are acting as ${who} — ${power}\nToken scope: ${p.tokenScope}. Actions are audited under this user.${rows ? `\nMemberships:\n${rows}` : p.effectiveAdmin ? '\nMemberships: none needed (platform administrator).' : '\nMemberships: none. Unless the user is a cell administrator (then every organization is visible, and administration needs a sudo token), nothing is visible with this token: the user needs a workspace, team or project membership.'}${p.memberships.length > 60 ? `\n… ${p.memberships.length - 60} more` : ''}\nWhen the user asks about something outside these scopes, say it is not visible to them rather than guessing.`;
   }
 
   startHere(p: McpPrincipal | null) {

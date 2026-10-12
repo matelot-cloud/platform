@@ -5,7 +5,7 @@ import { CliError, configFromEnv, request, VERSION } from './client';
 import type { Config } from './client';
 import { signatureHeader } from './signing';
 import { readZip } from './zip-read';
-import { credentialsPath, discoveryMismatch, freshToken, listCells, login, logout, resolveCellUrl, setCurrentCell } from './login';
+import { credentialsPath, discoveryMismatch, freshToken, listCells, login, logout, normalizeCellUrl, resolveCellUrl, setCurrentCell } from './login';
 import { FIELD_FLAGS, PARAM_FLAGS, policyRulesFromFlags, RESOURCES, RULE_FLAGS, slaDaysFromFlags } from './resources';
 
 const sum = (c?: Record<string, number> | null) => (c ? Object.values(c).reduce((a, b) => a + b, 0) : 0);
@@ -103,7 +103,7 @@ async function main() {
   }
   if (command === 'use') {
     const u = positional[0]; if (!u) throw new CliError('usage: matelot use <url>');
-    setCurrentCell(u); out({ current: u.replace(/\/$/, '') }, `current cell: ${u.replace(/\/$/, '')}`); return;
+    const current = normalizeCellUrl(u); setCurrentCell(current); out({ current }, `current cell: ${current}`); return;
   }
   if (command === 'login') {
     const url = str(flags.url) ?? process.env.MATELOT_URL ?? process.env.SECOPS_URL;

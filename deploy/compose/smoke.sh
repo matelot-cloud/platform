@@ -17,7 +17,18 @@ grep -q '^MATELOT_ORG_NAME=' .env && sed -i "s/^MATELOT_ORG_NAME=.*/MATELOT_ORG_
 grep -q '^MATELOT_ADMIN_PASSWORD=' .env && sed -i "s/^MATELOT_ADMIN_PASSWORD=.*/MATELOT_ADMIN_PASSWORD='Sm0ke#pass\$1 ok'/" .env
 BASE="http://localhost:${MATELOT_HTTP_PORT:-80}"
 log() { printf '\n== %s\n' "$*"; }
-cleanup() { rm -f ./.smoke-login.err ./.smoke-credentials.json; if [ "$KEEP" = 0 ]; then log "down -v"; docker compose down -v --remove-orphans > /dev/null 2>&1 || true; fi; }
+# cli_json <python expr over `d`> -- <cli args…>: runs the CLI with --json, fails with its stderr (and stdout) printed when
+# the command fails — never pipe straight into json.load, which hides a 403 behind "Expecting value: line 1 column 1".
+cli_json() {
+  local expr="$1"; shift; [ "${1:-}" = "--" ] && shift
+  local out err rc=0
+  out="$("$CLI" "$@" --json 2> ./.smoke-cli.err)" || rc=$?
+  err="$(cat ./.smoke-cli.err 2>/dev/null || true)"; rm -f ./.smoke-cli.err
+  if [ "$rc" != 0 ]; then printf 'matelot %s failed (exit %s)\nstderr: %s\nstdout: %s\n' "$*" "$rc" "$err" "$out" >&2; return "$rc"; fi
+  [ -z "$err" ] || printf '%s\n' "$err" >&2
+  printf '%s' "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); $expr"
+}
+cleanup() { rm -f ./.smoke-login.err ./.smoke-cli.err ./.smoke-credentials.json; if [ "$KEEP" = 0 ]; then log "down -v"; docker compose down -v --remove-orphans > /dev/null 2>&1 || true; fi; }
 trap cleanup EXIT
 
 wait_ready() { # through the proxy, as a browser would
@@ -82,13 +93,16 @@ $CLI cells
 $CLI doctor
 log "runners stay online: doctor again after the stale threshold (the sweeper marks silent runners offline after 60 s)"
 sleep 75
-$CLI doctor --json | python3 -c 'import sys,json; d=json.load(sys.stdin); r=[c for c in d["checks"] if c["name"]=="runners"][0]; assert r["ok"], r["detail"]; print("runners:", r["detail"])'
-log "create workspace / team / project"
-ORG="$($CLI request GET /api/v1/organizations --json | python3 -c 'import sys,json; print(json.load(sys.stdin)[0]["id"])')"
-WS="$($CLI workspace create --org "$ORG" --slug smoke --name Smoke --json | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')"
-TEAM="$($CLI team create --workspace "$WS" --slug platform --name Platform --json | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')"
-PROJECT="$($CLI project create --team "$TEAM" --slug payments --name Payments --json | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')"
+cli_json 'r=[c for c in d["checks"] if c["name"]=="runners"][0]; assert r["ok"], r["detail"]; print("runners:", r["detail"])' -- doctor
+log "create workspace / team / project (write-scoped administrator token: day-to-day work needs no sudo)"
+ORG="$(cli_json 'print(d[0]["id"])' -- request GET /api/v1/organizations)"
+WS="$(cli_json 'print(d["id"])' -- workspace create --org "$ORG" --slug smoke --name Smoke)"
+TEAM="$(cli_json 'print(d["id"])' -- team create --workspace "$WS" --slug platform --name Platform)"
+PROJECT="$(cli_json 'print(d["id"])' -- project create --team "$TEAM" --slug payments --name Payments)"
 echo "project $PROJECT"
+log "the write scope stops at destructive operations: archiving the project must be refused (403), not done"
+if "$CLI" request DELETE "/api/v1/projects/$PROJECT" --json > ./.smoke-cli.err 2>&1; then echo "a write-scoped token archived a project" >&2; cat ./.smoke-cli.err >&2; exit 1; fi
+grep -q "sudo" ./.smoke-cli.err || { echo "unexpected refusal:" >&2; cat ./.smoke-cli.err >&2; exit 1; }; rm -f ./.smoke-cli.err; echo "refused as expected"
 log "backup --compose"
 rm -rf ./smoke-backups; bash "$SCRIPTS/cell-backup.sh" --compose . -d ./smoke-backups
 ARCHIVE="$(ls ./smoke-backups/*.tar.gz)"
@@ -99,6 +113,6 @@ bash "$SCRIPTS/cell-restore.sh" --compose . --yes "$ARCHIVE"
 wait_ready
 MATELOT_TOKEN="$(token)"; export MATELOT_TOKEN     # same generated password: the secrets came back with the archive
 $CLI doctor
-$CLI request GET "/api/v1/projects/$PROJECT" --json | python3 -c 'import sys,json; p=json.load(sys.stdin); assert p["slug"]=="payments", p; print("project restored:", p["name"])'
+cli_json 'assert d["slug"]=="payments", d; print("project restored:", d["name"])' -- request GET "/api/v1/projects/$PROJECT"
 rm -rf ./smoke-backups
 log "smoke test passed"

@@ -8,7 +8,7 @@ import { AccessService } from './access.service';
 import { AuthorizationService } from './authorization.service';
 
 const url = process.env.TEST_DATABASE_URL;
-(url ? describe : describe.skip)('personal / OAuth tokens of an administrator: downgraded, not powerless (database)', () => {
+(url ? describe : describe.skip)('personal / OAuth tokens of an administrator: masked by scope, not powerless (database)', () => {
   const pool = new Pool({ connectionString: url });
   const db = drizzle(pool, { schema });
   const ids: string[] = [];

@@ -62,6 +62,35 @@ export const PERMISSIONS = [
 
 export type Permission = (typeof PERMISSIONS)[number];
 
+/**
+ * Token scopes (personal access tokens, `matelot login`): a MASK over the user's own permissions, never a different
+ * role. `read` keeps the reads (plus pulling images and evaluating a gate); `write` keeps everything the user can do
+ * except the administrative permissions below; `sudo` keeps all of it. So an organization administrator with the
+ * default `write` login creates workspaces, projects and services, runs pipelines, pushes images, records releases and
+ * deployments, decides on findings — and needs `sudo` only for members, organization settings, policies, approvals,
+ * runner pools and connections. Archiving (the `*:write` of structure) stays reversible, so it is not sudo-only.
+ */
+export type TokenScope = 'read' | 'write' | 'sudo';
+export const SUDO_ONLY: ReadonlySet<Permission> = new Set<Permission>([
+  'organization:write',        // organization settings, renames, archiving an organization
+  'organization:create_child', // subsidiaries
+  'membership:write',          // members and roles
+  'integration:write',         // connections hold credentials
+  'integration:connect',
+  'policy:write',              // organization-wide rules, notification channels, SLA settings
+  'policy:exception_approve',
+  'exception:approve',
+  'risk:accept',
+  'compliance:write',
+  'runner:write',              // runner pools and registration tokens
+]);
+const READ_SCOPE_EXTRAS: ReadonlySet<Permission> = new Set<Permission>(['registry:pull', 'gate:evaluate']);
+export function scopeAllows(scope: TokenScope, permission: Permission): boolean {
+  if (scope === 'sudo') return true;
+  if (scope === 'read') return permission.endsWith(':read') || READ_SCOPE_EXTRAS.has(permission);
+  return !SUDO_ONLY.has(permission);
+}
+
 export const ROLES: readonly Role[] = roleEnum.enumValues;
 
 const ALL: ReadonlySet<Permission> = new Set(PERMISSIONS);
@@ -147,7 +176,7 @@ export const ROLE_PERMISSIONS: Record<Role, ReadonlySet<Permission>> = {
       'job:read',
       'job:create',
       'job:cancel',
-      'runner:read',          // sees the pools and runners their jobs run on (a write-scoped token of an admin is downgraded to this role)
+      'runner:read',          // sees the pools and runners their jobs run on
       'membership:read',
       'integration:read',
       'sbom:read',

@@ -1,6 +1,6 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { AccessContext } from './access.service';
-import { Permission, PERMISSIONS, ROLE_PERMISSIONS } from './permissions';
+import { Permission, PERMISSIONS, ROLE_PERMISSIONS, scopeAllows } from './permissions';
 import { ScopeChain, structureReadPermission } from './scope.types';
 
 /** Pure permission logic (no I/O) so it can be unit-tested exhaustively. */
@@ -8,6 +8,13 @@ import { ScopeChain, structureReadPermission } from './scope.types';
 export class AuthorizationService {
   /** Union of the permissions granted by every membership on the chain (inheritance downwards). */
   permissionsFor(ctx: AccessContext, chain: ScopeChain): Set<Permission> {
+    const result = this.permissionsForUnmasked(ctx, chain);
+    // a personal / OAuth token's scope masks whatever the user holds (admin mode included)
+    if (ctx.tokenScope) for (const p of [...result]) if (!scopeAllows(ctx.tokenScope, p)) result.delete(p);
+    return result;
+  }
+
+  private permissionsForUnmasked(ctx: AccessContext, chain: ScopeChain): Set<Permission> {
     if (ctx.isPlatformAdmin) return new Set<Permission>(PERMISSIONS);
     const result = new Set<Permission>();
     if (ctx.tokenGrant && chain.refs.some((r) => r.type === ctx.tokenGrant!.scopeType && r.id === ctx.tokenGrant!.scopeId)) {

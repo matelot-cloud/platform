@@ -3,6 +3,21 @@ import { currentRequestContext } from '../../common/request-context';
 import { PersonalTokensService, TOKEN_PREFIX } from './personal-tokens.service';
 
 /**
+ * The HTTP-method half of the token-scope semantics (the permission half is `scopeAllows` in rbac/permissions.ts):
+ * `read` = safe methods only; `write` = everything except DELETE — every DELETE route archives or removes something
+ * (workspaces, projects, teams, policies, integrations, memberships, tokens, runner pools), and destructive operations
+ * need `sudo`. The MCP transport is exempt: it is POST for every message and DELETE to close a session; the MCP layer
+ * enforces read-only per tool. Returns the refusal message, or null when the request may proceed.
+ */
+export function methodRefusedForScope(scope: string, method: string, isMcp: boolean): string | null {
+  if (isMcp) return null;
+  const m = method.toUpperCase();
+  if (scope === 'read' && !['GET', 'HEAD', 'OPTIONS'].includes(m)) return 'This personal token is read-only';
+  if (scope === 'write' && m === 'DELETE') return 'Deleting or archiving needs a sudo token (this token has the write scope)';
+  return null;
+}
+
+/**
  * Authenticates `Authorization: Bearer spt_…`. Runs after the CI-token guard and before the JWT guard
  * (which skips requests already authenticated). Read-scoped tokens may only use safe methods.
  */
@@ -19,7 +34,8 @@ export class PersonalTokenGuard implements CanActivate {
     if (!found) throw new UnauthorizedException('Invalid, expired or revoked personal access token');
     // The MCP transport is POST for every message; the MCP layer enforces read-only per tool (GET tools only).
     const isMcp = /\/mcp\/?$/.test(String(request.path ?? request.url ?? ''));
-    if (found.scope === 'read' && !isMcp && !['GET', 'HEAD', 'OPTIONS'].includes(request.method.toUpperCase())) throw new ForbiddenException('This personal token is read-only');
+    const refused = methodRefusedForScope(found.scope, request.method, isMcp);
+    if (refused) throw new ForbiddenException(refused);
     request.personalTokenScope = found.scope;
     request.user = found.user;
     request.apiTokenAuthenticated = true; // lets the JWT guard through

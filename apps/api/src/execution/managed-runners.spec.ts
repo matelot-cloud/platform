@@ -107,6 +107,23 @@ const SECRET = 'm'.repeat(48);
     expect(forChain.some((p) => p.managed)).toBe(true);
   });
 
+  it('a heartbeat keeps a runner online past the stale threshold; silence makes the sweep mark it offline', async () => {
+    const stale = new Date(Date.now() - 5 * 60_000);   // "advance the clock": the last heartbeat is 5 minutes old
+    const [quiet] = await db.insert(schema.runners).values({ poolId: managedPoolId, name: 'managed-quiet', tokenHash: randomUUID(), status: 'online', lastHeartbeatAt: stale } as typeof schema.runners.$inferInsert).returning();
+    const [alive] = await db.insert(schema.runners).values({ poolId: managedPoolId, name: 'managed-alive', tokenHash: randomUUID(), status: 'online', lastHeartbeatAt: stale } as typeof schema.runners.$inferInsert).returning();
+    // what POST /api/v1/runner/heartbeat writes (runner.controller.ts): status + lastHeartbeatAt = now
+    await db.update(schema.runners).set({ status: 'online', lastHeartbeatAt: new Date() }).where(eq(schema.runners.id, alive!.id));
+    const sweeper = Object.create(JobsService.prototype) as JobsService;
+    Object.assign(sweeper, { db, audit, logger: { log: () => undefined, warn: () => undefined }, pipelines: { advance: async () => undefined } });
+    await sweeper.sweep();
+    const [q] = await db.select().from(schema.runners).where(eq(schema.runners.id, quiet!.id));
+    const [a] = await db.select().from(schema.runners).where(eq(schema.runners.id, alive!.id));
+    expect(q!.status).toBe('offline');
+    expect(a!.status).toBe('online');
+    await db.delete(schema.runners).where(eq(schema.runners.id, quiet!.id));
+    await db.delete(schema.runners).where(eq(schema.runners.id, alive!.id));
+  });
+
   it('managed runners gone for a day are pruned, never a busy one; usage splits managed runner minutes', async () => {
     const old = new Date(Date.now() - 2 * 24 * 3600_000);
     const [gone] = await db.insert(schema.runners).values({ poolId: managedPoolId, name: 'managed-7', tokenHash: randomUUID(), lastHeartbeatAt: old } as typeof schema.runners.$inferInsert).returning();

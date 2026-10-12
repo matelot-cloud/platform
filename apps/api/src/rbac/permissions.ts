@@ -147,6 +147,7 @@ export const ROLE_PERMISSIONS: Record<Role, ReadonlySet<Permission>> = {
       'job:read',
       'job:create',
       'job:cancel',
+      'runner:read',          // sees the pools and runners their jobs run on (a write-scoped token of an admin is downgraded to this role)
       'membership:read',
       'integration:read',
       'sbom:read',

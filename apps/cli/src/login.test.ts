@@ -56,7 +56,7 @@ test('matelot login: loopback + PKCE → token stored; expired token refreshes w
     const lo = await logout(`http://127.0.0.1:${port}`);
     assert.deepEqual(lo, { url: `http://127.0.0.1:${port}`, revoked: true });
     assert.ok(s.seen.some((x) => x.revoke === 'rt2'), 'revoke called with the refresh token');
-    assert.equal(readCredentials(`http://127.0.0.1:${port}`)!.accessToken, '');
+    assert.equal(readCredentials(`http://127.0.0.1:${port}`), null);   // the entry is removed (and `current` cleared)
     assert.equal(s.seen.filter((x) => x.grant_type === 'authorization_code').length, 1);
   } finally { s.server.close(); }
 });

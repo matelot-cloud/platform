@@ -19,15 +19,70 @@ function normalise(raw: Record<string, unknown>): StoredCredentials {
   return { url: String(raw.url ?? ''), accessToken: String(raw.accessToken ?? raw.access_token ?? ''), refreshToken: (raw.refreshToken ?? raw.refresh_token ?? undefined) as string | undefined, expiresAt: typeof raw.expiresAt === 'string' ? raw.expiresAt : typeof raw.expires_at === 'number' && Number.isFinite(raw.expires_at) ? new Date(raw.expires_at).toISOString() : null, scope: String(raw.scope ?? ''), user: raw.user as string | undefined };
 }
 
-export function readCredentials(url?: string): StoredCredentials | null {
+/** The credentials file: one entry per cell URL (key = URL without trailing slash) plus `current`, the cell commands
+ *  use when neither --url nor MATELOT_URL says otherwise. Older files without `current` still load. */
+const CURRENT_KEY = 'current';
+type CredentialsFile = Record<string, unknown> & { current?: string };
+function readFile(): CredentialsFile {
   const p = credentialsPath();
-  if (!existsSync(p)) return null;
-  try { const all = JSON.parse(readFileSync(p, 'utf8')) as Record<string, Record<string, unknown>>; const key = (url ?? Object.keys(all)[0] ?? '').replace(/\/$/, ''); return all[key] ? normalise(all[key]) : null; } catch { return null; }
+  if (!existsSync(p)) return {};
+  try { return JSON.parse(readFileSync(p, 'utf8')) as CredentialsFile; } catch { return {}; }
 }
-export function writeCredentials(c: StoredCredentials): void {
+function writeFile(all: CredentialsFile): void {
   const p = credentialsPath(); mkdirSync(join(p, '..'), { recursive: true });
-  let all: Record<string, StoredCredentials> = {}; try { all = JSON.parse(readFileSync(p, 'utf8')); } catch { /* new file */ }
-  all[c.url.replace(/\/$/, '')] = c; writeFileSync(p, JSON.stringify(all, null, 2)); try { chmodSync(p, 0o600); } catch { /* windows */ }
+  writeFileSync(p, JSON.stringify(all, null, 2)); try { chmodSync(p, 0o600); } catch { /* windows */ }
+}
+const isUrlKey = (k: string) => /^https?:\/\//.test(k);
+const norm = (u: string) => u.replace(/\/$/, '');
+
+/** Stored logins, newest-expiry first is not meaningful: file order, with the current one marked. */
+export function listCells(): { url: string; current: boolean; scope: string; user?: string; expiresAt: string | null; valid: boolean; loggedOut: boolean }[] {
+  const all = readFile();
+  const current = typeof all[CURRENT_KEY] === 'string' ? norm(all[CURRENT_KEY] as string) : null;
+  return Object.keys(all).filter(isUrlKey).map((k) => {
+    const c = normalise(all[k] as Record<string, unknown>);
+    const loggedOut = !c.accessToken;
+    const valid = !loggedOut && (!c.expiresAt || new Date(c.expiresAt).getTime() > Date.now() || !!c.refreshToken);
+    return { url: k, current: k === current, scope: c.scope, user: c.user, expiresAt: c.expiresAt, valid, loggedOut };
+  });
+}
+export function currentCellUrl(): string | null {
+  const all = readFile();
+  if (typeof all[CURRENT_KEY] === 'string' && all[norm(all[CURRENT_KEY] as string)]) return norm(all[CURRENT_KEY] as string);
+  return null;
+}
+export function setCurrentCell(url: string): void {
+  const all = readFile(); const key = norm(url);
+  if (!all[key]) throw new Error(`no stored login for ${key} (matelot cells lists them; matelot login --url ${key} adds one)`);
+  all[CURRENT_KEY] = key; writeFile(all);
+}
+/** Which cell a command targets: --url > MATELOT_URL > the current cell > the only stored login. Never "the first entry". */
+export function resolveCellUrl(explicit?: string, env: NodeJS.ProcessEnv = process.env): string | null {
+  if (explicit) return norm(explicit);
+  const fromEnv = env.MATELOT_URL || env.SECOPS_URL;   // an empty variable counts as unset
+  if (fromEnv) return norm(fromEnv);
+  const current = currentCellUrl();
+  if (current) return current;
+  const cells = listCells().filter((c) => !c.loggedOut);
+  return cells.length === 1 ? cells[0]!.url : null;
+}
+export function readCredentials(url?: string): StoredCredentials | null {
+  const key = resolveCellUrl(url);
+  if (!key) return null;
+  const all = readFile();
+  return all[key] ? normalise(all[key] as Record<string, unknown>) : null;
+}
+export function writeCredentials(c: StoredCredentials, opts: { makeCurrent?: boolean } = {}): void {
+  const all = readFile(); const key = norm(c.url);
+  all[key] = { ...c, url: key };
+  if (opts.makeCurrent) all[CURRENT_KEY] = key;
+  writeFile(all);
+}
+export function removeCredentials(url: string): void {
+  const all = readFile(); const key = norm(url);
+  delete all[key];
+  if (all[CURRENT_KEY] === key) delete all[CURRENT_KEY];
+  writeFile(all);
 }
 
 /**
@@ -134,7 +189,7 @@ export async function login(url: string, scope: 'read' | 'write' | 'sudo', opts:
   const expiresIn = Number.isFinite(Number(tok.expires_in)) && Number(tok.expires_in) > 0 ? Number(tok.expires_in) : 86400;
   if (!tok.refresh_token) console.error('warning: the server issued no refresh token; you will have to run `matelot login` again when this one expires');
   const creds: StoredCredentials = { url: base, accessToken: tok.access_token, refreshToken: tok.refresh_token, expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(), scope: tok.scope ?? scope };
-  writeCredentials(creds);
+  writeCredentials(creds, { makeCurrent: true });   // the cell just logged into is what the next commands target
   return creds;
 }
 
@@ -161,6 +216,6 @@ export async function logout(url?: string, fetchImpl: typeof fetch = fetch): Pro
   if (!c) return null;
   let revoked = false;
   try { const r = await fetchImpl(`${c.url}/api/v1/oauth/revoke`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: c.refreshToken ?? c.accessToken }) }); revoked = r.ok; } catch { revoked = false; }
-  writeCredentials({ url: c.url, accessToken: '', refreshToken: undefined, expiresAt: null, scope: c.scope });
+  removeCredentials(c.url);   // the entry goes; `current` is cleared when it pointed here
   return { url: c.url, revoked };
 }

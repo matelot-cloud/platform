@@ -71,7 +71,11 @@ wait $LOGIN_PID || { echo "matelot login failed:" >&2; cat ./.smoke-login.err >&
 rm -f ./.smoke-login.err
 log "matelot doctor (with the stored login)"
 $CLI whoami
+$CLI cells
 $CLI doctor
+log "runners stay online: doctor again after the stale threshold (the sweeper marks silent runners offline after 60 s)"
+sleep 75
+$CLI doctor --json | python3 -c 'import sys,json; d=json.load(sys.stdin); r=[c for c in d["checks"] if c["name"]=="runners"][0]; assert r["ok"], r["detail"]; print("runners:", r["detail"])'
 log "create workspace / team / project"
 ORG="$($CLI request GET /api/v1/organizations --json | python3 -c 'import sys,json; print(json.load(sys.stdin)[0]["id"])')"
 WS="$($CLI workspace create --org "$ORG" --slug smoke --name Smoke --json | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')"

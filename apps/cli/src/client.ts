@@ -1,4 +1,4 @@
-import { readCredentials } from './login';
+import { readCredentials, resolveCellUrl } from './login';
 import { signatureHeader } from './signing';
 
 export interface Config {
@@ -13,7 +13,8 @@ export interface Config {
 
 export function configFromEnv(env = process.env): Config {
   const pick = (k: string) => env[`MATELOT_${k}`] ?? env[`SECOPS_${k}`];
-  const url = (pick('URL') ?? '').replace(/\/$/, '');
+  // the cell: MATELOT_URL (set from --url by index.ts), else the current cell of `matelot login` / `matelot use`
+  const url = (pick('URL') || resolveCellUrl(undefined, env) || '').replace(/\/$/, '');
   // A personal access token (SECOPS_TOKEN=spt_…) replaces the CI token pair.
   const token = pick('TOKEN') ?? '';
   if (token) {
@@ -24,8 +25,9 @@ export function configFromEnv(env = process.env): Config {
   const secret = pick('SECRET') ?? '';
   // No env credentials: use what `matelot login` stored (refreshed lazily by index.ts before the first request)
   if (!keyId && !secret) {
-    const stored = readCredentials(url || undefined);
+    const stored = url ? readCredentials(url) : null;
     if (stored?.accessToken) return { url: url || stored.url, keyId: '', secret: '', token: stored.accessToken, fromLogin: true };
+    if (!url) throw new Error('no cell selected — run `matelot login --url https://…` (or `matelot use <url>` for a stored login, or set MATELOT_URL)');
   }
   const missing = [!url && 'MATELOT_URL', !keyId && 'MATELOT_KEY_ID', !secret && 'MATELOT_SECRET'].filter(Boolean);
   if (missing.length) throw new Error(`Missing ${missing.join(', ')} (CI: create a CI token in the project's Settings; as yourself: run \`matelot login --url https://…\` or set MATELOT_TOKEN to a personal access token; SECOPS_* names still work)`);
@@ -95,4 +97,4 @@ async function requestOnce<T = unknown>(config: Config, method: string, path: st
   }
 }
 
-export const VERSION = '2.21.0';
+export const VERSION = '2.22.0';

@@ -8,6 +8,7 @@ Path flags: `--org`, `--project`, `--service`, `--env`, `--id` (or a positional 
 | Command | Does |
 |---|---|
 | `matelot whoami` | identity and permissions of the token |
+| `matelot cells` / `matelot use URL` | stored logins (URL, user, scope, expiry) with the current one marked; `use` targets one. Every command resolves its cell as `--url` > `MATELOT_URL` > the current cell (set by the last `login` or `use`) > the only stored login; with several stored logins and none current it stops with "no cell selected" instead of guessing |
 | `matelot doctor [--url URL]` | health of a cell after an install or upgrade: API ready, version, OAuth discovery (JSON, endpoints on the cell's own URL), login, organization, runners online, registry; exit 1 when a check fails (`--json` for scripts). Run from the Compose folder (or `MATELOT_COMPOSE_DIR`), an unreachable API also names the container that is restarting or unhealthy and the `docker compose logs` command |
 | `matelot pipeline --service ID [--template security] [--ref SHA] [--wait --timeout S]` | run the security pipeline; non-zero exit when it fails |
 | `matelot deploy --env ID [--version V] [--image REF@DIGEST] [--commit SHA]` | record a deployment; a new version becomes a release; rejected by policies with *reject deployments* |

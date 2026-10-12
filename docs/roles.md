@@ -12,7 +12,7 @@ A membership gives a user a role on an organization, workspace, team or project;
 | CISO | reads + accept risk, approve exceptions, incidents, memberships |
 | CTO | reads + structure writes (workspaces, teams, projects) |
 | TEAM_LEAD | team structure, services, environments, decisions, remediations, request exceptions, pipelines |
-| PRODUCT_SECURITY_ENGINEER | decisions, remediations and issues, request exceptions, pipelines, SBOMs |
+| PRODUCT_SECURITY_ENGINEER | decisions, remediations and issues, request exceptions, pipelines, SBOMs, sees runner pools and runners |
 | DEVELOPER | pipelines, SBOMs, deployments, request exceptions, reads |
 | AUDITOR / READ_ONLY / EXTERNAL_CONSULTANT | reads |
 

@@ -24,12 +24,13 @@ export const ACTIONS: Record<string, Permission> = {
   'create a notification channel': 'policy:write',
   'change SLA settings': 'policy:write',
   'run a pipeline': 'job:create',
+  'see runners (pools, managed runners online)': 'runner:read',
   'grant a membership': 'membership:write',
 };
 export const EXPECTED: Record<'read' | 'write' | 'sudo', Record<string, boolean>> = {
-  read:  { 'read findings / gates / evidence': true, 'decide on a finding': false, 'create / update a remediation, open an issue': false, 'request an exception': false, 'approve an exception': false, 'create a policy': false, 'create a notification channel': false, 'change SLA settings': false, 'run a pipeline': false, 'grant a membership': false },
-  write: { 'read findings / gates / evidence': true, 'decide on a finding': true, 'create / update a remediation, open an issue': true, 'request an exception': true, 'approve an exception': false, 'create a policy': false, 'create a notification channel': false, 'change SLA settings': false, 'run a pipeline': true, 'grant a membership': false },
-  sudo:  { 'read findings / gates / evidence': true, 'decide on a finding': true, 'create / update a remediation, open an issue': true, 'request an exception': true, 'approve an exception': true, 'create a policy': true, 'create a notification channel': true, 'change SLA settings': true, 'run a pipeline': true, 'grant a membership': true },
+  read:  { 'read findings / gates / evidence': true, 'decide on a finding': false, 'create / update a remediation, open an issue': false, 'request an exception': false, 'approve an exception': false, 'create a policy': false, 'create a notification channel': false, 'change SLA settings': false, 'run a pipeline': false, 'see runners (pools, managed runners online)': true, 'grant a membership': false },
+  write: { 'read findings / gates / evidence': true, 'decide on a finding': true, 'create / update a remediation, open an issue': true, 'request an exception': true, 'approve an exception': false, 'create a policy': false, 'create a notification channel': false, 'change SLA settings': false, 'run a pipeline': true, 'see runners (pools, managed runners online)': true, 'grant a membership': false },
+  sudo:  { 'read findings / gates / evidence': true, 'decide on a finding': true, 'create / update a remediation, open an issue': true, 'request an exception': true, 'approve an exception': true, 'create a policy': true, 'create a notification channel': true, 'change SLA settings': true, 'run a pipeline': true, 'see runners (pools, managed runners online)': true, 'grant a membership': true },
 };
 
 const url = process.env.TEST_DATABASE_URL;

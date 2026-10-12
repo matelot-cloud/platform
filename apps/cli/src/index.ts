@@ -5,7 +5,7 @@ import { CliError, configFromEnv, request, VERSION } from './client';
 import type { Config } from './client';
 import { signatureHeader } from './signing';
 import { readZip } from './zip-read';
-import { credentialsPath, discoveryMismatch, freshToken, login, logout } from './login';
+import { credentialsPath, discoveryMismatch, freshToken, listCells, login, logout, resolveCellUrl, setCurrentCell } from './login';
 import { FIELD_FLAGS, PARAM_FLAGS, policyRulesFromFlags, RESOURCES, RULE_FLAGS, slaDaysFromFlags } from './resources';
 
 const sum = (c?: Record<string, number> | null) => (c ? Object.values(c).reduce((a, b) => a + b, 0) : 0);
@@ -25,6 +25,8 @@ Commands
   whoami                                                 identity and permissions of the token
   doctor   [--url URL]                                   health of a cell: API, version, login, organization, runners, registry (exit 1 when something is wrong)
   login    --url URL [--scope read|write|sudo] [--no-browser]   sign in through the browser (OAuth; prints the link when no browser can be opened); logout revokes it
+  cells                                                  stored logins (URL, user, scope, expiry) with the current one marked; use <URL> makes one current
+  use      <URL>                                         target that stored login from now on (--url and MATELOT_URL still win per command)
   mcp      [--check]                                    how to connect Claude (Code / Desktop) to this cell's MCP server; --check runs the handshake
   vulnerabilities recorrelate [--org ID | --service ID] [--wait]   re-run advisory correlation (asynchronous job)
   evidence export|verify|summary|vex                     CRA evidence bundles (export --release ID --out f.zip · verify f.zip · vex --release ID)
@@ -92,6 +94,17 @@ async function main() {
     return;
   }
   if (command === 'version' || command === '--version') return console.log(VERSION);
+  // --url targets a cell for ANY command (whoami, doctor, resources…): it wins over MATELOT_URL and the current cell
+  if (str(flags.url) && command !== 'login') process.env.MATELOT_URL = str(flags.url)!;
+  if (command === 'cells') {
+    const cells = listCells();
+    out(cells, cells.length ? cells.map((c) => `${c.current ? '*' : ' '} ${c.url.padEnd(40)} ${(c.user ?? '').padEnd(28)} ${c.scope.padEnd(6)} ${c.loggedOut ? 'logged out' : c.valid ? `valid until ${c.expiresAt ?? 'unknown'}` : `expired ${c.expiresAt}`}`).join('\n') + `\n(* = current; --url or MATELOT_URL override it; matelot use <url> changes it)` : 'no stored logins: matelot login --url https://…');
+    return;
+  }
+  if (command === 'use') {
+    const u = positional[0]; if (!u) throw new CliError('usage: matelot use <url>');
+    setCurrentCell(u); out({ current: u.replace(/\/$/, '') }, `current cell: ${u.replace(/\/$/, '')}`); return;
+  }
   if (command === 'login') {
     const url = str(flags.url) ?? process.env.MATELOT_URL ?? process.env.SECOPS_URL;
     if (!url) throw new CliError('usage: matelot login --url https://matelot.example [--scope read|write|sudo]');
@@ -622,8 +635,8 @@ function onboardingText(r: OnboardingReport, verb: string): string {
  * first (reachability, readiness, version), then everything the credentials allow (login, organization, runners,
  * registry). Prints one line per check; exit 1 when a check fails. */
 async function doctor(urlFlag: string | undefined, json: boolean): Promise<void> {
-  const url = (urlFlag ?? process.env.MATELOT_URL ?? process.env.SECOPS_URL ?? '').replace(/\/$/, '');
-  if (!url) throw new CliError('usage: matelot doctor --url https://matelot.example (or MATELOT_URL)');
+  const url = resolveCellUrl(urlFlag) ?? '';
+  if (!url) throw new CliError('usage: matelot doctor --url https://matelot.example (or MATELOT_URL, or a stored login: matelot cells)');
   const checks: { name: string; ok: boolean | null; detail: string }[] = [];
   const add = (name: string, ok: boolean | null, detail: string) => { checks.push({ name, ok, detail }); if (!json) console.log(`${ok === null ? '  --' : ok ? '  OK' : 'FAIL'}  ${name.padEnd(14)} ${detail}`); };
   const get = async (path: string, token?: string) => {
@@ -654,11 +667,11 @@ async function doctor(urlFlag: string | undefined, json: boolean): Promise<void>
   } catch (e) { add('discovery', false, (e as Error).message); }
   // 4. credentials (optional: without any, the remaining checks are skipped, not failed)
   let config: Config | null = null;
-  try { config = configFromEnv(); if (config.fromLogin) { const t = await freshToken(config.url); if (!t) throw new Error('stored login expired'); config.token = t; } }
+  try { config = configFromEnv({ ...process.env, MATELOT_URL: url }); if (config.fromLogin) { const t = await freshToken(url); if (!t) throw new Error(`stored login for ${url} expired`); config.token = t; } }
   catch (e) { add('login', null, `skipped: ${(e as Error).message.split('\n')[0]} — run matelot login --url ${url} to check the rest`); return finish(); }
   config.url = url;
   let me: { kind: string; email?: string; name?: string } | null = null;
-  try { me = await request(config, 'GET', '/api/v1/api-tokens/whoami'); add('login', true, me!.kind === 'token' ? `CI token "${me!.name}"` : `user ${me!.email}`); }
+  try { me = await request(config, 'GET', '/api/v1/api-tokens/whoami'); add('login', true, `${me!.kind === 'token' ? `CI token "${me!.name}"` : `user ${me!.email}`} on ${url}`); }
   catch (e) { add('login', false, (e as Error).message); return finish(); }
   // 5. organization + runners + registry
   let orgs: { id: string; slug: string; name: string }[] = [];
@@ -669,7 +682,7 @@ async function doctor(urlFlag: string | undefined, json: boolean): Promise<void>
       const pools = await request<{ name: string; managed?: boolean; runners: { name: string; status: string }[] }[]>(config, 'GET', `/api/v1/organizations/${orgs[0].id}/runner-pools`);
       const online = pools.flatMap((p) => p.runners.filter((r) => r.status === 'online'));
       const managed = pools.find((p) => p.managed);
-      add('runners', online.length > 0, online.length ? `${online.length} online (${online.map((r) => r.name).join(', ')})${managed ? '' : ' · no managed pool'}` : 'no runner online: pipelines will queue (docker compose logs runner / the managed runner StatefulSet)');
+      add('runners', online.length > 0, `${online.length ? `${online.length} online (${online.map((r) => r.name).join(', ')})${managed ? '' : ' · no managed pool'}` : 'no runner online: pipelines will queue (docker compose logs runner / the managed runner StatefulSet)'} — GET /organizations/${orgs[0].slug}/runner-pools: ${pools.length} pool(s) incl. the cell's managed pool`);
     } catch (e) { add('runners', false, (e as Error).message); }
   }
   try {

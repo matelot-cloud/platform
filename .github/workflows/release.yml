@@ -7,10 +7,12 @@
 #   docs     rendered into matelot-io/website: docs/vX.Y/ and docs/latest/ (Pages deploys on that push)
 #   release  GitHub Release vX.Y.Z in matelot-io/matelot: the CHANGELOG section + image and chart digests
 #
-# Secrets: GITHUB_TOKEN (ghcr, this repo) · PUBLIC_REPOS_TOKEN (org secret: fine-grained PAT, Contents read/write on
+# Secrets: GITHUB_TOKEN (ghcr, this repo) · PUBLIC_REPOS_TOKEN (repository secret on platform — organization secrets
+# are not available to private repositories on the Free plan: fine-grained PAT, Contents read/write on
 # matelot-io/website, matelot-io/helm-charts, matelot-io/matelot) for the cross-repository pushes and the release.
-# One-time: after the first run make the five packages public (Packages → package → Package settings → Danger zone →
-# Change visibility), otherwise customers cannot pull. Pre-release tags (v1.2.0-rc.1) publish everything but `latest`
+# One-time: organization → Packages → "Package creation: Public" enabled, then after the first run make the five
+# packages public (Packages → package → Package settings → Danger zone → Change visibility), otherwise customers
+# cannot pull. Pre-release tags (v1.2.0-rc.1) publish everything but `latest`
 # and mark the GitHub Release as pre-release.
 name: release
 on:
@@ -25,7 +27,7 @@ env:
 
 jobs:
   version:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.v.outputs.version }}       # 1.2.3 or 1.2.3-rc.1
       line: ${{ steps.v.outputs.line }}             # v1.2  (docs folder)
@@ -41,7 +43,7 @@ jobs:
 
   images:
     needs: version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
@@ -50,18 +52,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: api,    file: apps/api/Dockerfile,    target: runtime, context: . }
-          - { name: worker, file: apps/api/Dockerfile,    target: worker, context: . }
-          - { name: web,    file: apps/web/Dockerfile,    target: "", context: . }
-          - { name: runner, file: apps/runner/Dockerfile, target: "", context: apps/runner }
+          # context: the runner image builds from its own folder (as the Makefile does); the others from the repo root
+          - { name: api,    context: ., file: apps/api/Dockerfile,    target: runtime }
+          - { name: worker, context: ., file: apps/api/Dockerfile,    target: worker }
+          - { name: web,    context: ., file: apps/web/Dockerfile,    target: "" }
+          - { name: runner, context: apps/runner, file: apps/runner/Dockerfile, target: "" }
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
         with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ matrix.name }}
           flavor: latest=${{ needs.version.outputs.prerelease == 'false' }}
@@ -76,7 +79,7 @@ jobs:
             org.opencontainers.image.source=https://github.com/matelot-io/matelot
             org.opencontainers.image.licenses=LicenseRef-Matelot-EULA
       - id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
@@ -98,14 +101,14 @@ jobs:
           syft "$IMAGE" -o spdx-json > sbom.spdx.json
           cosign attest --yes --type spdxjson --predicate sbom.spdx.json "$IMAGE"
           echo "${{ matrix.name }} ${{ steps.build.outputs.digest }}" > "digest-${{ matrix.name }}.txt"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: "digest-${{ matrix.name }}", path: "digest-${{ matrix.name }}.txt" }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: "sbom-${{ matrix.name }}", path: sbom.spdx.json }
 
   chart:
     needs: version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
@@ -113,10 +116,10 @@ jobs:
     outputs:
       digest: ${{ steps.push.outputs.digest }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: azure/setup-helm@v4
+      - uses: actions/checkout@v7
+      - uses: azure/setup-helm@v5
       - uses: sigstore/cosign-installer@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4   # cosign reads Docker's credential store; `helm registry login` does not write it
         with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
       - name: Package and push the chart as OCI
         id: push
@@ -149,12 +152,12 @@ jobs:
 
   docs:
     needs: version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions: { contents: read }
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile --filter @secops/web   # `marked`
       - run: node tools/docs-site/test.mjs
@@ -174,20 +177,23 @@ jobs:
 
   release:
     needs: [version, images, chart, docs]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions: { contents: read }
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with: { pattern: "digest-*", merge-multiple: true, path: digests }
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { pattern: "sbom-*", path: sboms }
       - name: "Release notes: CHANGELOG section + digests"
         env:
           VERSION: ${{ needs.version.outputs.version }}
           CHART_DIGEST: ${{ needs.chart.outputs.digest }}
         run: |
-          bash scripts/changelog-section.sh "v$VERSION" > notes.md
+          # the section must exist for a final release; a pre-release may fall back to the newest section
+          if bash scripts/changelog-section.sh "v$VERSION" > notes.md; then :
+          elif [ "${{ needs.version.outputs.prerelease }}" = "true" ]; then echo "::warning::CHANGELOG.md has no '## v$VERSION' section; using the newest one (fine for a pre-release)"
+          else echo "::error::CHANGELOG.md has no '## v$VERSION' section — add it at the top (docs/release-process.md § Cutting a release) and re-tag"; exit 1; fi
           {
             echo; echo "## Artifacts"; echo
             echo '```'

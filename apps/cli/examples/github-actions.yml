@@ -26,7 +26,7 @@ jobs:
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
-      - uses: dev-testing-secops-platform/secops-platform-cli@main
+      - uses: matelot-io/setup-cli@v2
         with: { url: "${{ vars.MATELOT_URL }}", key-id: "${{ secrets.MATELOT_KEY_ID }}", secret: "${{ secrets.MATELOT_SECRET }}" }
       - name: Security pipeline (SBOM, secrets, IaC)
         run: matelot pipeline --service "${{ vars.MATELOT_SERVICE_ID }}" --ref "${{ github.sha }}" --wait --timeout 900
@@ -55,7 +55,7 @@ jobs:
     if: github.ref == 'refs/heads/main' || inputs.environment == 'dev'
     runs-on: self-hosted
     steps:
-      - uses: dev-testing-secops-platform/secops-platform-cli@main
+      - uses: matelot-io/setup-cli@v2
         with: { url: "${{ vars.MATELOT_URL }}", key-id: "${{ secrets.MATELOT_KEY_ID }}", secret: "${{ secrets.MATELOT_SECRET }}" }
       - run: matelot deploy --env "${{ vars.MATELOT_ENV_DEV }}" --version "${{ needs.version.outputs.version }}" --commit "${{ github.sha }}"
 
@@ -64,7 +64,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v') || inputs.environment == 'test' || inputs.environment == 'prod'
     runs-on: self-hosted
     steps:
-      - uses: dev-testing-secops-platform/secops-platform-cli@main
+      - uses: matelot-io/setup-cli@v2
         with: { url: "${{ vars.MATELOT_URL }}", key-id: "${{ secrets.MATELOT_KEY_ID }}", secret: "${{ secrets.MATELOT_SECRET }}" }
       - name: Gate (warn-only policy: reports, never blocks)
         run: matelot gate --env "${{ vars.MATELOT_ENV_TEST }}" --version "${{ needs.version.outputs.version }}" || true
@@ -76,7 +76,7 @@ jobs:
     runs-on: self-hosted
     environment: production   # optional: GitHub approval gate on top of the policy gate
     steps:
-      - uses: dev-testing-secops-platform/secops-platform-cli@main
+      - uses: matelot-io/setup-cli@v2
         with: { url: "${{ vars.MATELOT_URL }}", key-id: "${{ secrets.MATELOT_KEY_ID }}", secret: "${{ secrets.MATELOT_SECRET }}" }
       - name: Production gate (blocking — exit 2 fails the job, Slack gets gate.fail)
         run: matelot gate --env "${{ vars.MATELOT_ENV_PROD }}" --version "${{ needs.version.outputs.version }}"

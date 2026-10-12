@@ -1,6 +1,6 @@
 # matelot-cli
 
-Command-line client for the SecOps platform. Authenticates with **signed CI tokens** (HMAC over
+Command-line client for [Matelot](https://matelot-io.github.io/website/). Install: `npm install -g github:matelot-io/setup-cli#v2` (Node ≥ 18, no dependencies) or the GitHub Action below; releases are tags of this repository. Authenticates with **signed CI tokens** (HMAC over
 timestamp, nonce, method, path and body — the secret never travels), created in a project's
 *Settings → CI tokens*.
 
@@ -15,7 +15,7 @@ npx matelot-cli sbom --service <serviceId> --file bom.cdx.json --target image --
 GitHub Actions:
 
 ```yaml
-- uses: secops-platform/setup-cli@v1        # installs the CLI, exports MATELOT_* from inputs
+- uses: matelot-io/setup-cli@v2             # installs the CLI at that tag, exports MATELOT_* from inputs
   with: { url: ${{ vars.MATELOT_URL }}, key-id: ${{ secrets.MATELOT_KEY_ID }}, secret: ${{ secrets.MATELOT_SECRET }} }
 - run: matelot deploy --env ${{ vars.MATELOT_ENV_PRODUCTION }} --version ${{ github.ref_name }}
 ```

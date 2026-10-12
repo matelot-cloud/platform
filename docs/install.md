@@ -98,7 +98,7 @@ For a quick evaluation without an identity provider, `keycloak.seedUsers` create
 ## 5. The CLI
 
 ```bash
-npm install -g secops-platform-cli
+npm install -g "github:matelot-io/setup-cli#v2"   # or: uses: matelot-io/setup-cli@v2 in GitHub Actions
 matelot login --url https://acme.platform.example.com
 matelot whoami
 ```

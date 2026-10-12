@@ -20,8 +20,10 @@ below is the agreed build order.
 - Backend: TypeScript, **NestJS 11 line** (pinned; Nest 12 upgrade is a separate task), Drizzle ORM
   with generated SQL migrations in `apps/api/drizzle` (commit the SQL and `meta/`), zod env
   validation, pino logs, Swagger at `/api/docs`, global prefix `/api/v1`.
-- The CLI is the npm package `apps/cli` (`secops-platform-cli`, mirrored to github.com/dev-testing-secops-platform/secops-platform-cli for publishing, zero dependencies); the GitHub Action
-  `tools/setup-cli` installs it; every command shown in the UI and docs uses the CLI (`secops …`).
+- The CLI is `apps/cli` (npm name `matelot-cli`, Apache-2.0, zero dependencies), published by `publish-cli.yml` on
+  `cli-vX.Y.Z` tags to the public repository `matelot-io/setup-cli` (source + `apps/cli/action.yml`; customers run
+  `npm install -g github:matelot-io/setup-cli#v2` or `uses: matelot-io/setup-cli@v2`) and to npm when `NPM_TOKEN` is
+  set; every command shown in the UI and docs uses the CLI (`matelot …`).
   `tools/secops-ci/secops.sh` exists only as a no-Node fallback and is not advertised. Keep the signing
   code in sync with `apps/api/src/tokens/signing.ts`.
 - CI/CD authenticates with **signed CI tokens** (`apps/api/src/tokens`, `docs/ci-integration.md`), never

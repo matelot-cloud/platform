@@ -13,6 +13,7 @@ cross-repository token is rotated. (The *product* concepts — builds, releases 
 | `matelot-io/helm-charts` | public | `charts/secops-cell/` (copy of `deploy/helm/secops-cell`), `scripts/` (cell-backup, cell-restore + lib), README | `release.yml` (chart + scripts), people (README) |
 | `matelot-io/website` | public, GitHub Pages | landing page sources (`content.json`, template, assets), **generated** `docs/latest/` and `docs/vX.Y/` | people (landing), `docs-sync.yml` + `release.yml` (docs) |
 | `matelot-io/.github` | public | organization profile, default community files | people |
+| `matelot-io/setup-cli` | public | the CLI (Apache-2.0): source, examples, `action.yml` — installable with `npm install -g github:matelot-io/setup-cli#v2` and usable as `uses: matelot-io/setup-cli@v2` | `publish-cli.yml` (everything but README) |
 
 Packages (GitHub Packages, `ghcr.io/matelot-io/…`): `api`, `web`, `worker`, `runner`, `charts/secops-cell`.
 
@@ -26,11 +27,13 @@ released. Issues, discussions and releases live in `matelot-io/matelot` and are 
    chart tests, image builds including the worker target).
 2. Add the release's section at the top of `CHANGELOG.md`, titled **`## vX.Y.Z — <one line>`**: the release notes are
    that section (`scripts/changelog-section.sh vX.Y.Z` shows what will be published; without a matching heading the
-   first section is used with a note — fine for a release candidate, not for a final release).
+   first section is used with a note — accepted for a pre-release tag; **a final tag without its section fails the
+   release job** before anything is published to `matelot`).
 3. Bump versions if they changed: `apps/api`, `apps/web`, `apps/runner` `package.json` and `Chart.yaml`
    (`version` / `appVersion`) carry the development version; the pipeline stamps the tag's version on the chart it
-   publishes, so these only need to match for `make deploy` on kind. The CLI has its own version and release
-   (`publish-cli.yml`).
+   publishes, so these only need to match for `make deploy` on kind. The CLI has its own version and release:
+   bump `apps/cli/package.json`, tag `cli-vX.Y.Z` → `publish-cli.yml` builds, tests and publishes the package to
+   `matelot-io/setup-cli` (tags `vX.Y.Z` and the moving `vX`), and to npm when `NPM_TOKEN` is set.
 4. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`. A release candidate is `vX.Y.Z-rc.N`: everything is
    published the same way except the `latest` image tags, and the GitHub Release is marked pre-release.
 5. Watch `release.yml` (Actions → release). Jobs:
@@ -52,27 +55,32 @@ released. Issues, discussions and releases live in `matelot-io/matelot` and are 
 
 ### One-time setup (done once per organization)
 
-- **Packages public:** GitHub creates a package private on first push. After the first release, for each of
-  `api`, `web`, `worker`, `runner`, `charts/secops-cell`: Organization → Packages → package → Package settings →
-  Danger zone → Change visibility → Public. Also under *Manage Actions access* make sure the `platform` repository has
+- **Packages public:** first, Organization → Settings → Packages → *Package creation* → allow **Public** (without it
+  the visibility switch below is not offered). GitHub still creates every package private on first push, so after
+  the first release, once per package — `api`, `web`, `worker`, `runner`, `charts/secops-cell` — Organization →
+  Packages → package → Package settings → Danger zone → Change visibility → Public. Also under *Manage Actions access* make sure the `platform` repository has
   write access (it does when the package was first pushed by its workflow). Until this is done customers get
   `unauthorized` on pull.
-- **Pages:** `website` → Settings → Pages → Source: GitHub Actions. Custom domain later: set the repository variable
+- **Pages:** `website` → Settings → Pages → Source: **GitHub Actions** — by hand, *before* the first push of the
+  website (until it is set, `pages.yml`'s deploy step fails and the site 404s). Custom domain later: set the repository variable
   `SITE_DOMAIN=matelot.io` (Settings → Secrets and variables → Actions → Variables), enter the domain under Pages,
   point DNS at GitHub (A/AAAA for the apex or CNAME `matelot-io.github.io`). Nothing else changes: the build writes
   `CNAME`, the sitemap and the preview URLs from that variable; links inside the site are relative.
 - **Discussions** enabled on `matelot-io/matelot`; **private vulnerability reporting** enabled there
   (Settings → Code security → Private vulnerability reporting), because SECURITY.md points to it.
-- **The cross-repository token** (next section) stored as an organization secret.
+- **The cross-repository token** (next section) stored as a **repository secret on `platform`** (organization
+  secrets are not available to private repositories on the GitHub Free plan).
 
 ## The cross-repository token: `PUBLIC_REPOS_TOKEN`
 
 `GITHUB_TOKEN` only reaches the repository that runs the workflow and its packages, so the pushes to `website` and
-`helm-charts` and the release in `matelot` use a fine-grained personal access token stored as the **organization
-secret `PUBLIC_REPOS_TOKEN`** (Organization → Settings → Secrets and variables → Actions → New organization secret,
-repository access: `platform` only).
+`helm-charts` and `setup-cli` and the release in `matelot` use a fine-grained personal access token stored as the
+**repository secret `PUBLIC_REPOS_TOKEN` on `platform`** (platform → Settings → Secrets and variables → Actions →
+New repository secret). On the Free plan an organization secret cannot be shared with a private repository, so the
+repository secret is the only option; if the organization moves to Team, an organization secret scoped to
+`platform` works the same and is easier to rotate.
 
-Create it as a member who can push to the three public repositories (ideally a dedicated machine account
+Create it as a member who can push to the four public repositories (ideally a dedicated machine account
 `matelot-release` that is a member of the organization with write access to exactly those repositories):
 
 | Setting | Value |
@@ -80,7 +88,7 @@ Create it as a member who can push to the three public repositories (ideally a d
 | Token name | `platform-release → public repos` |
 | Resource owner | `matelot-io` |
 | Expiration | 1 year (the maximum; put the date in the team calendar) |
-| Repository access | Only select repositories: `matelot-io/website`, `matelot-io/helm-charts`, `matelot-io/matelot` |
+| Repository access | Only select repositories: `matelot-io/website`, `matelot-io/helm-charts`, `matelot-io/matelot`, `matelot-io/setup-cli` |
 | Repository permissions | **Contents: Read and write** (push commits and tags, create releases and upload assets); **Metadata: Read** (added automatically) |
 | Everything else | No access — no Issues, no Pull requests, no Actions, no Administration, no organization permissions |
 
@@ -90,7 +98,7 @@ organization requires approval for fine-grained tokens.
 ### Rotating it
 
 1. Create a new token with the same settings (above). Keep the old one until the new one has been exercised.
-2. Organization → Settings → Secrets and variables → Actions → `PUBLIC_REPOS_TOKEN` → Update → paste the new token.
+2. `platform` → Settings → Secrets and variables → Actions → `PUBLIC_REPOS_TOKEN` → Update → paste the new token.
 3. Exercise it: Actions → `docs-sync` → Run workflow (it clones and, if anything changed, pushes to `website`), or
    push a release candidate tag. Green = the new token works.
 4. Delete the old token (user → Settings → Developer settings → Fine-grained tokens → Delete).
@@ -110,6 +118,8 @@ The same procedure applies at expiry; GitHub e-mails the token owner a week befo
 | `helm-charts/README.md`, `LICENSE` | the public repository | by hand |
 | `matelot/*` files | the public repository | by hand; `CHANGELOG.md` there gets a short summary per release line, the detailed log stays here |
 | GitHub Release in `matelot` | `CHANGELOG.md` section + digests | `release.yml` |
+| `setup-cli/*` except README | `apps/cli` (src, examples, package.json, tsconfig, action.yml, LICENSE) | `publish-cli.yml` on `cli-v*` tags; `v<major>` tag moved to the newest release |
+| `setup-cli/README.md` | the public repository | by hand |
 
 The docs page list is the `SITE` table in `tools/docs-site/build.mjs`: a new page is added there and in the
 section's order; a page not in the table is not published (roadmap, concept, `cell-provisioning.md` — our own
@@ -124,6 +134,18 @@ link to the public repositories or the site instead. `make docs-check` is what C
 - Docs: `docs/vX.Y/` per release line, `docs/latest/` = `main`; the version switcher is built from the folders.
 - The cell reports its version as `APP_VERSION` (`GET /api/v1/meta`, "API x.y.z" in the web footer), set by the chart
   from the image tag.
+
+## Workflow hygiene
+
+- Actions are pinned to the current majors on the Node 24 runtime (checkout v7, setup-node v7, pnpm/action-setup v6,
+  upload-artifact v7 / download-artifact v8, setup-helm v5, docker/* v4–v7, deploy-pages v5); `sigstore/cosign-installer`
+  stays on **v3** (cosign 2.x) on purpose — v4 installs cosign 3, which signs in the new bundle format that cosign 2
+  clients cannot verify; move when customers can be expected to run cosign 3. Runners are pinned to `ubuntu-24.04`
+  (`ubuntu-latest` moves to 26.04 on 2026-10-19).
+- The runner image builds from `apps/runner` as its context (its Dockerfile copies `.`), the api/worker/web images from
+  the repository root; `release.yml` and `ci.yml` carry the context per matrix entry.
+- cosign reads Docker's credential store, which `helm registry login` does not write: the chart job logs in with
+  `docker/login-action` before pushing and signing (a freshly created private package answers UNAUTHORIZED otherwise).
 
 ## Local checks before tagging
 

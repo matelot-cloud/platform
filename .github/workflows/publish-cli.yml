@@ -1,25 +1,48 @@
+# CLI release: tag cli-vX.Y.Z (= apps/cli/package.json version) → build + test, publish the package to
+# matelot-io/setup-cli (source + action.yml; tags vX.Y.Z and the moving vX), and to npm when NPM_TOKEN is set.
+# Customers install with `npm install -g github:matelot-io/setup-cli#v2` or `uses: matelot-io/setup-cli@v2`.
 name: publish-cli
 on:
   push:
-    tags: ["cli-v*"]        # git tag cli-v0.1.0 && git push --tags
+    tags: ["cli-v*"]        # git tag cli-v2.19.2 && git push origin cli-v2.19.2
 permissions:
   contents: read
   id-token: write           # npm provenance (Sigstore attestation of the build)
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults: { run: { working-directory: apps/cli } }
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with: { version: 9 }
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with: { node-version: 22, registry-url: https://registry.npmjs.org, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm build && pnpm test
-      - run: |
+      - name: Tag matches package.json
+        run: |
           TAG=${GITHUB_REF_NAME#cli-v}
           node -e "const p=require('./package.json'); if(p.version!=='$TAG'){console.error('package.json version '+p.version+' != tag '+'$TAG'); process.exit(1)}"
-      - run: npm publish --access public --provenance
+      - name: Publish to matelot-io/setup-cli
+        env:
+          TOKEN: ${{ secrets.PUBLIC_REPOS_TOKEN }}
+        run: |
+          VERSION=${GITHUB_REF_NAME#cli-v}; MAJOR=v${VERSION%%.*}
+          git clone --depth 1 "https://x-access-token:${TOKEN}@github.com/matelot-io/setup-cli.git" /tmp/setup-cli
+          cd /tmp/setup-cli
+          find . -mindepth 1 -maxdepth 1 ! -name .git ! -name README.md -exec rm -rf {} +
+          S="$GITHUB_WORKSPACE/apps/cli"
+          cp -r "$S/src" "$S/examples" "$S/package.json" "$S/package-lock.json" "$S/tsconfig.json" "$S/action.yml" "$S/LICENSE" .
+          [ -f README.md ] || cp "$S/README.md" README.md   # the public README is maintained in the public repo
+          printf 'node_modules/\ndist/\n' > .gitignore
+          git config user.name "matelot-release[bot]"; git config user.email "release@matelot.io"
+          git add -A
+          git diff --cached --quiet && echo "unchanged" || git commit -m "matelot-cli $VERSION (from platform ${GITHUB_SHA::7})"
+          git push
+          git tag -f "v$VERSION" && git tag -f "$MAJOR" && git push -f origin "v$VERSION" "$MAJOR"
+      - name: Publish to npm (when NPM_TOKEN is configured)
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then echo "NPM_TOKEN not set: skipping npm publish"; exit 0; fi
+          npm publish --access public --provenance

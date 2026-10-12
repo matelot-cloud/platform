@@ -7,12 +7,12 @@ definitions:
   steps:
     - step: &install
         script:
-          - npm install -g "github:dev-testing-secops-platform/secops-platform-cli#main"
+          - npm install -g "github:matelot-io/setup-cli#v2"
     - step: &security
         name: Security pipeline (SBOM, secrets, IaC)
         script:
           - apt-get update -qq && apt-get install -y -qq jq >/dev/null
-          - npm install -g "github:dev-testing-secops-platform/secops-platform-cli#main"
+          - npm install -g "github:matelot-io/setup-cli#v2"
           - matelot pipeline --service "$MATELOT_SERVICE_ID" --ref "$BITBUCKET_COMMIT" --wait --timeout 900
           - matelot findings summary --project "$(matelot service show --service "$MATELOT_SERVICE_ID" --json | jq -r .projectId)"
 
@@ -25,7 +25,7 @@ pipelines:
       - step:
           name: Deploy dev
           script:
-            - npm install -g "github:dev-testing-secops-platform/secops-platform-cli#main"
+            - npm install -g "github:matelot-io/setup-cli#v2"
             - matelot deploy --env "$MATELOT_ENV_DEV" --version "main-${BITBUCKET_COMMIT:0:7}" --commit "$BITBUCKET_COMMIT"
   tags:
     'v*':
@@ -33,7 +33,7 @@ pipelines:
       - step:
           name: Deploy test
           script:
-            - npm install -g "github:dev-testing-secops-platform/secops-platform-cli#main"
+            - npm install -g "github:matelot-io/setup-cli#v2"
             - V="${BITBUCKET_TAG#v}"
             - matelot gate --env "$MATELOT_ENV_TEST" --version "$V" || true
             - matelot deploy --env "$MATELOT_ENV_TEST" --version "$V" --commit "$BITBUCKET_COMMIT"
@@ -43,7 +43,7 @@ pipelines:
           deployment: production
           script:
             - apt-get update -qq && apt-get install -y -qq jq >/dev/null
-            - npm install -g "github:dev-testing-secops-platform/secops-platform-cli#main"
+            - npm install -g "github:matelot-io/setup-cli#v2"
             - V="${BITBUCKET_TAG#v}"
             - matelot gate --env "$MATELOT_ENV_PROD" --version "$V"
             - matelot deploy --env "$MATELOT_ENV_PROD" --version "$V" --commit "$BITBUCKET_COMMIT"

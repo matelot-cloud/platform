@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Prints the CHANGELOG.md section of a release: changelog-section.sh vX.Y.Z [CHANGELOG.md]
-# The section is the first "## " heading that starts with the tag (e.g. "## v1.2.0 — …"); when no heading names the
-# tag, the first section of the file is used and a note says so (pre-release tags usually have no section yet).
+# The section is the first "## " heading that starts with the tag (e.g. "## v1.2.0 — …"). When no heading names the
+# tag, the first section of the file is printed with a note and the exit code is 2 (the release workflow accepts that
+# for pre-release tags only).
 set -euo pipefail
 tag="${1:?tag}"; file="${2:-$(dirname "$0")/../CHANGELOG.md}"
 version="${tag#v}"
@@ -14,3 +15,4 @@ rm -f /tmp/changelog-section.$$
 echo "_No CHANGELOG section is titled \`## $tag\`; these are the latest changes on the branch._"
 echo
 awk '/^## /{ n++ } n==1 { print }' "$file"
+exit 2

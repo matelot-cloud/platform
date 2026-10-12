@@ -96,7 +96,7 @@ jobs:
     runs-on: ubuntu-latest        # or self-hosted when the platform is not public
     steps:
       - uses: actions/checkout@v4
-      - uses: dev-testing-secops-platform/secops-platform-cli@main
+      - uses: matelot-io/setup-cli@v2
         with:
           url: \${{ vars.MATELOT_URL }}
           key-id: \${{ secrets.MATELOT_KEY_ID }}

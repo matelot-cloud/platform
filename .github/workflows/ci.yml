@@ -6,7 +6,7 @@ on:
 
 jobs:
   api:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: postgres:16
@@ -15,9 +15,9 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U platform" --health-interval 5s --health-timeout 3s --health-retries 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @secops/api typecheck
@@ -35,11 +35,11 @@ jobs:
           fi
 
   web:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @secops/web build
@@ -50,17 +50,17 @@ jobs:
         run: node tools/docs-site/test.mjs && node tools/docs-site/build.mjs --check
 
   layout:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Only the monorepo's top-level directories exist (stale copies from old drops fail here)
         run: bash scripts/check-layout.sh
 
   chart:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: azure/setup-helm@v4
+      - uses: actions/checkout@v7
+      - uses: azure/setup-helm@v5
       - run: python3 -c 'import yaml' 2>/dev/null || pip install pyyaml
       - name: helm lint + render in every supported configuration
         run: bash scripts/chart-test.sh
@@ -69,15 +69,15 @@ jobs:
       - run: python3 scripts/lib/cellwait_test.py
 
   image:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
         with: { context: ., file: apps/api/Dockerfile, push: false, tags: secops-api:ci }
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with: { context: ., file: apps/api/Dockerfile, target: worker, push: false, tags: secops-worker:ci }
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with: { context: ., file: apps/web/Dockerfile, push: false, tags: secops-web:ci }
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with: { context: apps/runner, file: apps/runner/Dockerfile, push: false, tags: secops-runner:ci }

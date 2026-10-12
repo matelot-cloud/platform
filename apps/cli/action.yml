@@ -2,16 +2,19 @@ name: Set up the Matelot CLI
 description: Installs the Matelot CLI (matelot / secops) and exports MATELOT_URL / MATELOT_KEY_ID / MATELOT_SECRET for later steps.
 branding: { icon: shield, color: blue }
 inputs:
-  url: { description: Platform URL, required: true }
+  url: { description: Cell URL (https://acme.platform.example.com), required: true }
   key-id: { description: CI token key id (sk_…), required: true }
   secret: { description: CI token secret (sec_…) — store it as a GitHub secret, required: true }
-  version: { description: Git ref of the CLI to install (tag such as v2.6.0, or a branch), required: false, default: main }
+  version: { description: "CLI version to install: a tag of this repository (v2.19.2, v2) or a branch; defaults to the ref this action was used with", required: false, default: "" }
 runs:
   using: composite
   steps:
     - shell: bash
+      env:
+        VERSION: ${{ inputs.version || github.action_ref }}
       run: |
-        npm install -g "github:dev-testing-secops-platform/secops-platform-cli#${{ inputs.version }}"
+        # `uses: matelot-io/setup-cli@v2` installs the CLI at that same tag (github.action_ref); `version` overrides
+        npm install -g "github:matelot-io/setup-cli#${VERSION:-v2}"
         echo "MATELOT_URL=${{ inputs.url }}" >> "$GITHUB_ENV"
         echo "MATELOT_KEY_ID=${{ inputs.key-id }}" >> "$GITHUB_ENV"
         echo "::add-mask::${{ inputs.secret }}"

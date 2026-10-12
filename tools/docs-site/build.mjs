@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Renders docs/*.md into one version folder of the public website (matelot-io/website → docs/<version>/).
+// Renders docs/*.md into one version folder of the public website (matelot-cloud/website → docs/<version>/).
 //   node tools/docs-site/build.mjs [--docs docs] [--out ../website/docs/latest] [--version latest] [--check]
 // The release workflow runs it for `docs/vX.Y/` and `docs/latest/`, the main-branch sync for `latest`, CI with --check.
 // The output has zero runtime dependencies; `marked` (a web-app devDependency) renders the Markdown. The product name
@@ -54,7 +54,8 @@ export const SITE = [
 const ASSETS = ['examples/github-actions.yml', 'examples/gitlab-ci.yml', 'examples/bitbucket-pipelines.yml', 'examples/matelot-config.yaml'];
 /** Build-time constants: the product name and where the public site points. */
 export const PRODUCT = 'Matelot';
-export const PUBLIC = { github: 'https://github.com/matelot-io/matelot', releases: 'https://github.com/matelot-io/matelot/releases' };
+export const ORG = 'matelot-cloud'; // the GitHub organization: the one place it is named in the generator
+export const PUBLIC = { github: `https://github.com/${ORG}/matelot`, releases: `https://github.com/${ORG}/matelot/releases` };
 
 const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const slugify = (s) => s.toLowerCase().replace(/<[^>]+>/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');

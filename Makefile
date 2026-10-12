@@ -113,12 +113,12 @@ WEBSITE_DIR ?= ../website
 docs-check: ## Render docs/ to a temp dir and check every link (what CI runs)
 > node tools/docs-site/test.mjs && node tools/docs-site/build.mjs --check
 
-docs-sync: ## Render docs/ into a local clone of matelot-io/website (WEBSITE_DIR=../website) as docs/latest, then build the site there to preview it
+docs-sync: ## Render docs/ into a local clone of matelot-cloud/website (WEBSITE_DIR=../website) as docs/latest, then build the site there to preview it
 > node tools/docs-site/build.mjs --out $(WEBSITE_DIR)/docs/latest --version latest
 > cd $(WEBSITE_DIR) && node tools/build.mjs && echo "preview: npx serve $(WEBSITE_DIR)/dist"
 
-check-layout: ## Fail on stale top-level directories left by old drops (what CI runs)
-> bash scripts/check-layout.sh
+check-layout: ## Fail on stale top-level directories left by old drops and on retired names (what CI runs)
+> bash scripts/check-layout.sh && bash scripts/check-forbidden.sh
 
 helm-lint: ## Lint and render the chart in every supported configuration (defaults, production, backups, S3, external DB, TLS)
 > bash scripts/chart-test.sh

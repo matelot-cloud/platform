@@ -82,7 +82,7 @@ done
 echo "copying dumps into $PG_POD"
 "${K[@]}" exec "$PG_POD" -- sh -c 'rm -rf /tmp/restore && mkdir -p /tmp/restore'
 "${K[@]}" cp "$ROOT/db/." "$PG_POD:/tmp/restore/"
-# restore-db.sh ships with the chart: deploy/helm/secops-cell (platform checkout) or charts/secops-cell (matelot-io/helm-charts)
+# restore-db.sh ships with the chart: deploy/helm/secops-cell (platform checkout) or charts/secops-cell (matelot-cloud/helm-charts)
 RESTORE_DB=""; for d in "${CHART_DIR:-}" "$(dirname "$0")/../deploy/helm/secops-cell" "$(dirname "$0")/../charts/secops-cell"; do [ -n "$d" ] && [ -f "$d/files/restore-db.sh" ] && { RESTORE_DB="$d/files/restore-db.sh"; break; }; done
 [ -n "$RESTORE_DB" ] || { echo "restore-db.sh not found next to this script (set CHART_DIR to the secops-cell chart folder)" >&2; exit 1; }
 "${K[@]}" cp "$RESTORE_DB" "$PG_POD:/tmp/restore/restore-db.sh"

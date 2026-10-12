@@ -9,7 +9,7 @@ The chart ships a scheduled backup that captures all three into one archive; two
 demand, download archives and restore them.
 
 **Where the scripts are.** `scripts/cell-backup.sh` and `scripts/cell-restore.sh` are in the `scripts/` folder of
-[matelot-io/helm-charts](https://github.com/matelot-io/helm-charts) (next to the chart; they only need `kubectl`,
+[matelot-cloud/helm-charts](https://github.com/matelot-cloud/helm-charts) (next to the chart; they only need `kubectl`,
 `helm`, `bash` and `python3`). The `make backup TENANT=acme` / `make restore …` shorthands used on this page are the
 platform repository's Makefile and expand to `scripts/cell-backup.sh -r acme -n tenant-acme -d ./backups` and
 `scripts/cell-restore.sh -r acme -n tenant-acme ARCHIVE`; `make deploy` stands for `helm upgrade --install`.

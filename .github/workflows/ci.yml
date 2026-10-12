@@ -55,6 +55,8 @@ jobs:
       - uses: actions/checkout@v7
       - name: Only the monorepo's top-level directories exist (stale copies from old drops fail here)
         run: bash scripts/check-layout.sh
+      - name: No retired names survive (old organization, old CLI mirror, old domain)
+        run: bash scripts/check-forbidden.sh
 
   chart:
     runs-on: ubuntu-24.04
@@ -72,12 +74,12 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
         with: { context: ., file: apps/api/Dockerfile, push: false, tags: secops-api:ci }
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with: { context: ., file: apps/api/Dockerfile, target: worker, push: false, tags: secops-worker:ci }
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with: { context: ., file: apps/web/Dockerfile, push: false, tags: secops-web:ci }
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with: { context: apps/runner, file: apps/runner/Dockerfile, push: false, tags: secops-runner:ci }

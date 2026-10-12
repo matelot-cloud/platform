@@ -8,15 +8,15 @@ tenant:
     - admin@acme.local
 
 image:
-  repository: ghcr.io/matelot-io/api
+  repository: ghcr.io/matelot-cloud/api
   tag: ""                    # defaults to Chart.appVersion
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 
-# Background worker (ghcr.io/matelot-io/worker: the API image with the worker entrypoint)
+# Background worker (ghcr.io/matelot-cloud/worker: the API image with the worker entrypoint)
 worker:
   image:
-    repository: ghcr.io/matelot-io/worker
+    repository: ghcr.io/matelot-cloud/worker
     tag: ""                  # defaults to Chart.appVersion
   replicas: 1
   resources:
@@ -31,7 +31,7 @@ managedRunners:
   enabled: true
   replicas: 1
   image:
-    repository: ghcr.io/matelot-io/runner
+    repository: ghcr.io/matelot-cloud/runner
     tag: ""                  # defaults to Chart.appVersion
     pullPolicy: IfNotPresent
   tags: []                   # extra tags (the pool adds "managed"; the agent adds linux)
@@ -81,9 +81,9 @@ api:
 web:
   enabled: true
   productName: ""            # defaults to "<tenant.name> Security Platform"
-  docsUrl: https://matelot-io.github.io/website/docs/latest/   # the public documentation site opened by the sidebar's "Documentation" (a mirror of it for air-gapped cells)
+  docsUrl: https://matelot-cloud.github.io/website/docs/latest/   # the public documentation site opened by the sidebar's "Documentation" (a mirror of it for air-gapped cells)
   image:
-    repository: ghcr.io/matelot-io/web
+    repository: ghcr.io/matelot-cloud/web
     tag: ""                  # defaults to Chart.appVersion
     pullPolicy: IfNotPresent
   replicas: 1
@@ -148,7 +148,7 @@ keycloak:
 backup:
   # Scheduled backup of the cell: pg_dump of the platform and Keycloak databases plus the cell's Secrets (encryption
   # key, managed-runner secret, registry keys, database and Keycloak credentials), one tar.gz per run.
-  # Restore with scripts/cell-restore.sh (matelot-io/helm-charts) — see the Backup and restore guide. The registry's image blobs are NOT included.
+  # Restore with scripts/cell-restore.sh (matelot-cloud/helm-charts) — see the Backup and restore guide. The registry's image blobs are NOT included.
   enabled: false
   schedule: "17 2 * * *"       # cron, UTC
   retentionDays: 14            # prune archives older than this on the PVC (0 = keep everything)

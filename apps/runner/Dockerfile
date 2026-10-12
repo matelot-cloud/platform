@@ -1,4 +1,4 @@
-# Self-hosted runner: docker run -e RUNNER_URL=... -e RUNNER_REGISTRATION_TOKEN=... ghcr.io/matelot-io/runner
+# Self-hosted runner: docker run -e RUNNER_URL=... -e RUNNER_REGISTRATION_TOKEN=... ghcr.io/matelot-cloud/runner
 FROM node:22-bookworm-slim AS build
 RUN corepack enable
 WORKDIR /app

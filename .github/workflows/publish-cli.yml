@@ -1,6 +1,6 @@
 # CLI release: tag cli-vX.Y.Z (= apps/cli/package.json version) → build + test, publish the package to
-# matelot-io/setup-cli (source + action.yml; tags vX.Y.Z and the moving vX), and to npm when NPM_TOKEN is set.
-# Customers install with `npm install -g github:matelot-io/setup-cli#v2` or `uses: matelot-io/setup-cli@v2`.
+# matelot-cloud/setup-cli (source + action.yml; tags vX.Y.Z and the moving vX), and to npm when NPM_TOKEN is set.
+# Customers install with `npm install -g github:matelot-cloud/setup-cli#v2` or `uses: matelot-cloud/setup-cli@v2`.
 name: publish-cli
 on:
   push:
@@ -8,6 +8,8 @@ on:
 permissions:
   contents: read
   id-token: write           # npm provenance (Sigstore attestation of the build)
+env:
+  ORG: matelot-cloud
 jobs:
   publish:
     runs-on: ubuntu-24.04
@@ -23,12 +25,12 @@ jobs:
         run: |
           TAG=${GITHUB_REF_NAME#cli-v}
           node -e "const p=require('./package.json'); if(p.version!=='$TAG'){console.error('package.json version '+p.version+' != tag '+'$TAG'); process.exit(1)}"
-      - name: Publish to matelot-io/setup-cli
+      - name: Publish to matelot-cloud/setup-cli
         env:
           TOKEN: ${{ secrets.PUBLIC_REPOS_TOKEN }}
         run: |
           VERSION=${GITHUB_REF_NAME#cli-v}; MAJOR=v${VERSION%%.*}
-          git clone --depth 1 "https://x-access-token:${TOKEN}@github.com/matelot-io/setup-cli.git" /tmp/setup-cli
+          git clone --depth 1 "https://x-access-token:${TOKEN}@github.com/$ORG/setup-cli.git" /tmp/setup-cli
           cd /tmp/setup-cli
           find . -mindepth 1 -maxdepth 1 ! -name .git ! -name README.md -exec rm -rf {} +
           S="$GITHUB_WORKSPACE/apps/cli"

@@ -8,9 +8,9 @@ design sessions so every new session starts with them.
 A B2B Product Security / DevSecOps / Compliance platform, **closed source and self-hosted**: a customer installs
 **one "cell"** per organization (namespace `tenant-<slug>`: API, worker, web app, managed runners, registry, Postgres,
 Redis, Keycloak) in their own cluster from the Helm chart `deploy/helm/secops-cell`, published as
-`oci://ghcr.io/matelot-io/charts/secops-cell` with images `ghcr.io/matelot-io/{api,web,worker,runner}`.
+`oci://ghcr.io/matelot-cloud/charts/secops-cell` with images `ghcr.io/matelot-cloud/{api,web,worker,runner}`.
 Subscription per user: Free / Premium / Ultimate (licensing and entitlements are M13, not built yet).
-GitHub organization `matelot-io`: this private monorepo (`platform`) + public `matelot` (issues, discussions,
+GitHub organization `matelot-cloud`: this private monorepo (`platform`) + public `matelot` (issues, discussions,
 releases), `helm-charts`, `website` (GitHub Pages), `.github` — all written by `.github/workflows/release.yml` and
 `docs-sync.yml`, see docs/release-process.md (internal). Full product spec lives with the owner; the roadmap
 below is the agreed build order.
@@ -21,8 +21,8 @@ below is the agreed build order.
   with generated SQL migrations in `apps/api/drizzle` (commit the SQL and `meta/`), zod env
   validation, pino logs, Swagger at `/api/docs`, global prefix `/api/v1`.
 - The CLI is `apps/cli` (npm name `matelot-cli`, Apache-2.0, zero dependencies), published by `publish-cli.yml` on
-  `cli-vX.Y.Z` tags to the public repository `matelot-io/setup-cli` (source + `apps/cli/action.yml`; customers run
-  `npm install -g github:matelot-io/setup-cli#v2` or `uses: matelot-io/setup-cli@v2`) and to npm when `NPM_TOKEN` is
+  `cli-vX.Y.Z` tags to the public repository `matelot-cloud/setup-cli` (source + `apps/cli/action.yml`; customers run
+  `npm install -g github:matelot-cloud/setup-cli#v2` or `uses: matelot-cloud/setup-cli@v2`) and to npm when `NPM_TOKEN` is
   set; every command shown in the UI and docs uses the CLI (`matelot …`).
   `tools/secops-ci/secops.sh` exists only as a no-Node fallback and is not advertised. Keep the signing
   code in sync with `apps/api/src/tokens/signing.ts`.
@@ -91,7 +91,11 @@ Name constraints the drizzle way (`<table>_<col>_<ref>_<refcol>_fk`, `<table>_<c
 ## Repository layout (hard rule)
 
 Top level is exactly `.github apps deploy docs packages scripts tools` plus root files; `scripts/check-layout.sh`
-(CI job `layout`, `make check-layout`) fails on anything else. Drops are copied over the clone with rsync, which
+(CI job `layout`, `make check-layout`) fails on anything else, and `scripts/check-forbidden.sh` (same job) fails on
+any retired name (the previous organization slug, the old CLI mirror, the old domain) — add the old name there whenever something is
+renamed. The organization is named once per place that needs it: `ORG`/`SITE` env in the workflows, `ORG` in
+`tools/docs-site/build.mjs`, `org` in the website's `content.json` (`{{org}}` elsewhere in that file); chart values,
+docs and public READMEs carry the literal name and are caught by the check if left behind. Drops are copied over the clone with rsync, which
 never deletes: a moved or renamed folder must be removed in the same change (`git rm -r <old>`), and a drop must
 mirror this layout exactly — nothing at the root that is not in the repository.
 
@@ -138,8 +142,8 @@ providers · 17 provisioning control plane.
 - The web app is tested in jsdom (test/render.mjs) and has been used in a real browser on kind; no full visual pass yet.
 - Product name is a placeholder ("Security Platform" / `secops`).
 - MCP server: apps/api/src/mcp (tools generated from OpenAPI; docs/mcp.md). CLI: `matelot mcp`.
-- Public website = the `matelot-io/website` repository (landing page from its `content.json` on the Luminary
-  template; https://matelot-io.github.io/website, custom domain = its `SITE_DOMAIN` variable). The docs are rendered
+- Public website = the `matelot-cloud/website` repository (landing page from its `content.json` on the Luminary
+  template; https://matelot-cloud.github.io/website, custom domain = its `SITE_DOMAIN` variable). The docs are rendered
   from `docs/*.md` here by `tools/docs-site/build.mjs` (page list: `SITE` table; public docs may not link into this
   repo) and pushed there by `docs-sync.yml` (latest) and `release.yml` (`docs/vX.Y`). `make docs-check` is the CI gate;
   `make docs-sync WEBSITE_DIR=../website` previews the whole site. The web app does not bundle docs; its sidebar link

@@ -12,7 +12,7 @@ First-time note: Keycloak takes a minute or two to start; API pods wait on migra
 {{ if .Values.backup.enabled }}
 Backups: CronJob {{ .Release.Name }}-backup ({{ .Values.backup.schedule }} UTC){{ if .Values.backup.pvc.enabled }}, kept {{ .Values.backup.retentionDays }} days on PVC {{ .Release.Name }}-backups{{ end }}{{ if .Values.backup.s3.enabled }}, copied to s3://{{ .Values.backup.s3.bucket }}/{{ .Values.backup.s3.prefix }}{{ end }}.
   Run one now:             kubectl -n {{ .Release.Namespace }} create job {{ .Release.Name }}-backup-now --from=cronjob/{{ .Release.Name }}-backup
-  Download / restore:      scripts/cell-backup.sh and scripts/cell-restore.sh from https://github.com/matelot-io/helm-charts
+  Download / restore:      scripts/cell-backup.sh and scripts/cell-restore.sh from https://github.com/matelot-cloud/helm-charts
                            (-r {{ .Release.Name }} -n {{ .Release.Namespace }}); guide: {{ .Values.web.docsUrl }}backup-restore.html
 {{ else }}
 Backups are off (backup.enabled=false): read {{ .Values.web.docsUrl }}backup-restore.html before this cell holds real data.

@@ -18,12 +18,12 @@ and `secret` into your CI secrets (`MATELOT_KEY_ID`, `MATELOT_SECRET`).
 
 ## Use it
 **The CLI** (`matelot`, source `apps/cli`, published as the public repository
-[matelot-io/setup-cli](https://github.com/matelot-io/setup-cli); Node ≥ 18, no dependencies): install it with
-`npm install -g "github:matelot-io/setup-cli#v2"` (`#v2` follows the current major; `#v2.19.2` pins a release), or in
+[matelot-cloud/setup-cli](https://github.com/matelot-cloud/setup-cli); Node ≥ 18, no dependencies): install it with
+`npm install -g "github:matelot-cloud/setup-cli#v2"` (`#v2` follows the current major; `#v2.19.2` pins a release), or in
 GitHub Actions use the same repository as an action, which installs the CLI at that tag and exports the variables:
 
 ```yaml
-- uses: matelot-io/setup-cli@v2   # or @v2.19.2
+- uses: matelot-cloud/setup-cli@v2   # or @v2.19.2
   with:
     url: ${{ vars.MATELOT_URL }}
     key-id: ${{ secrets.MATELOT_KEY_ID }}
@@ -138,7 +138,7 @@ ACR — role `AcrPull` (+ `AcrPush`).
 The CLI reads `MATELOT_URL`, `MATELOT_KEY_ID`, `MATELOT_SECRET` (CI token) or `MATELOT_TOKEN` (personal token), and
 `MATELOT_COMMIT` for `deploy`. The old `SECOPS_*` names are still accepted as a fallback.
 
-Runners without access to github.com (air-gapped CI): `npm pack` in a clone of `matelot-io/setup-cli` produces
+Runners without access to github.com (air-gapped CI): `npm pack` in a clone of `matelot-cloud/setup-cli` produces
 `matelot-cli-<version>.tgz`; host it on an internal artifact store or npm registry (Verdaccio, Artifactory, GitHub
 Packages) and `npm install -g` from there. GitLab CI and Bitbucket Pipelines examples (`examples/`) install from the
 repository the same way.

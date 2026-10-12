@@ -13,8 +13,8 @@ runs:
       env:
         VERSION: ${{ inputs.version || github.action_ref }}
       run: |
-        # `uses: matelot-io/setup-cli@v2` installs the CLI at that same tag (github.action_ref); `version` overrides
-        npm install -g "github:matelot-io/setup-cli#${VERSION:-v2}"
+        # `uses: matelot-cloud/setup-cli@v2` installs the CLI at that same tag (github.action_ref); `version` overrides
+        npm install -g "github:matelot-cloud/setup-cli#${VERSION:-v2}"
         echo "MATELOT_URL=${{ inputs.url }}" >> "$GITHUB_ENV"
         echo "MATELOT_KEY_ID=${{ inputs.key-id }}" >> "$GITHUB_ENV"
         echo "::add-mask::${{ inputs.secret }}"

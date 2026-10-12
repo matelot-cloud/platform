@@ -8,18 +8,18 @@ cross-repository token is rotated. (The *product* concepts — builds, releases 
 
 | Repository | Visibility | Holds | Written by |
 | --- | --- | --- | --- |
-| `matelot-io/platform` | private | this monorepo: code, chart, scripts, docs sources, workflows | people |
-| `matelot-io/matelot` | public | README, EULA, SECURITY, CODE_OF_CONDUCT, SUPPORT, CHANGELOG, issue templates; **issues, discussions, releases** | people (files), `release.yml` (releases) |
-| `matelot-io/helm-charts` | public | `charts/secops-cell/` (copy of `deploy/helm/secops-cell`), `scripts/` (cell-backup, cell-restore + lib), README | `release.yml` (chart + scripts), people (README) |
-| `matelot-io/website` | public, GitHub Pages | landing page sources (`content.json`, template, assets), **generated** `docs/latest/` and `docs/vX.Y/` | people (landing), `docs-sync.yml` + `release.yml` (docs) |
-| `matelot-io/.github` | public | organization profile, default community files | people |
-| `matelot-io/setup-cli` | public | the CLI (Apache-2.0): source, examples, `action.yml` — installable with `npm install -g github:matelot-io/setup-cli#v2` and usable as `uses: matelot-io/setup-cli@v2` | `publish-cli.yml` (everything but README) |
+| `matelot-cloud/platform` | private | this monorepo: code, chart, scripts, docs sources, workflows | people |
+| `matelot-cloud/matelot` | public | README, EULA, SECURITY, CODE_OF_CONDUCT, SUPPORT, CHANGELOG, issue templates; **issues, discussions, releases** | people (files), `release.yml` (releases) |
+| `matelot-cloud/helm-charts` | public | `charts/secops-cell/` (copy of `deploy/helm/secops-cell`), `scripts/` (cell-backup, cell-restore + lib), README | `release.yml` (chart + scripts), people (README) |
+| `matelot-cloud/website` | public, GitHub Pages | landing page sources (`content.json`, template, assets), **generated** `docs/latest/` and `docs/vX.Y/` | people (landing), `docs-sync.yml` + `release.yml` (docs) |
+| `matelot-cloud/.github` | public | organization profile, default community files | people |
+| `matelot-cloud/setup-cli` | public | the CLI (Apache-2.0): source, examples, `action.yml` — installable with `npm install -g github:matelot-cloud/setup-cli#v2` and usable as `uses: matelot-cloud/setup-cli@v2` | `publish-cli.yml` (everything but README) |
 
-Packages (GitHub Packages, `ghcr.io/matelot-io/…`): `api`, `web`, `worker`, `runner`, `charts/secops-cell`.
+Packages (GitHub Packages, `ghcr.io/matelot-cloud/…`): `api`, `web`, `worker`, `runner`, `charts/secops-cell`.
 
 **Rule: nothing in a public repository is edited by hand except what the table says.** The chart folder, the
 operator scripts and the generated docs are overwritten on the next release; a fix goes into `platform` and is
-released. Issues, discussions and releases live in `matelot-io/matelot` and are never mirrored back.
+released. Issues, discussions and releases live in `matelot-cloud/matelot` and are never mirrored back.
 
 ## Cutting a release
 
@@ -33,7 +33,7 @@ released. Issues, discussions and releases live in `matelot-io/matelot` and are 
    (`version` / `appVersion`) carry the development version; the pipeline stamps the tag's version on the chart it
    publishes, so these only need to match for `make deploy` on kind. The CLI has its own version and release:
    bump `apps/cli/package.json`, tag `cli-vX.Y.Z` → `publish-cli.yml` builds, tests and publishes the package to
-   `matelot-io/setup-cli` (tags `vX.Y.Z` and the moving `vX`), and to npm when `NPM_TOKEN` is set.
+   `matelot-cloud/setup-cli` (tags `vX.Y.Z` and the moving `vX`), and to npm when `NPM_TOKEN` is set.
 4. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`. A release candidate is `vX.Y.Z-rc.N`: everything is
    published the same way except the `latest` image tags, and the GitHub Release is marked pre-release.
 5. Watch `release.yml` (Actions → release). Jobs:
@@ -42,15 +42,15 @@ released. Issues, discussions and releases live in `matelot-io/matelot` and are 
      identity; `syft` SPDX SBOM attached with `cosign attest --type spdxjson`; SBOMs and digests uploaded as
      workflow artifacts. The worker is the `worker` target of `apps/api/Dockerfile`.
    - **chart**: `helm lint`, `helm package --version X.Y.Z --app-version X.Y.Z`, `helm push` to
-     `oci://ghcr.io/matelot-io/charts`, `cosign sign` of the chart digest, then the chart folder and the two operator
+     `oci://ghcr.io/matelot-cloud/charts`, `cosign sign` of the chart digest, then the chart folder and the two operator
      scripts are copied into a clone of `helm-charts`, committed and tagged `secops-cell-X.Y.Z`.
    - **docs**: `tools/docs-site/build.mjs` renders `docs/` into `website/docs/vX.Y/` (major.minor: a patch release
      overwrites its line) and `website/docs/latest/`, runs the website's own test + link check against the result,
      commits and pushes. The website's `pages.yml` deploys on that push.
-   - **release**: `gh release create vX.Y.Z --repo matelot-io/matelot` with the CHANGELOG section, the image and chart
+   - **release**: `gh release create vX.Y.Z --repo matelot-cloud/matelot` with the CHANGELOG section, the image and chart
      digests, the `cosign verify` commands and the SBOM files attached.
-6. Check: `helm pull oci://ghcr.io/matelot-io/charts/secops-cell --version X.Y.Z`, `docker pull ghcr.io/matelot-io/api:X.Y.Z`,
-   the release page, https://matelot-io.github.io/website/docs/vX.Y/install.html.
+6. Check: `helm pull oci://ghcr.io/matelot-cloud/charts/secops-cell --version X.Y.Z`, `docker pull ghcr.io/matelot-cloud/api:X.Y.Z`,
+   the release page, https://matelot-cloud.github.io/website/docs/vX.Y/install.html.
 7. Upgrade a cell on kind from the published chart (`helm upgrade … oci://… --version X.Y.Z`) before announcing.
 
 ### One-time setup (done once per organization)
@@ -64,9 +64,9 @@ released. Issues, discussions and releases live in `matelot-io/matelot` and are 
 - **Pages:** `website` → Settings → Pages → Source: **GitHub Actions** — by hand, *before* the first push of the
   website (until it is set, `pages.yml`'s deploy step fails and the site 404s). Custom domain later: set the repository variable
   `SITE_DOMAIN=matelot.io` (Settings → Secrets and variables → Actions → Variables), enter the domain under Pages,
-  point DNS at GitHub (A/AAAA for the apex or CNAME `matelot-io.github.io`). Nothing else changes: the build writes
+  point DNS at GitHub (A/AAAA for the apex or CNAME `matelot-cloud.github.io`). Nothing else changes: the build writes
   `CNAME`, the sitemap and the preview URLs from that variable; links inside the site are relative.
-- **Discussions** enabled on `matelot-io/matelot`; **private vulnerability reporting** enabled there
+- **Discussions** enabled on `matelot-cloud/matelot`; **private vulnerability reporting** enabled there
   (Settings → Code security → Private vulnerability reporting), because SECURITY.md points to it.
 - **The cross-repository token** (next section) stored as a **repository secret on `platform`** (organization
   secrets are not available to private repositories on the GitHub Free plan).
@@ -86,9 +86,9 @@ Create it as a member who can push to the four public repositories (ideally a de
 | Setting | Value |
 | --- | --- |
 | Token name | `platform-release → public repos` |
-| Resource owner | `matelot-io` |
+| Resource owner | `matelot-cloud` |
 | Expiration | 1 year (the maximum; put the date in the team calendar) |
-| Repository access | Only select repositories: `matelot-io/website`, `matelot-io/helm-charts`, `matelot-io/matelot`, `matelot-io/setup-cli` |
+| Repository access | Only select repositories: `matelot-cloud/website`, `matelot-cloud/helm-charts`, `matelot-cloud/matelot`, `matelot-cloud/setup-cli` |
 | Repository permissions | **Contents: Read and write** (push commits and tags, create releases and upload assets); **Metadata: Read** (added automatically) |
 | Everything else | No access — no Issues, no Pull requests, no Actions, no Administration, no organization permissions |
 
@@ -128,8 +128,8 @@ link to the public repositories or the site instead. `make docs-check` is what C
 
 ## Versions, tags and what a customer sees
 
-- Images: `ghcr.io/matelot-io/<name>:X.Y.Z` (what the chart pulls: `appVersion`), `vX.Y.Z` (same digest), `latest`.
-- Chart: `oci://ghcr.io/matelot-io/charts/secops-cell:X.Y.Z`, `appVersion: X.Y.Z` → a customer upgrades images and
+- Images: `ghcr.io/matelot-cloud/<name>:X.Y.Z` (what the chart pulls: `appVersion`), `vX.Y.Z` (same digest), `latest`.
+- Chart: `oci://ghcr.io/matelot-cloud/charts/secops-cell:X.Y.Z`, `appVersion: X.Y.Z` → a customer upgrades images and
   chart together with `helm upgrade --version X.Y.Z`; `image.tag` in values overrides for a hotfix image.
 - Docs: `docs/vX.Y/` per release line, `docs/latest/` = `main`; the version switcher is built from the folders.
 - The cell reports its version as `APP_VERSION` (`GET /api/v1/meta`, "API x.y.z" in the web footer), set by the chart

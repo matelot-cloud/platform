@@ -117,16 +117,16 @@ for a cell with external Postgres/Redis and TLS.
 ## Releases, public repositories and the website
 
 Matelot is closed source and self-hosted: customers get the images and the chart, nothing else leaves this
-repository. The GitHub organization `matelot-io` has this private monorepo (`platform`) and four public repositories:
+repository. The GitHub organization `matelot-cloud` has this private monorepo (`platform`) and four public repositories:
 
 | Repository | What | Updated by |
 | --- | --- | --- |
-| `matelot-io/matelot` | issues, discussions, releases, EULA, security policy, changelog summary | people; releases by the pipeline |
-| `matelot-io/helm-charts` | `charts/secops-cell` + backup/restore scripts (copies of `deploy/helm/secops-cell`, `scripts/cell-*.sh`) | the release pipeline |
-| `matelot-io/website` | landing page (its own `content.json`) + generated docs (`docs/latest`, `docs/vX.Y`), GitHub Pages | docs by the pipeline, landing by people |
-| `matelot-io/.github` | organization profile and default community files | people |
+| `matelot-cloud/matelot` | issues, discussions, releases, EULA, security policy, changelog summary | people; releases by the pipeline |
+| `matelot-cloud/helm-charts` | `charts/secops-cell` + backup/restore scripts (copies of `deploy/helm/secops-cell`, `scripts/cell-*.sh`) | the release pipeline |
+| `matelot-cloud/website` | landing page (its own `content.json`) + generated docs (`docs/latest`, `docs/vX.Y`), GitHub Pages | docs by the pipeline, landing by people |
+| `matelot-cloud/.github` | organization profile and default community files | people |
 
-Images: `ghcr.io/matelot-io/{api,web,worker,runner}`; chart: `oci://ghcr.io/matelot-io/charts/secops-cell`.
+Images: `ghcr.io/matelot-cloud/{api,web,worker,runner}`; chart: `oci://ghcr.io/matelot-cloud/charts/secops-cell`.
 
 * **A tag `vX.Y.Z` releases everything** (`.github/workflows/release.yml`): multi-arch images signed with cosign and
   carrying syft SBOM attestations, the chart as OCI, the chart folder and scripts synced to `helm-charts`, the docs

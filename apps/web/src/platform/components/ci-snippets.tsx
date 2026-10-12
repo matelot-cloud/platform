@@ -10,7 +10,7 @@ export const CI_SYSTEMS: { key: CiSystem; label: string }[] = [
   { key: "bitbucket", label: "Bitbucket Pipelines" },
 ];
 
-export const CLI_INSTALL = 'npm install -g "github:matelot-io/setup-cli#v2"';
+export const CLI_INSTALL = 'npm install -g "github:matelot-cloud/setup-cli#v2"';
 
 /** Per-system names of the commit SHA, the tag / ref name and the "current branch" variable. */
 export const CI_VARS: Record<CiSystem, { sha: string; ref: string; shortSha: string }> = {
@@ -56,7 +56,7 @@ export function ciSnippet(sys: CiSystem, input: CiSnippetInput): string {
       ...(input.manual ? [`    environment: production        # optional reviewer approval on top of the policy gate`] : []),
       `    steps:`,
       `      - uses: actions/checkout@v4`,
-      `      - uses: matelot-io/setup-cli@v2`,
+      `      - uses: matelot-cloud/setup-cli@v2`,
       `        with: { url: \${{ vars.MATELOT_URL }}, key-id: \${{ secrets.MATELOT_KEY_ID }}, secret: \${{ secrets.MATELOT_SECRET }} }`,
       ...steps.map((s) => (s.includes("\n") ? `      - run: |\n${s.split("\n").map((l) => `          ${l}`).join("\n")}` : `      - run: ${s}`)),
     ].join("\n");

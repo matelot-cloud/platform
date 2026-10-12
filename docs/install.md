@@ -23,7 +23,7 @@ GitHub repositories (any Git host also works with tokens).
 ## 2. Choose the cell's values
 
 ```bash
-helm show values oci://ghcr.io/matelot-io/charts/secops-cell --version 0.1.0 > values.yaml
+helm show values oci://ghcr.io/matelot-cloud/charts/secops-cell --version 0.1.0 > values.yaml
 ```
 
 The settings that matter for a first install:
@@ -57,14 +57,14 @@ backup:
     enabled: false
 ```
 
-Images are `ghcr.io/matelot-io/{api,worker,web,runner}` at the chart's `appVersion`; leave the `image` blocks alone
+Images are `ghcr.io/matelot-cloud/{api,worker,web,runner}` at the chart's `appVersion`; leave the `image` blocks alone
 unless you mirror them. Everything else (replicas, resources, managed runner count, SMTP via `api.extraEnv`) has a
 documented default in `values.yaml`.
 
 ## 3. Install
 
 ```bash
-helm install acme oci://ghcr.io/matelot-io/charts/secops-cell --version 0.1.0 \
+helm install acme oci://ghcr.io/matelot-cloud/charts/secops-cell --version 0.1.0 \
   --namespace tenant-acme --create-namespace -f values.yaml
 kubectl -n tenant-acme get pods -w
 ```
@@ -98,7 +98,7 @@ For a quick evaluation without an identity provider, `keycloak.seedUsers` create
 ## 5. The CLI
 
 ```bash
-npm install -g "github:matelot-io/setup-cli#v2"   # or: uses: matelot-io/setup-cli@v2 in GitHub Actions
+npm install -g "github:matelot-cloud/setup-cli#v2"   # or: uses: matelot-cloud/setup-cli@v2 in GitHub Actions
 matelot login --url https://acme.platform.example.com
 matelot whoami
 ```
@@ -120,14 +120,14 @@ matters there: the secrets must be restored **before** `helm install`, so the re
 Each release ships the four images and the chart at the same version. To upgrade:
 
 ```bash
-helm upgrade acme oci://ghcr.io/matelot-io/charts/secops-cell --version 0.2.0 \
+helm upgrade acme oci://ghcr.io/matelot-cloud/charts/secops-cell --version 0.2.0 \
   --namespace tenant-acme -f values.yaml
 ```
 
 Take a backup first (the CronJob, or a manual job as above). Migrations run in the API's init container before the
 new API starts. An image release rolls only the api, worker, web and runner pods; Postgres, Keycloak, Redis and the
 registry keep running. Release notes and image digests are published with every release at
-https://github.com/matelot-io/matelot/releases; images and the chart are signed with cosign (keyless, GitHub OIDC)
+https://github.com/matelot-cloud/matelot/releases; images and the chart are signed with cosign (keyless, GitHub OIDC)
 and carry SBOM attestations.
 
 ## 8. Removing a cell

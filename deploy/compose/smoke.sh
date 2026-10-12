@@ -21,7 +21,7 @@ wait_ready() { # through the proxy, as a browser would
     if curl -fsS -o /dev/null "$BASE/api/v1/health/ready" && curl -fsS -o /dev/null "$BASE/healthz"; then return 0; fi
     sleep 5
   done
-  echo "the cell did not become ready through $BASE in 450 s" >&2; docker compose ps >&2; docker compose logs --tail 50 api keycloak caddy >&2; return 1
+  echo "the cell did not become ready through $BASE in 450 s" >&2; diagnose; docker compose logs --tail 50 api keycloak caddy >&2; return 1
 }
 token() { # password grant on the web client (enabled for evaluation installs): the CLI accepts the Keycloak token as MATELOT_TOKEN
   local pw; pw="$(docker compose run --rm --no-deps init show | sed -n 's/^Admin password: *//p')"
@@ -29,8 +29,14 @@ token() { # password grant on the web client (enabled for evaluation installs): 
     | python3 -c 'import sys,json; print(json.load(sys.stdin)["access_token"])'
 }
 
+diagnose() { # every container that is not running and healthy: its state and the last log lines — the root cause, not "dependency failed"
+  echo "---- docker compose ps -a" >&2; docker compose ps -a >&2
+  for c in $(docker compose ps -a --format '{{.Name}} {{.State}} {{.Health}}' | awk '$2 != "running" || ($3 != "" && $3 != "healthy") {print $1}'); do
+    echo "---- $c" >&2; docker logs --tail 30 "$c" >&2 2>&1 || true
+  done
+}
 log "docker compose up -d"
-docker compose up -d
+docker compose up -d || { echo "docker compose up failed" >&2; diagnose; exit 1; }
 log "waiting for $BASE"; wait_ready
 docker compose logs welcome | tail -12
 log "matelot doctor"

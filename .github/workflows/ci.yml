@@ -104,6 +104,8 @@ jobs:
       - run: pnpm install --frozen-lockfile --filter matelot-cli && pnpm --filter matelot-cli build
       - name: docker compose config renders with the example .env
         run: cd deploy/compose && docker compose --env-file .env.example config --quiet
+      - name: nginx config of the web image is valid
+        run: docker run --rm secops/web:ci nginx -t
       - name: Smoke test (up → doctor → project → backup → down -v → restore)
         working-directory: deploy/compose
         env:

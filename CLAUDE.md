@@ -21,9 +21,11 @@ below is the agreed build order.
   with generated SQL migrations in `apps/api/drizzle` (commit the SQL and `meta/`), zod env
   validation, pino logs, Swagger at `/api/docs`, global prefix `/api/v1`.
 - The CLI is `apps/cli` (npm name `matelot-cli`, Apache-2.0, zero dependencies), published by `publish-cli.yml` on
-  `cli-vX.Y.Z` tags to the public repository `matelot-cloud/setup-cli` (source + `apps/cli/action.yml`; customers run
-  `npm install -g github:matelot-cloud/setup-cli#v2` or `uses: matelot-cloud/setup-cli@v2`) and to npm when `NPM_TOKEN` is
-  set; every command shown in the UI and docs uses the CLI (`matelot …`).
+  `cli-vX.Y.Z` tags to the public repository `matelot-cloud/setup-cli` (source + compiled dist + `apps/cli/action.yml`)
+  with a GitHub Release carrying the npm package; customers run `npm install -g
+  https://github.com/matelot-cloud/setup-cli/releases/latest/download/matelot-cli.tgz` (pinned: `releases/download/vX.Y.Z/…`)
+  or `uses: matelot-cloud/setup-cli@v2`; **never the `github:<owner>/<repo>` git form** (npm 10 leaves a dangling
+  symlink — the string is on the forbidden list); npm publish only when `NPM_TOKEN` is set; every command shown in the UI and docs uses the CLI (`matelot …`).
   `tools/secops-ci/secops.sh` exists only as a no-Node fallback and is not advertised. Keep the signing
   code in sync with `apps/api/src/tokens/signing.ts`.
 - CI/CD authenticates with **signed CI tokens** (`apps/api/src/tokens`, `docs/ci-integration.md`), never

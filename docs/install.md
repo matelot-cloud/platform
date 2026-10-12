@@ -98,7 +98,7 @@ For a quick evaluation without an identity provider, `keycloak.seedUsers` create
 ## 5. The CLI
 
 ```bash
-npm install -g "github:matelot-cloud/setup-cli#v2"   # or: uses: matelot-cloud/setup-cli@v2 in GitHub Actions
+npm install -g https://github.com/matelot-cloud/setup-cli/releases/latest/download/matelot-cli.tgz   # pinned: .../releases/download/vX.Y.Z/matelot-cli-X.Y.Z.tgz · GitHub Actions: uses: matelot-cloud/setup-cli@v2
 matelot login --url https://acme.platform.example.com
 matelot whoami
 ```

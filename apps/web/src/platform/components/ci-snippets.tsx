@@ -10,7 +10,7 @@ export const CI_SYSTEMS: { key: CiSystem; label: string }[] = [
   { key: "bitbucket", label: "Bitbucket Pipelines" },
 ];
 
-export const CLI_INSTALL = 'npm install -g "github:matelot-cloud/setup-cli#v2"';
+export const CLI_INSTALL = 'npm install -g https://github.com/matelot-cloud/setup-cli/releases/latest/download/matelot-cli.tgz';
 
 /** Per-system names of the commit SHA, the tag / ref name and the "current branch" variable. */
 export const CI_VARS: Record<CiSystem, { sha: string; ref: string; shortSha: string }> = {

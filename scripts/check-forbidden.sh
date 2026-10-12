@@ -9,6 +9,7 @@ FORBIDDEN=(
   "matelot-io"                        # GitHub organization before 2026-10-12 (now matelot-cloud)
   "dev-testing-secops-platform"       # the private CLI mirror (now matelot-cloud/setup-cli)
   "docs.matelot.dev"                  # placeholder domain of the first website drop
+  "setup-cli#"                        # git-form CLI install (github:…/setup-cli#tag): npm 10 leaves a dangling symlink; use the release tarball
 )
 if git rev-parse --is-inside-work-tree > /dev/null 2>&1; then
   list() { git ls-files -z --cached; }

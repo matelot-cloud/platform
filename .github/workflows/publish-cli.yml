@@ -1,6 +1,8 @@
 # CLI release: tag cli-vX.Y.Z (= apps/cli/package.json version) → build + test, publish the package to
 # matelot-cloud/setup-cli (source + action.yml; tags vX.Y.Z and the moving vX), and to npm when NPM_TOKEN is set.
-# Customers install with `npm install -g github:matelot-cloud/setup-cli#v2` or `uses: matelot-cloud/setup-cli@v2`.
+# Every release attaches the npm package (matelot-cli-X.Y.Z.tgz + matelot-cli.tgz) to a GitHub Release in setup-cli;
+# customers install from that URL (releases/latest/download/matelot-cli.tgz) or use the action (uses: …/setup-cli@v2),
+# which installs the tag's source archive. Never the git form: npm 10 leaves it as a dangling symlink.
 name: publish-cli
 on:
   push:
@@ -48,6 +50,20 @@ jobs:
           git diff --cached --quiet && echo "unchanged" || git commit -m "matelot-cli $VERSION (from platform ${GITHUB_SHA::7})"
           git push
           git tag -f "v$VERSION" && git tag -f "$MAJOR" && git push -f origin "v$VERSION" "$MAJOR"
+      - name: GitHub Release in setup-cli with the npm package attached
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_REPOS_TOKEN }}
+        run: |
+          VERSION=${GITHUB_REF_NAME#cli-v}
+          cd /tmp/setup-cli && npm pack --pack-destination /tmp/pack > /dev/null
+          cp "/tmp/pack/matelot-cli-$VERSION.tgz" /tmp/pack/matelot-cli.tgz     # fixed name for releases/latest/download/
+          flags=(); case "$VERSION" in *-*) flags+=(--prerelease);; esac
+          notes="Matelot CLI $VERSION. Install: \`npm install -g https://github.com/$ORG/setup-cli/releases/download/v$VERSION/matelot-cli-$VERSION.tgz\` (newest: \`releases/latest/download/matelot-cli.tgz\`); GitHub Actions: \`uses: $ORG/setup-cli@v$VERSION\`. Built from platform ${GITHUB_SHA::7}."
+          if gh release view "v$VERSION" --repo "$ORG/setup-cli" > /dev/null 2>&1; then
+            gh release upload "v$VERSION" --repo "$ORG/setup-cli" --clobber "/tmp/pack/matelot-cli-$VERSION.tgz" /tmp/pack/matelot-cli.tgz
+          else
+            gh release create "v$VERSION" --repo "$ORG/setup-cli" --title "matelot-cli $VERSION" --notes "$notes" "${flags[@]}" "/tmp/pack/matelot-cli-$VERSION.tgz" /tmp/pack/matelot-cli.tgz
+          fi
       - name: Publish to npm (when NPM_TOKEN is configured)
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -56,7 +72,7 @@ jobs:
           npm publish --access public --provenance
 
   install-test:
-    # what a customer does, on a machine that has nothing but Node: no checkout, no pnpm, no devDependencies
+    # exactly the documented commands, on a machine that has nothing but Node: no checkout, no pnpm, no build
     needs: publish
     runs-on: ubuntu-24.04
     env:
@@ -64,6 +80,19 @@ jobs:
     steps:
       - uses: actions/setup-node@v7
         with: { node-version: 20 }
-      - run: npm install -g "github:$ORG/setup-cli#v$VERSION"
-      - run: test "$(matelot --version)" = "$VERSION" && test "$(secops --version)" = "$VERSION"
-      - run: npm uninstall -g matelot-cli && npm install -g "github:$ORG/setup-cli#v${VERSION%%.*}" && test "$(matelot --version)" = "$VERSION"
+      - name: "Pinned release asset: releases/download/vX.Y.Z/matelot-cli-X.Y.Z.tgz (the documented command)"
+        run: |
+          npm install -g "https://github.com/$ORG/setup-cli/releases/download/v$VERSION/matelot-cli-$VERSION.tgz"
+          test "$(matelot --version)" = "$VERSION" && test "$(secops --version)" = "$VERSION"
+          npm uninstall -g matelot-cli
+      - name: "Newest release: releases/latest/download/matelot-cli.tgz (the documented command)"
+        if: ${{ !contains(needs.publish.outputs.version, '-') }}
+        run: |
+          npm install -g "https://github.com/$ORG/setup-cli/releases/latest/download/matelot-cli.tgz"
+          test "$(matelot --version)" = "$VERSION" && test "$(secops --version)" = "$VERSION"
+          npm uninstall -g matelot-cli
+      - name: Source archive of the moving major tag (what the GitHub Action installs for uses@vN)
+        run: |
+          npm install -g "https://github.com/$ORG/setup-cli/archive/refs/tags/v${VERSION%%.*}.tar.gz"
+          test "$(matelot --version)" = "$VERSION" && test "$(secops --version)" = "$VERSION"
+          test -d "$(npm root -g)/matelot-cli/dist"     # a real directory, not a symlink into npm's cache

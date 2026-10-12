@@ -5,16 +5,17 @@ inputs:
   url: { description: Cell URL (https://acme.platform.example.com), required: true }
   key-id: { description: CI token key id (sk_…), required: true }
   secret: { description: CI token secret (sec_…) — store it as a GitHub secret, required: true }
-  version: { description: "CLI version to install: a tag of this repository (v2.19.2, v2) or a branch; defaults to the ref this action was used with", required: false, default: "" }
+  version: { description: "Tag of this repository to install (v2.19.2 or the moving v2); defaults to the ref this action was used with", required: false, default: "" }
 runs:
   using: composite
   steps:
     - shell: bash
       env:
-        VERSION: ${{ inputs.version || github.action_ref }}
+        REF: ${{ inputs.version || github.action_ref }}
       run: |
-        # `uses: matelot-cloud/setup-cli@v2` installs the CLI at that same tag (github.action_ref); `version` overrides
-        npm install -g "github:matelot-cloud/setup-cli#${VERSION:-v2}"
+        # Installs from the tag's source archive (package.json + compiled dist/, no build), never from `github:…#tag`:
+        # npm 10 links a git install to its temporary clone and deletes it, leaving a dangling symlink.
+        npm install -g "https://github.com/matelot-cloud/setup-cli/archive/refs/tags/${REF:-v2}.tar.gz"
         echo "MATELOT_URL=${{ inputs.url }}" >> "$GITHUB_ENV"
         echo "MATELOT_KEY_ID=${{ inputs.key-id }}" >> "$GITHUB_ENV"
         echo "::add-mask::${{ inputs.secret }}"

@@ -18,9 +18,17 @@ and `secret` into your CI secrets (`MATELOT_KEY_ID`, `MATELOT_SECRET`).
 
 ## Use it
 **The CLI** (`matelot`, source `apps/cli`, published as the public repository
-[matelot-cloud/setup-cli](https://github.com/matelot-cloud/setup-cli); Node ≥ 18, no dependencies): install it with
-`npm install -g "github:matelot-cloud/setup-cli#v2"` (`#v2` follows the current major; `#v2.19.2` pins a release), or in
-GitHub Actions use the same repository as an action, which installs the CLI at that tag and exports the variables:
+[matelot-cloud/setup-cli](https://github.com/matelot-cloud/setup-cli); Node ≥ 18, no dependencies, no build on install).
+Every CLI release attaches the npm package to a GitHub Release there:
+
+```bash
+npm install -g https://github.com/matelot-cloud/setup-cli/releases/latest/download/matelot-cli.tgz          # newest release
+npm install -g https://github.com/matelot-cloud/setup-cli/releases/download/v2.19.2/matelot-cli-2.19.2.tgz  # pinned
+```
+
+Do not install with the `github:<owner>/<repo>` git form: npm 10 links such an install to its temporary clone
+and then deletes it, so `matelot` ends up as a dangling symlink. In GitHub Actions use the same repository as an
+action, which installs the CLI at the tag it was used with and exports the variables:
 
 ```yaml
 - uses: matelot-cloud/setup-cli@v2   # or @v2.19.2
@@ -138,10 +146,9 @@ ACR — role `AcrPull` (+ `AcrPush`).
 The CLI reads `MATELOT_URL`, `MATELOT_KEY_ID`, `MATELOT_SECRET` (CI token) or `MATELOT_TOKEN` (personal token), and
 `MATELOT_COMMIT` for `deploy`. The old `SECOPS_*` names are still accepted as a fallback.
 
-Runners without access to github.com (air-gapped CI): `npm pack` in a clone of `matelot-cloud/setup-cli` produces
-`matelot-cli-<version>.tgz`; host it on an internal artifact store or npm registry (Verdaccio, Artifactory, GitHub
-Packages) and `npm install -g` from there. GitLab CI and Bitbucket Pipelines examples (`examples/`) install from the
-repository the same way.
+Runners without access to github.com (air-gapped CI): download `matelot-cli-<version>.tgz` from the release once,
+host it on an internal artifact store or npm registry (Verdaccio, Artifactory, GitHub Packages) and `npm install -g`
+from there. The GitLab CI and Bitbucket Pipelines examples (`examples/`) install from the release URL.
 
 The GitHub Action is a thin wrapper around the install; replace its `uses:` step with a `run: npm install -g …` line plus
 the three environment variables when the action is not reachable.

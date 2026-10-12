@@ -13,7 +13,7 @@ cross-repository token is rotated. (The *product* concepts — builds, releases 
 | `matelot-cloud/helm-charts` | public | `charts/secops-cell/` (copy of `deploy/helm/secops-cell`), `scripts/` (cell-backup, cell-restore + lib), README | `release.yml` (chart + scripts), people (README) |
 | `matelot-cloud/website` | public, GitHub Pages | landing page sources (`content.json`, template, assets), **generated** `docs/latest/` and `docs/vX.Y/` | people (landing), `docs-sync.yml` + `release.yml` (docs) |
 | `matelot-cloud/.github` | public | organization profile, default community files | people |
-| `matelot-cloud/setup-cli` | public | the CLI (Apache-2.0): source, examples, `action.yml` — installable with `npm install -g github:matelot-cloud/setup-cli#v2` and usable as `uses: matelot-cloud/setup-cli@v2` | `publish-cli.yml` (everything but README) |
+| `matelot-cloud/setup-cli` | public | the CLI (Apache-2.0): source, compiled dist, examples, `action.yml`, and a GitHub Release per version with the npm package attached — installable with `npm install -g https://github.com/matelot-cloud/setup-cli/releases/latest/download/matelot-cli.tgz` (pinned: `releases/download/vX.Y.Z/matelot-cli-X.Y.Z.tgz`) and usable as `uses: matelot-cloud/setup-cli@v2` (installs the tag's source archive). Never the `github:` git form: npm 10 leaves it as a dangling symlink | `publish-cli.yml` (everything but README) |
 
 Packages (GitHub Packages, `ghcr.io/matelot-cloud/…`): `api`, `web`, `worker`, `runner`, `charts/secops-cell`.
 
@@ -33,9 +33,10 @@ released. Issues, discussions and releases live in `matelot-cloud/matelot` and a
    (`version` / `appVersion`) carry the development version; the pipeline stamps the tag's version on the chart it
    publishes, so these only need to match for `make deploy` on kind. The CLI has its own version and release:
    bump `apps/cli/package.json`, tag `cli-vX.Y.Z` → `publish-cli.yml` builds, tests and publishes the package to
-   `matelot-cloud/setup-cli` with the compiled `dist/` committed — a git install runs no build, so customers need
-   nothing but Node (tags `vX.Y.Z` and the moving `vX`) — and to npm when `NPM_TOKEN` is set; the workflow's
-   `install-test` job proves the tag installs on a clean runner.
+   `matelot-cloud/setup-cli` (compiled `dist/` committed, tags `vX.Y.Z` and the moving `vX`), creates the GitHub
+   Release there with the npm package attached, and publishes to npm when `NPM_TOKEN` is set; the `install-test` job
+   proves the documented install commands on a clean runner. The tag must equal `apps/cli/package.json` `version`
+   (the guard that caught `cli-v2.19.3` vs `2.19.2`).
 4. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`. A release candidate is `vX.Y.Z-rc.N`: everything is
    published the same way except the `latest` image tags, and the GitHub Release is marked pre-release.
 5. Watch `release.yml` (Actions → release). Jobs:
@@ -120,7 +121,7 @@ The same procedure applies at expiry; GitHub e-mails the token owner a week befo
 | `helm-charts/README.md`, `LICENSE` | the public repository | by hand |
 | `matelot/*` files | the public repository | by hand; `CHANGELOG.md` there gets a short summary per release line, the detailed log stays here |
 | GitHub Release in `matelot` | `CHANGELOG.md` section + digests | `release.yml` |
-| `setup-cli/*` except README | `apps/cli` (src, **compiled `dist/`**, examples, package.json without `prepare`/devDependencies, tsconfig, action.yml, LICENSE) | `publish-cli.yml` on `cli-v*` tags; `v<major>` tag moved to the newest release; an `install-test` job then installs the tag on a clean runner (`npm install -g github:…#vX.Y.Z`, no checkout, no pnpm) and checks `matelot --version` |
+| `setup-cli/*` except README | `apps/cli` (src, **compiled `dist/`**, examples, package.json without `prepare`/devDependencies, tsconfig, action.yml, LICENSE) | `publish-cli.yml` on `cli-v*` tags: push, tags `vX.Y.Z` + moving `v<major>`, then a GitHub Release `vX.Y.Z` in `setup-cli` with `matelot-cli-X.Y.Z.tgz` and `matelot-cli.tgz` (fixed name for `releases/latest/download/`); the `install-test` job then runs the documented commands on a clean runner (pinned asset, latest asset, the major tag's source archive) and checks `matelot --version` / `secops --version` |
 | `setup-cli/README.md` | the public repository | by hand |
 
 The docs page list is the `SITE` table in `tools/docs-site/build.mjs`: a new page is added there and in the

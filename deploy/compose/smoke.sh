@@ -49,10 +49,17 @@ export MATELOT_CREDENTIALS="$PWD/.smoke-credentials.json"; rm -f "$MATELOT_CREDE
 $CLI doctor || true
 log "OAuth discovery through the proxy"
 curl -fsS "$BASE/.well-known/oauth-authorization-server" | python3 -c '
-import sys, json; m = json.load(sys.stdin); print(json.dumps(m, indent=1))
-base = sys.argv[1].rstrip("/")
-bad = [k for k in ("authorization_endpoint", "token_endpoint") if not m.get(k, "").startswith(base + "/")]
-assert not bad, f"endpoints not on {base}: {bad} — API_PUBLIC_URL is wrong on the cell"' "$BASE"
+import sys, json
+from urllib.parse import urlsplit
+def origin(u):  # same rule as the CLI: scheme + lower-case host, default port dropped
+    p = urlsplit(u); port = p.port
+    if port in (None, 80 if p.scheme == "http" else 443): return f"{p.scheme}://{p.hostname}"
+    return f"{p.scheme}://{p.hostname}:{port}"
+m = json.load(sys.stdin); print(json.dumps(m, indent=1))
+base = origin(sys.argv[1])
+bad = [k for k in ("authorization_endpoint", "token_endpoint") if origin(m.get(k, "http://-")) != base]
+assert not bad, f"endpoints not on {base}: {bad} ({[m.get(k) for k in bad]}) — API_PUBLIC_URL is wrong on the cell"
+print("discovery ok: endpoints on", base)' "$BASE"
 log "matelot login through the proxy (OAuth code flow, consent approved with the administrator's session)"
 # `matelot login --no-browser` prints the authorize link and waits for the browser callback on 127.0.0.1; this script
 # plays the browser: follow the link (API → consent page redirect), approve with the signed-in administrator, call back.

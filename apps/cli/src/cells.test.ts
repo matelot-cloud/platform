@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { normalizeCellUrl } from './login';
 
 const run = promisify(execFile);
 const cli = join(__dirname, 'index.js');
@@ -66,4 +67,28 @@ test('cells: whoami/doctor never pick the first (expired) entry; --url, MATELOT_
     await assert.rejects(run('node', [cli, 'whoami'], { env: baseEnv }), (e: { stderr: string }) => { assert.match(e.stderr, /expired: run matelot login --url/); return true; }); // single stored entry, expired
     assert.match((await run('node', [cli, 'cells'], { env: baseEnv })).stdout, /expired/);
   } finally { stale.close(); fresh.close(); }
+});
+
+test('normalizeCellUrl: default ports, host case, trailing slash, path prefix', async () => {
+  assert.equal(normalizeCellUrl('http://localhost:80'), 'http://localhost');
+  assert.equal(normalizeCellUrl('http://localhost:80/'), 'http://localhost');
+  assert.equal(normalizeCellUrl('https://Acme.Example.COM:443/'), 'https://acme.example.com');
+  assert.equal(normalizeCellUrl('https://acme.example.com:8443'), 'https://acme.example.com:8443');
+  assert.equal(normalizeCellUrl('http://localhost:3000/'), 'http://localhost:3000');
+  assert.equal(normalizeCellUrl('https://host.example/matelot/'), 'https://host.example/matelot');
+  assert.equal(normalizeCellUrl(' http://localhost '), 'http://localhost');
+});
+
+test('cells: http://localhost:80 and http://localhost are the same cell (one entry, one current)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cells-'));
+  const file = join(dir, 'credentials.json');
+  const c = await cell('tok');
+  const alt = c.url; // the default-port case (:80) needs a listener on port 80, which a test cannot bind — covered by the unit test above
+  const env = { ...process.env, MATELOT_CREDENTIALS: file, MATELOT_URL: '', MATELOT_TOKEN: '', SECOPS_URL: '', SECOPS_TOKEN: '' };
+  try {
+    writeFileSync(file, JSON.stringify({ [c.url]: { url: c.url, accessToken: 'tok', expiresAt: new Date(Date.now() + 86_400_000).toISOString(), scope: 'write' }, current: c.url }));
+    assert.match((await run('node', [cli, 'whoami', '--url', `${alt}/`], { env })).stdout, /user tok@localhost/);          // trailing slash → same key
+    assert.match((await run('node', [cli, 'use', `${c.url}/`], { env })).stdout, /current cell: /);
+    assert.equal(Object.keys(JSON.parse(readFileSync(file, 'utf8'))).filter((k) => k.startsWith('http')).length, 1);
+  } finally { c.close(); }
 });

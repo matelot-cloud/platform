@@ -33,7 +33,17 @@ function writeFile(all: CredentialsFile): void {
   writeFileSync(p, JSON.stringify(all, null, 2)); try { chmodSync(p, 0o600); } catch { /* windows */ }
 }
 const isUrlKey = (k: string) => /^https?:\/\//.test(k);
-const norm = (u: string) => u.replace(/\/$/, '');
+/** One spelling per cell: scheme and host lower-case, the default port dropped (http://localhost:80 → http://localhost),
+ *  no trailing slash; a path prefix is kept. Used for the credentials keys, `current`, --url and MATELOT_URL. */
+export function normalizeCellUrl(u: string): string {
+  const t = u.trim();
+  try {
+    const x = new URL(t);
+    if (!/^https?:$/.test(x.protocol)) return t.replace(/\/$/, '');
+    return `${x.origin}${x.pathname}`.replace(/\/$/, '');   // origin: lower-cased host, default port omitted
+  } catch { return t.replace(/\/$/, ''); }
+}
+const norm = normalizeCellUrl;
 
 /** Stored logins, newest-expiry first is not meaningful: file order, with the current one marked. */
 export function listCells(): { url: string; current: boolean; scope: string; user?: string; expiresAt: string | null; valid: boolean; loggedOut: boolean }[] {
@@ -151,7 +161,7 @@ export function discoveryMismatch(base: string, meta: { authorization_endpoint?:
 }
 
 export async function login(url: string, scope: 'read' | 'write' | 'sudo', opts: { open?: (authorizeUrl: string) => void; noBrowser?: boolean; timeoutMs?: number; fetchImpl?: typeof fetch; sleep?: (ms: number) => Promise<void> } = {}): Promise<StoredCredentials> {
-  const base = url.replace(/\/$/, '');
+  const base = normalizeCellUrl(url);
   const f = retryingFetch(opts.fetchImpl ?? fetch, opts.sleep);
   const meta = await discover(base, f);
   const verifier = randomBytes(32).toString('base64url');

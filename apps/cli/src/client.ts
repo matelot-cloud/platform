@@ -1,4 +1,4 @@
-import { readCredentials, resolveCellUrl } from './login';
+import { normalizeCellUrl, readCredentials, resolveCellUrl } from './login';
 import { signatureHeader } from './signing';
 
 export interface Config {
@@ -14,7 +14,7 @@ export interface Config {
 export function configFromEnv(env = process.env): Config {
   const pick = (k: string) => env[`MATELOT_${k}`] ?? env[`SECOPS_${k}`];
   // the cell: MATELOT_URL (set from --url by index.ts), else the current cell of `matelot login` / `matelot use`
-  const url = (pick('URL') || resolveCellUrl(undefined, env) || '').replace(/\/$/, '');
+  const url = normalizeCellUrl(pick('URL') || resolveCellUrl(undefined, env) || '');
   // A personal access token (SECOPS_TOKEN=spt_…) replaces the CI token pair.
   const token = pick('TOKEN') ?? '';
   if (token) {
@@ -97,4 +97,4 @@ async function requestOnce<T = unknown>(config: Config, method: string, path: st
   }
 }
 
-export const VERSION = '2.22.0';
+export const VERSION = '2.22.1';

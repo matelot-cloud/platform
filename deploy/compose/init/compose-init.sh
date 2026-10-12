@@ -224,6 +224,7 @@ kv "$E" BOOTSTRAP_ORG_NAME "$ORG_NAME"
 kv "$E" BOOTSTRAP_ADMIN_EMAILS "$ADMIN_EMAIL"
 kv "$E" CORS_ORIGINS "$BASE_URL"
 kv "$E" WEB_BASE_URL "$BASE_URL"
+kv "$E" API_PUBLIC_URL "$BASE_URL"        # what the OAuth metadata, registry realm and runner commands advertise (Caddy routes /api here)
 kv "$E" GITHUB_APP_ID ""
 kv "$E" GITHUB_APP_SLUG ""
 kv "$E" GITHUB_API_URL https://api.github.com

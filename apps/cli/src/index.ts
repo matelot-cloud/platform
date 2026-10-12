@@ -5,7 +5,7 @@ import { CliError, configFromEnv, request, VERSION } from './client';
 import type { Config } from './client';
 import { signatureHeader } from './signing';
 import { readZip } from './zip-read';
-import { credentialsPath, freshToken, login, logout } from './login';
+import { credentialsPath, discoveryMismatch, freshToken, login, logout } from './login';
 import { FIELD_FLAGS, PARAM_FLAGS, policyRulesFromFlags, RESOURCES, RULE_FLAGS, slaDaysFromFlags } from './resources';
 
 const sum = (c?: Record<string, number> | null) => (c ? Object.values(c).reduce((a, b) => a + b, 0) : 0);
@@ -643,7 +643,16 @@ async function doctor(urlFlag: string | undefined, json: boolean): Promise<void>
   let version = '?';
   try { const r = await get('/api/v1/version'); const b = r.body as { version?: string } | undefined; version = b?.version ?? '?'; add('version', r.status === 200 && !!b?.version, r.status === 200 ? `API ${version} · CLI ${VERSION}` : `${url}/api/v1/version → HTTP ${r.status} (API older than 0.1.0?)`); }
   catch (e) { add('version', false, (e as Error).message); }
-  // 3. credentials (optional: without any, the remaining checks are skipped, not failed)
+  // 3. OAuth discovery: what `matelot login` and MCP clients read first — must be JSON (not the web app) and must point
+  //    back at this origin (not the API's listen address)
+  try {
+    const r = await get('/.well-known/oauth-authorization-server');
+    const meta = r.body as { authorization_endpoint?: string; token_endpoint?: string } | string;
+    if (typeof meta === 'string') add('discovery', false, `/.well-known/oauth-authorization-server returned ${/^\s*</.test(meta) ? 'HTML (the web app)' : 'non-JSON'} (HTTP ${r.status}) — route /.well-known/* to the API in the proxy / ingress`);
+    else if (r.status !== 200 || !meta.authorization_endpoint) add('discovery', false, `/.well-known/oauth-authorization-server → HTTP ${r.status} without OAuth metadata`);
+    else { const m = discoveryMismatch(url, meta); add('discovery', !m, m ?? `endpoints on ${new URL(meta.authorization_endpoint).origin} (matelot login will work)`); }
+  } catch (e) { add('discovery', false, (e as Error).message); }
+  // 4. credentials (optional: without any, the remaining checks are skipped, not failed)
   let config: Config | null = null;
   try { config = configFromEnv(); if (config.fromLogin) { const t = await freshToken(config.url); if (!t) throw new Error('stored login expired'); config.token = t; } }
   catch (e) { add('login', null, `skipped: ${(e as Error).message.split('\n')[0]} — run matelot login --url ${url} to check the rest`); return finish(); }
@@ -651,7 +660,7 @@ async function doctor(urlFlag: string | undefined, json: boolean): Promise<void>
   let me: { kind: string; email?: string; name?: string } | null = null;
   try { me = await request(config, 'GET', '/api/v1/api-tokens/whoami'); add('login', true, me!.kind === 'token' ? `CI token "${me!.name}"` : `user ${me!.email}`); }
   catch (e) { add('login', false, (e as Error).message); return finish(); }
-  // 4. organization + runners + registry
+  // 5. organization + runners + registry
   let orgs: { id: string; slug: string; name: string }[] = [];
   try { orgs = await request(config, 'GET', '/api/v1/organizations'); add('organization', orgs.length > 0, orgs.length ? orgs.map((o) => o.slug).join(', ') : 'no organization visible to these credentials'); }
   catch (e) { add('organization', false, (e as Error).message); }

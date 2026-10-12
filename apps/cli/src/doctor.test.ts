@@ -9,10 +9,15 @@ const run = promisify(execFile);
 const ORG = '0c3cbf3d-31cf-41bd-884a-7e085e66f4d8';
 const cli = join(__dirname, 'index.js');
 
-function serve(runnersOnline: boolean) {
+function serve(runnersOnline: boolean, discovery: 'ok' | 'html' | 'wrong-origin' = 'ok') {
   const server = createServer((req, res) => {
     const u = req.url!;
     const json = (code: number, body: unknown) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
+    if (u === '/.well-known/oauth-authorization-server') {
+      if (discovery === 'html') { res.writeHead(200, { 'content-type': 'text/html' }); return res.end('<!DOCTYPE html><html></html>'); }
+      const base = discovery === 'wrong-origin' ? 'http://localhost:3000' : `http://${req.headers.host}`;
+      return json(200, { issuer: base, authorization_endpoint: `${base}/api/v1/oauth/authorize`, token_endpoint: `${base}/api/v1/oauth/token` });
+    }
     if (u === '/api/v1/health/ready') return json(200, { status: 'ok' });
     if (u === '/api/v1/version') return json(200, { name: 'matelot', version: '0.1.0' });
     if (u === '/api/v1/meta') return json(401, { message: 'Unauthorized' });
@@ -33,13 +38,14 @@ test('matelot doctor: all checks pass, runner offline fails, no credentials skip
     const { stdout } = await run('node', [cli, 'doctor'], { env });
     assert.match(stdout, /OK {2}api +http:\/\/127\.0\.0\.1:\d+ ready/);
     assert.match(stdout, /OK {2}version +API 0\.1\.0 · CLI /);
+    assert.match(stdout, /OK {2}discovery +endpoints on http:\/\/127\.0\.0\.1:\d+ \(matelot login will work\)/);
     assert.match(stdout, /OK {2}login +user admin@localhost/);
     assert.match(stdout, /OK {2}organization +main/);
     assert.match(stdout, /OK {2}runners +1 online \(compose-runner-1\)/);
     assert.match(stdout, /OK {2}registry +localhost:5000 \(matelot registry login\)/);
     assert.match(stdout, /all checks passed/);
     const j = JSON.parse((await run('node', [cli, 'doctor', '--json'], { env })).stdout);
-    assert.equal(j.ok, true); assert.equal(j.checks.length, 6);
+    assert.equal(j.ok, true); assert.equal(j.checks.length, 7);
 
     // without credentials: the three unauthenticated checks run, the rest is skipped (exit 0)
     const noCreds = { ...process.env, MATELOT_URL: `http://127.0.0.1:${s.port}`, MATELOT_TOKEN: '', MATELOT_KEY_ID: '', MATELOT_SECRET: '', SECOPS_TOKEN: '', MATELOT_CREDENTIALS: '/nonexistent' };
@@ -48,6 +54,13 @@ test('matelot doctor: all checks pass, runner offline fails, no credentials skip
     assert.doesNotMatch(r.stdout, /registry/);
   } finally { s.close(); }
 
+  for (const [mode, re] of [['html', /FAIL {2}discovery +\/\.well-known\/oauth-authorization-server returned HTML \(the web app\)/], ['wrong-origin', /FAIL {2}discovery +the cell advertises http:\/\/localhost:3000 but you connected to http:\/\/127\.0\.0\.1:\d+ — check API_PUBLIC_URL/]] as const) {
+    const d = await serve(true, mode);
+    try {
+      const env = { ...process.env, MATELOT_URL: `http://127.0.0.1:${d.port}`, MATELOT_TOKEN: 'spt_test', MATELOT_CREDENTIALS: '/nonexistent' };
+      await assert.rejects(run('node', [cli, 'doctor'], { env }), (e: { code: number; stdout: string }) => { assert.equal(e.code, 1); assert.match(e.stdout, re); return true; });
+    } finally { d.close(); }
+  }
   const off = await serve(false);
   try {
     const env = { ...process.env, MATELOT_URL: `http://127.0.0.1:${off.port}`, MATELOT_TOKEN: 'spt_test', MATELOT_CREDENTIALS: '/nonexistent' };

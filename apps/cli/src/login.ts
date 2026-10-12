@@ -81,7 +81,18 @@ export async function discover(base: string, f: typeof fetch): Promise<{ authori
     throw new Error(`${u} returned ${html ? 'HTML' : 'something that is not JSON'} (HTTP ${res.status}) — is /.well-known routed to the API by the reverse proxy / ingress of this cell?`);
   }
   if (!res.ok || !meta.authorization_endpoint || !meta.token_endpoint) throw new Error(`${u} answered HTTP ${res.status} without OAuth metadata: ${text.slice(0, 200)}`);
+  const mismatch = discoveryMismatch(base, meta as { authorization_endpoint: string; token_endpoint: string });
+  if (mismatch) console.error(`warning: ${mismatch}`);
   return meta as { authorization_endpoint: string; token_endpoint: string };
+}
+
+/** The advertised endpoints must live on the origin the user connected to; otherwise the login link points at an address
+ *  that is not exposed (the API's listen port behind a proxy). Returns the warning text, or null when consistent. */
+export function discoveryMismatch(base: string, meta: { authorization_endpoint?: string; token_endpoint?: string }): string | null {
+  let origin: string; try { origin = new URL(base).origin; } catch { return null; }
+  const off = ['authorization_endpoint', 'token_endpoint'].map((k) => meta[k as 'authorization_endpoint']).filter((v): v is string => !!v).filter((v) => { try { return new URL(v).origin !== origin; } catch { return true; } });
+  if (!off.length) return null;
+  return `the cell advertises ${new URL(off[0]!).origin} but you connected to ${origin} — check API_PUBLIC_URL on the cell (it must be the public URL, not the API's listen address); the sign-in link below may not open`;
 }
 
 export async function login(url: string, scope: 'read' | 'write' | 'sudo', opts: { open?: (authorizeUrl: string) => void; noBrowser?: boolean; timeoutMs?: number; fetchImpl?: typeof fetch; sleep?: (ms: number) => Promise<void> } = {}): Promise<StoredCredentials> {

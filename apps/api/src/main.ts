@@ -10,6 +10,7 @@ import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
 import { DatabaseExceptionFilter } from './common/database-exception.filter';
 import { listenWithRetry } from './common/listen';
+import { publicApiBase } from './config/public-url';
 import { RateLimitInterceptor } from './common/rate-limit/rate-limit.interceptor';
 import { requestContextMiddleware } from './common/request-context';
 import { AppConfig, parseList } from './config/env';
@@ -33,7 +34,8 @@ async function bootstrap(): Promise<void> {
   // OAuth clients post form-encoded token requests; MCP clients discover the authorization server from the 401 on /mcp.
   app.use(require('express').urlencoded({ extended: false })); // express ships with @nestjs/platform-express
   app.use('/api/v1/mcp', (req: { protocol: string; get: (h: string) => string | undefined }, res: { setHeader: (k: string, v: string) => void }, next: () => void) => {
-    const issuer = (config.get('API_PUBLIC_URL', { infer: true }) ?? `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
+    // the resource metadata URL: the configured public base, else what the request was addressed to
+    const issuer = config.get('API_PUBLIC_URL', { infer: true }) || config.get('WEB_BASE_URL', { infer: true }) ? publicApiBase(config) : `${req.protocol}://${req.get('host')}`.replace(/\/$/, '');
     res.setHeader('WWW-Authenticate', `Bearer resource_metadata="${issuer}/.well-known/oauth-protected-resource/api/v1/mcp"`);
     next();
   });

@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { freshToken, login, logout, readCredentials } from './login';
+import { discoveryMismatch, freshToken, login, logout, readCredentials } from './login';
 
 /** Stub authorization server: discovery, authorize (we "approve" by redirecting the loopback ourselves), token with PKCE check. */
 function authServer() {
@@ -86,4 +86,10 @@ test('login: a proxy that serves the SPA for /.well-known gives a readable error
   try {
     await assert.rejects(login(`http://127.0.0.1:${port}`, 'read', { noBrowser: true, timeoutMs: 1000 }), (e: Error) => { assert.match(e.message, /\.well-known\/oauth-authorization-server returned HTML \(HTTP 200\) — is \/\.well-known routed to the API/); return true; });
   } finally { server.close(); }
+});
+
+test('login: discovery that advertises another origin than the one connected to is warned about', async () => {
+  assert.equal(discoveryMismatch('http://localhost', { authorization_endpoint: 'http://localhost/api/v1/oauth/authorize', token_endpoint: 'http://localhost/api/v1/oauth/token' }), null);
+  assert.match(discoveryMismatch('http://localhost', { authorization_endpoint: 'http://localhost:3000/api/v1/oauth/authorize', token_endpoint: 'http://localhost:3000/api/v1/oauth/token' })!, /advertises http:\/\/localhost:3000 but you connected to http:\/\/localhost — check API_PUBLIC_URL/);
+  assert.match(discoveryMismatch('https://acme.example.com', { authorization_endpoint: 'http://acme.example.com/api/v1/oauth/authorize' })!, /advertises http:\/\/acme\.example\.com but you connected to https:\/\/acme\.example\.com/);
 });

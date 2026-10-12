@@ -22,6 +22,7 @@ check_env "$M/env/api.env" BOOTSTRAP_ORG_NAME "$NAME"
 check_env "$M/env/api.env" BOOTSTRAP_ADMIN_EMAILS "$EMAIL"
 check_env "$M/env/api.env" MATELOT_LICENSE 'lic$#'
 check_env "$M/env/api.env" APP_VERSION 1.2.3
+check_env "$M/env/api.env" API_PUBLIC_URL "http://localhost"
 check_env "$M/env/cell.env" ADMIN_EMAIL "$EMAIL"
 check_env "$M/keycloak/keycloak.env" KC_DB_PASSWORD "$(cat "$M/secrets/postgres/POSTGRES_PASSWORD")"
 check_env "$M/keycloak/keycloak.env" KC_HOSTNAME "http://localhost/auth"
@@ -46,6 +47,7 @@ MATELOT_ORG_NAME="$NAME" MATELOT_DOMAIN=matelot.example.com MATELOT_ACME_EMAIL="
 ! grep -q "generated" "$T/out2" || { echo "FAIL: secrets regenerated on the second run" >&2; cat "$T/out2"; exit 1; }
 cmp -s "$T/key1" "$M/secrets/cell-key/CELL_ENCRYPTION_KEY" && cmp -s "$T/pg1" "$M/secrets/postgres/POSTGRES_PASSWORD"
 check_env "$M/env/api.env" KEYCLOAK_ISSUER "https://matelot.example.com/auth/realms/platform"
+check_env "$M/env/api.env" API_PUBLIC_URL "https://matelot.example.com"
 check_env "$M/keycloak/keycloak.env" KC_HOSTNAME "https://matelot.example.com/auth"
 grep -q "handle /.well-known/\* {" "$M/caddy/Caddyfile" && grep -q "^matelot.example.com {" "$M/caddy/Caddyfile" && grep -q "^registry.matelot.example.com {" "$M/caddy/Caddyfile" && grep -q "email $EMAIL" "$M/caddy/Caddyfile"
 [ "$(cat "$M/secrets/registry/REGISTRY_HOST")" = "registry.matelot.example.com" ]

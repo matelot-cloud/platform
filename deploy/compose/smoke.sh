@@ -47,6 +47,12 @@ log "matelot doctor (before login: the public checks)"
 export MATELOT_URL="$BASE"
 export MATELOT_CREDENTIALS="$PWD/.smoke-credentials.json"; rm -f "$MATELOT_CREDENTIALS"
 $CLI doctor || true
+log "OAuth discovery through the proxy"
+curl -fsS "$BASE/.well-known/oauth-authorization-server" | python3 -c '
+import sys, json; m = json.load(sys.stdin); print(json.dumps(m, indent=1))
+base = sys.argv[1].rstrip("/")
+bad = [k for k in ("authorization_endpoint", "token_endpoint") if not m.get(k, "").startswith(base + "/")]
+assert not bad, f"endpoints not on {base}: {bad} — API_PUBLIC_URL is wrong on the cell"' "$BASE"
 log "matelot login through the proxy (OAuth code flow, consent approved with the administrator's session)"
 # `matelot login --no-browser` prints the authorize link and waits for the browser callback on 127.0.0.1; this script
 # plays the browser: follow the link (API → consent page redirect), approve with the signed-in administrator, call back.
@@ -55,8 +61,9 @@ $CLI login --url "$BASE" --no-browser --scope write 2> ./.smoke-login.err &
 LOGIN_PID=$!
 AUTH_URL=""; for i in $(seq 1 30); do AUTH_URL="$(grep -o 'http[^ ]*/api/v1/oauth/authorize?[^ ]*' ./.smoke-login.err | head -1 || true)"; [ -n "$AUTH_URL" ] && break; sleep 1; done
 [ -n "$AUTH_URL" ] || { echo "matelot login printed no authorize link:" >&2; cat ./.smoke-login.err >&2; kill $LOGIN_PID 2>/dev/null; exit 1; }
-CONSENT="$(curl -sS -o /dev/null -w '%{redirect_url}' "$AUTH_URL")"
-case "$CONSENT" in *"/oauth/consent?"*) ;; *) echo "authorize did not redirect to the consent page: [$CONSENT]" >&2; kill $LOGIN_PID 2>/dev/null; exit 1;; esac
+echo "authorize link: $AUTH_URL"
+CONSENT="$(curl -sS -o /dev/null -w '%{redirect_url}' "$AUTH_URL")" || { echo "could not follow the authorize link $AUTH_URL (curl exit $?)" >&2; echo "discovery document:" >&2; curl -sS "$BASE/.well-known/oauth-authorization-server" >&2 || true; kill $LOGIN_PID 2>/dev/null; exit 1; }
+case "$CONSENT" in *"/oauth/consent?"*) echo "consent page: ${CONSENT%%\?*}" ;; *) echo "authorize did not redirect to the consent page: [$CONSENT]" >&2; curl -sS -D - -o /dev/null "$AUTH_URL" >&2 || true; kill $LOGIN_PID 2>/dev/null; exit 1;; esac
 APPROVE_BODY="$(python3 -c 'import sys,json,urllib.parse; q=urllib.parse.parse_qs(urllib.parse.urlsplit(sys.argv[1]).query); print(json.dumps({k: q[k][0] for k in ("client_id","redirect_uri","scope","state","code_challenge") if k in q}))' "$CONSENT")"
 REDIRECT="$(curl -fsS -X POST "$BASE/api/v1/oauth/approve" -H "Authorization: Bearer $KC_TOKEN" -H 'content-type: application/json' -d "$APPROVE_BODY" | python3 -c 'import sys,json; print(json.load(sys.stdin)["redirect"])')"
 curl -fsS -o /dev/null "$REDIRECT"            # the CLI's local callback: it exchanges the code and stores the login

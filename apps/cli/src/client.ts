@@ -95,4 +95,4 @@ async function requestOnce<T = unknown>(config: Config, method: string, path: st
   }
 }
 
-export const VERSION = '2.20.2';
+export const VERSION = '2.21.0';

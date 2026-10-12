@@ -4,6 +4,7 @@ import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, KeyObject, randomUUID, sign } from 'node:crypto';
 import { CryptoService } from '../common/crypto.service';
 import type { Env } from '../config/env';
+import { publicApiBase } from '../config/public-url';
 import { DATABASE, Database } from '../database/database.module';
 import { signingKeys } from '../database/schema';
 import { setIdentityTokenIssuer } from '../integrations/registry-auth';
@@ -22,11 +23,11 @@ export class IdentityService implements OnModuleInit {
   private key: { kid: string; privateKey: KeyObject } | null = null;
 
   constructor(@Inject(DATABASE) private readonly db: Database, private readonly config: ConfigService<Env, true>, private readonly crypto: CryptoService) {
-    this.issuer = (config.get('API_PUBLIC_URL', { infer: true }) ?? `http://localhost:${config.get('PORT', { infer: true })}`).replace(/\/$/, '');
+    this.issuer = publicApiBase(config);
   }
 
   async onModuleInit() {
-    if (!this.config.get('API_PUBLIC_URL', { infer: true })) {
+    if (!this.config.get('API_PUBLIC_URL', { infer: true }) && !this.config.get('WEB_BASE_URL', { infer: true })) {
       this.logger.warn(`API_PUBLIC_URL is not set: keyless registry connections use issuer ${this.issuer}, which cloud providers cannot reach (and which differs between the API and the worker)`);
     }
     await this.ensureKey().catch((e: Error) => this.logger.error(`identity key unavailable: ${e.message}`));

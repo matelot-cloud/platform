@@ -9,6 +9,7 @@ import { PersonalTokensService } from '../auth/personal-tokens/personal-tokens.s
 import { DATABASE, Database } from '../database/database.module';
 import { oauthClients, oauthCodes, oauthRefreshTokens, personalAccessTokens } from '../database/schema';
 import type { Env } from '../config/env';
+import { publicApiBase } from '../config/public-url';
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 const b64url = (b: Buffer) => b.toString('base64url');
@@ -30,7 +31,7 @@ export class OauthService implements OnModuleInit {
   readonly issuer: string;
   readonly webBaseUrl: string;
   constructor(@Inject(DATABASE) private readonly db: Database, config: ConfigService<Env, true>, private readonly tokens: PersonalTokensService, private readonly audit: AuditService) {
-    this.issuer = (config.get('API_PUBLIC_URL', { infer: true }) ?? `http://localhost:${config.get('PORT', { infer: true })}`).replace(/\/$/, '');
+    this.issuer = publicApiBase(config);
     this.webBaseUrl = config.get('WEB_BASE_URL', { infer: true }).replace(/\/$/, '');
   }
 

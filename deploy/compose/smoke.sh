@@ -11,6 +11,10 @@ CLI="${MATELOT_CLI:-matelot}"
 # cell-backup.sh / cell-restore.sh: ../../scripts in the platform checkout, ./scripts in the published docker/ folder
 SCRIPTS="${CELL_SCRIPTS:-}"; [ -n "$SCRIPTS" ] || { if [ -f ../../scripts/cell-backup.sh ]; then SCRIPTS="$(cd ../../scripts && pwd)"; else SCRIPTS="$(pwd)/scripts"; fi; }
 [ -f .env ] || cp .env.example .env
+# values with spaces and shell/JSON metacharacters: a cell whose organization name or password breaks a generated
+# file must fail here, not at a customer (quoting rules of compose .env: single quotes keep $ and # literal)
+grep -q '^MATELOT_ORG_NAME=' .env && sed -i "s/^MATELOT_ORG_NAME=.*/MATELOT_ORG_NAME='Acme Corp (EU) #1'/" .env
+grep -q '^MATELOT_ADMIN_PASSWORD=' .env && sed -i "s/^MATELOT_ADMIN_PASSWORD=.*/MATELOT_ADMIN_PASSWORD='Sm0ke#pass\$1 ok'/" .env
 BASE="http://localhost:${MATELOT_HTTP_PORT:-80}"
 log() { printf '\n== %s\n' "$*"; }
 cleanup() { if [ "$KEEP" = 0 ]; then log "down -v"; docker compose down -v --remove-orphans > /dev/null 2>&1 || true; fi; }
@@ -25,7 +29,7 @@ wait_ready() { # through the proxy, as a browser would
 }
 token() { # password grant on the web client (enabled for evaluation installs): the CLI accepts the Keycloak token as MATELOT_TOKEN
   local pw; pw="$(docker compose run --rm --no-deps init show | sed -n 's/^Admin password: *//p')"
-  curl -fsS -X POST "$BASE/auth/realms/platform/protocol/openid-connect/token" -d client_id=platform-web -d grant_type=password -d "username=admin" -d "password=$pw" \
+  curl -fsS -X POST "$BASE/auth/realms/platform/protocol/openid-connect/token" -d client_id=platform-web -d grant_type=password -d "username=admin" --data-urlencode "password=$pw" \
     | python3 -c 'import sys,json; print(json.load(sys.stdin)["access_token"])'
 }
 

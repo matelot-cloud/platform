@@ -632,12 +632,13 @@ async function doctor(urlFlag: string | undefined, json: boolean): Promise<void>
     let body: unknown = text; try { body = JSON.parse(text); } catch { /* not json */ }
     return { status: r.status, body };
   };
-  // 1. reachable + ready
+  // 1. reachable + ready — when it is not, and this is a Docker Compose cell (compose.yaml here, or MATELOT_COMPOSE_DIR),
+  //    say which container is the problem instead of leaving the user with a timeout
   try {
     const r = await get('/api/v1/health/ready');
     add('api', r.status === 200, r.status === 200 ? `${url} ready` : `${url}/api/v1/health/ready → HTTP ${r.status}`);
-    if (r.status !== 200) return finish();
-  } catch (e) { add('api', false, `${url} unreachable: ${(e as Error).message}`); return finish(); }
+    if (r.status !== 200) { composeDiagnosis(); return finish(); }
+  } catch (e) { add('api', false, `${url} unreachable: ${(e as Error).message}`); composeDiagnosis(); return finish(); }
   // 2. version
   let version = '?';
   try { const r = await get('/api/v1/meta'); const b = r.body as { version?: string } | undefined; version = b?.version ?? '?'; add('version', r.status === 200, `API ${version} · CLI ${VERSION}`); }
@@ -667,6 +668,20 @@ async function doctor(urlFlag: string | undefined, json: boolean): Promise<void>
     add('registry', info.available, info.available ? `${info.host} (matelot registry login)` : 'built-in registry not configured');
   } catch (e) { add('registry', false, (e as Error).message); }
   return finish();
+  function composeDiagnosis(): void {
+    const dir = process.env.MATELOT_COMPOSE_DIR ?? process.cwd();
+    let exists = false; try { readFileSync(`${dir}/compose.yaml`); exists = true; } catch { /* not a compose folder */ }
+    if (!exists) return;
+    const ps = spawnSync('docker', ['compose', 'ps', '-a', '--format', 'json'], { cwd: dir, encoding: 'utf8' });
+    if (ps.status !== 0) { add('compose', null, `docker compose ps failed in ${dir}: ${(ps.stderr || '').trim().split('\n')[0]}`); return; }
+    const text = ps.stdout.trim();
+    let rows: { Service?: string; State?: string; Health?: string; ExitCode?: number }[] = [];
+    try { rows = text.startsWith('[') ? JSON.parse(text) : text.split('\n').filter(Boolean).map((l) => JSON.parse(l)); } catch { add('compose', null, 'could not parse docker compose ps output'); return; }
+    const fine = (c: typeof rows[number]) => (c.State === 'running' && (!c.Health || c.Health === 'healthy')) || (c.State === 'exited' && (c.ExitCode ?? 0) === 0); // one-shots (init, welcome) exit 0
+    const bad = rows.filter((c) => !fine(c));
+    if (!bad.length) { add('compose', null, 'every container is running and healthy: the cell may still be starting (docker compose logs -f welcome)'); return; }
+    for (const c of bad) add(`compose/${c.Service}`, false, `${c.State}${c.Health ? ` (${c.Health})` : ''}${c.ExitCode ? ` (exit ${c.ExitCode})` : ''} — see docker compose logs ${c.Service}`);
+  }
   function finish(): void {
     const failed = checks.filter((c) => c.ok === false);
     if (json) console.log(JSON.stringify({ url, version, checks, ok: failed.length === 0 }, null, 2));

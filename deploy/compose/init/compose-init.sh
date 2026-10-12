@@ -10,7 +10,8 @@
 # Modes: (default) init · show (print the admin login) · restore-secrets DIR (copy a backup's secrets/ in, then init)
 #        realm-update (stack running: point the imported Keycloak realm at the current MATELOT_DOMAIN)
 set -euo pipefail
-M=/matelot
+M="${MATELOT_CONFIG_DIR:-/matelot}"      # the config volume (overridable for the unit test)
+V="${MATELOT_VOLUMES_DIR:-/volumes}"     # the data volumes, for ownership
 MODE="${1:-init}"
 DOMAIN="${MATELOT_DOMAIN:-localhost}"
 ADMIN_EMAIL="${MATELOT_ADMIN_EMAIL:-admin@localhost}"
@@ -26,6 +27,12 @@ BASE_URL="$SCHEME://$DOMAIN"
 if [ "$LOCAL" = 1 ]; then REGISTRY_HOST="$DOMAIN:$REGISTRY_PORT"; REGISTRY_SITE=":5000"; else REGISTRY_HOST="registry.$DOMAIN"; REGISTRY_SITE="registry.$DOMAIN"; fi
 
 rand() { openssl rand -hex "$1"; }   # 2*$1 hex characters
+# Generated KEY=value files are sourced by `sh` (api, worker, keycloak, welcome): every value is single-quoted with
+# embedded quotes escaped, so an organization name with spaces, a password with $ or #, or an e-mail with + are data,
+# never commands. json_str escapes a value for the realm / config.json literals.
+sq() { printf "'%s'" "$(printf %s "$1" | sed "s/'/'\\\\''/g")"; }
+kv() { printf '%s=%s\n' "$2" "$(sq "$3")" >> "$1"; }   # kv FILE KEY VALUE
+json_str() { printf %s "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 secret() { # secret <dir> <KEY> <generator…>: write once
   local name="$1" key="$2" dir="$M/secrets/$1"; shift 2
   mkdir -p "$dir"
@@ -117,26 +124,25 @@ CADDY
 } > "$M/caddy/Caddyfile"
 
 SSL_REQUIRED=none; [ "$SCHEME" = https ] && SSL_REQUIRED=external
-cat > "$M/keycloak/keycloak.env" <<KC
-KC_DB=postgres
-KC_DB_URL=jdbc:postgresql://postgres:5432/keycloak
-KC_DB_USERNAME=$PG_USER
-KC_DB_PASSWORD=$PG_PASSWORD
-KC_BOOTSTRAP_ADMIN_USERNAME=$(cat "$M/secrets/keycloak/KC_BOOTSTRAP_ADMIN_USERNAME")
-KC_BOOTSTRAP_ADMIN_PASSWORD=$(cat "$M/secrets/keycloak/KC_BOOTSTRAP_ADMIN_PASSWORD")
-KC_HOSTNAME=$BASE_URL/auth
-KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true
-KC_HTTP_ENABLED=true
-KC_HTTP_RELATIVE_PATH=/auth
-KC_HTTP_MANAGEMENT_RELATIVE_PATH=/
-KC_PROXY_HEADERS=xforwarded
-KC_HEALTH_ENABLED=true
-KC
+: > "$M/keycloak/keycloak.env"
+kv "$M/keycloak/keycloak.env" KC_DB postgres
+kv "$M/keycloak/keycloak.env" KC_DB_URL jdbc:postgresql://postgres:5432/keycloak
+kv "$M/keycloak/keycloak.env" KC_DB_USERNAME "$PG_USER"
+kv "$M/keycloak/keycloak.env" KC_DB_PASSWORD "$PG_PASSWORD"
+kv "$M/keycloak/keycloak.env" KC_BOOTSTRAP_ADMIN_USERNAME "$(cat "$M/secrets/keycloak/KC_BOOTSTRAP_ADMIN_USERNAME")"
+kv "$M/keycloak/keycloak.env" KC_BOOTSTRAP_ADMIN_PASSWORD "$(cat "$M/secrets/keycloak/KC_BOOTSTRAP_ADMIN_PASSWORD")"
+kv "$M/keycloak/keycloak.env" KC_HOSTNAME "$BASE_URL/auth"
+kv "$M/keycloak/keycloak.env" KC_HOSTNAME_BACKCHANNEL_DYNAMIC true
+kv "$M/keycloak/keycloak.env" KC_HTTP_ENABLED true
+kv "$M/keycloak/keycloak.env" KC_HTTP_RELATIVE_PATH /auth
+kv "$M/keycloak/keycloak.env" KC_HTTP_MANAGEMENT_RELATIVE_PATH /
+kv "$M/keycloak/keycloak.env" KC_PROXY_HEADERS xforwarded
+kv "$M/keycloak/keycloak.env" KC_HEALTH_ENABLED true
 SEED_PASSWORD="$(cat "$M/secrets/keycloak/SEED_ADMIN_PASSWORD")"
 cat > "$M/keycloak/import/realm.json" <<REALM
 {
   "realm": "platform",
-  "displayName": "$ORG_NAME · Matelot",
+  "displayName": "$(json_str "$ORG_NAME") · Matelot",
   "enabled": true,
   "sslRequired": "$SSL_REQUIRED",
   "registrationAllowed": false,
@@ -158,8 +164,8 @@ cat > "$M/keycloak/import/realm.json" <<REALM
     }
   ],
   "users": [
-    { "username": "admin", "email": "$ADMIN_EMAIL", "emailVerified": true, "enabled": true, "firstName": "Cell", "lastName": "Admin",
-      "credentials": [{ "type": "password", "value": "$SEED_PASSWORD", "temporary": false }] }
+    { "username": "admin", "email": "$(json_str "$ADMIN_EMAIL")", "emailVerified": true, "enabled": true, "firstName": "Cell", "lastName": "Admin",
+      "credentials": [{ "type": "password", "value": "$(json_str "$SEED_PASSWORD")", "temporary": false }] }
   ]
 }
 REALM
@@ -192,7 +198,7 @@ REG
 
 cat > "$M/web/config.json" <<WEB
 {
-  "productName": "$ORG_NAME · Matelot",
+  "productName": "$(json_str "$ORG_NAME") · Matelot",
   "keycloakUrl": "$BASE_URL/auth",
   "realm": "platform",
   "clientId": "platform-web",
@@ -202,29 +208,30 @@ cat > "$M/web/config.json" <<WEB
 WEB
 
 # non-secret environment of the api / worker, as KEY=value lines sourced by their entrypoint wrapper
-cat > "$M/env/api.env" <<ENV
-NODE_ENV=production
-PORT=3000
-LOG_LEVEL=${MATELOT_LOG_LEVEL:-info}
-APP_VERSION=${MATELOT_VERSION:-unknown}
-KEYCLOAK_ISSUER=$BASE_URL/auth/realms/platform
-KEYCLOAK_JWKS_URI=http://keycloak:8080/auth/realms/platform/protocol/openid-connect/certs
-KEYCLOAK_AUDIENCE=platform-api
-BOOTSTRAP_ORG_SLUG=$ORG_SLUG
-BOOTSTRAP_ORG_NAME=$ORG_NAME
-BOOTSTRAP_ADMIN_EMAILS=$ADMIN_EMAIL
-CORS_ORIGINS=$BASE_URL
-WEB_BASE_URL=$BASE_URL
-GITHUB_APP_ID=
-GITHUB_APP_SLUG=
-GITHUB_API_URL=https://api.github.com
-GITHUB_URL=https://github.com
-MATELOT_LICENSE=${MATELOT_LICENSE:-}
-ENV
-printf 'BASE_URL=%s\nADMIN_EMAIL=%s\nREGISTRY_HOST=%s\nSCHEME=%s\n' "$BASE_URL" "$ADMIN_EMAIL" "$REGISTRY_HOST" "$SCHEME" > "$M/env/cell.env"
+E="$M/env/api.env"; : > "$E"
+kv "$E" NODE_ENV production
+kv "$E" PORT 3000
+kv "$E" LOG_LEVEL "${MATELOT_LOG_LEVEL:-info}"
+kv "$E" APP_VERSION "${MATELOT_VERSION:-unknown}"
+kv "$E" KEYCLOAK_ISSUER "$BASE_URL/auth/realms/platform"
+kv "$E" KEYCLOAK_JWKS_URI http://keycloak:8080/auth/realms/platform/protocol/openid-connect/certs
+kv "$E" KEYCLOAK_AUDIENCE platform-api
+kv "$E" BOOTSTRAP_ORG_SLUG "$ORG_SLUG"
+kv "$E" BOOTSTRAP_ORG_NAME "$ORG_NAME"
+kv "$E" BOOTSTRAP_ADMIN_EMAILS "$ADMIN_EMAIL"
+kv "$E" CORS_ORIGINS "$BASE_URL"
+kv "$E" WEB_BASE_URL "$BASE_URL"
+kv "$E" GITHUB_APP_ID ""
+kv "$E" GITHUB_APP_SLUG ""
+kv "$E" GITHUB_API_URL https://api.github.com
+kv "$E" GITHUB_URL https://github.com
+kv "$E" MATELOT_LICENSE "${MATELOT_LICENSE:-}"
+C="$M/env/cell.env"; : > "$C"
+kv "$C" BASE_URL "$BASE_URL"; kv "$C" ADMIN_EMAIL "$ADMIN_EMAIL"; kv "$C" REGISTRY_HOST "$REGISTRY_HOST"; kv "$C" SCHEME "$SCHEME"
 
 # ---- ownership: every service runs as a non-root user ------------------------------------------------------------
 chmod -R a+rX "$M"                       # readable by the uids of the services; the volume is private to the stack
-[ -d /volumes/postgres ] && chown -R 999:999 /volumes/postgres
-for v in registry backups caddy-data caddy-config runner-data runner-work; do [ -d "/volumes/$v" ] && chown -R 10001:10001 "/volumes/$v"; done
+own() { [ -d "$2" ] || return 0; chown -R "$1" "$2" 2> /dev/null || echo "warning: cannot chown $2 to $1 (not root?)"; }
+own 999:999 "$V/postgres"
+for v in registry backups caddy-data caddy-config runner-data runner-work; do own 10001:10001 "$V/$v"; done
 echo "matelot init: $BASE_URL (registry $REGISTRY_HOST, org $ORG_SLUG, admin $ADMIN_EMAIL)"

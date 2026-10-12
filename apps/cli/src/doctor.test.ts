@@ -55,4 +55,18 @@ test('matelot doctor: all checks pass, runner offline fails, no credentials skip
 
   // unreachable
   await assert.rejects(run('node', [cli, 'doctor', '--url', 'http://127.0.0.1:1'], { env: { ...process.env, MATELOT_CREDENTIALS: '/nonexistent' } }), (e: { code: number; stdout: string }) => { assert.equal(e.code, 1); assert.match(e.stdout, /FAIL {2}api +http:\/\/127\.0\.0\.1:1 unreachable/); return true; });
+
+  // unreachable in a Docker Compose folder: the failing container is named, with its exit code and the logs command
+  const { mkdtempSync, writeFileSync, chmodSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const dir = mkdtempSync(join(tmpdir(), 'doctor-compose-'));
+  writeFileSync(join(dir, 'compose.yaml'), 'services: {}\n');
+  writeFileSync(join(dir, 'docker'), '#!/bin/sh\ncat <<EOF\n{"Service":"api","State":"restarting","Health":"","ExitCode":127}\n{"Service":"postgres","State":"running","Health":"healthy","ExitCode":0}\n{"Service":"init","State":"exited","Health":"","ExitCode":0}\n{"Service":"worker","State":"created","Health":"","ExitCode":0}\nEOF\n');
+  chmodSync(join(dir, 'docker'), 0o755);
+  await assert.rejects(run('node', [cli, 'doctor', '--url', 'http://127.0.0.1:1'], { cwd: dir, env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, MATELOT_CREDENTIALS: '/nonexistent' } }), (e: { code: number; stdout: string }) => {
+    assert.match(e.stdout, /FAIL {2}compose\/api +restarting \(exit 127\) — see docker compose logs api/);
+    assert.match(e.stdout, /FAIL {2}compose\/worker +created — see docker compose logs worker/);
+    assert.doesNotMatch(e.stdout, /compose\/postgres|compose\/init/);
+    return true;
+  });
 });

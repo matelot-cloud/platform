@@ -57,6 +57,8 @@ jobs:
         run: bash scripts/check-layout.sh
       - name: No retired names survive (old organization, old CLI mirror, old domain)
         run: bash scripts/check-forbidden.sh
+      - name: Compose init script (generated files survive hostile values; secrets generated once)
+        run: bash deploy/compose/init/compose-init.test.sh
 
   chart:
     runs-on: ubuntu-24.04

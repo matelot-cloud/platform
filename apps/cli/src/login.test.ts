@@ -78,3 +78,12 @@ test('a non-admin requesting sudo is told the grant was narrowed; --help needs n
     assert.equal(creds.scope, 'write');  // the stub grants write; index.ts prints "granted write, not sudo" (see RANK check)
   } finally { s.server.close(); }
 });
+
+test('login: a proxy that serves the SPA for /.well-known gives a readable error', async () => {
+  const { createServer } = await import('node:http');
+  const server = createServer((_req, res) => { res.writeHead(200, { 'content-type': 'text/html' }); res.end('<!DOCTYPE html><html><body>app</body></html>'); });
+  const port = await new Promise<number>((done) => server.listen(0, () => done((server.address() as { port: number }).port)));
+  try {
+    await assert.rejects(login(`http://127.0.0.1:${port}`, 'read', { noBrowser: true, timeoutMs: 1000 }), (e: Error) => { assert.match(e.message, /\.well-known\/oauth-authorization-server returned HTML \(HTTP 200\) — is \/\.well-known routed to the API/); return true; });
+  } finally { server.close(); }
+});

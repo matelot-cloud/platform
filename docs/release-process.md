@@ -67,8 +67,12 @@ released. Issues, discussions and releases live in `matelot-cloud/matelot` and a
   write access (it does when the package was first pushed by its workflow). Until this is done customers get
   `unauthorized` on pull.
 - **Pages:** `website` → Settings → Pages → Source: **GitHub Actions** — by hand, *before* the first push of the
-  website (until it is set, `pages.yml`'s deploy step fails and the site 404s). Custom domain later: set the repository variable
-  `SITE_DOMAIN=matelot.io` (Settings → Secrets and variables → Actions → Variables), enter the domain under Pages,
+  website (until it is set, `pages.yml`'s deploy step fails and the site 404s). GitHub resets this setting to the
+  branch build on its own (seen twice after the custom domain was saved; the site then shows the README): `pages.yml`
+  puts `build_type=workflow` back before every deploy, and `docs-sync.yml` / `release.yml` send the `docs-synced`
+  repository dispatch after pushing docs so the website workflow runs (and heals) even when nothing changed. Never edit
+  the custom domain in the Pages UI — `SITE_DOMAIN` is the one setting. Custom domain: set the repository variable
+  `SITE_DOMAIN=matelot.cloud` (Settings → Secrets and variables → Actions → Variables), enter the domain under Pages,
   point DNS at GitHub (A/AAAA for the apex or CNAME `matelot-cloud.github.io`). Nothing else changes: the build writes
   `CNAME`, the sitemap and the preview URLs from that variable; links inside the site are relative.
 - **Discussions** enabled on `matelot-cloud/matelot`; **private vulnerability reporting** enabled there

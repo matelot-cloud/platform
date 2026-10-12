@@ -641,7 +641,7 @@ async function doctor(urlFlag: string | undefined, json: boolean): Promise<void>
   } catch (e) { add('api', false, `${url} unreachable: ${(e as Error).message}`); composeDiagnosis(); return finish(); }
   // 2. version
   let version = '?';
-  try { const r = await get('/api/v1/meta'); const b = r.body as { version?: string } | undefined; version = b?.version ?? '?'; add('version', r.status === 200, `API ${version} · CLI ${VERSION}`); }
+  try { const r = await get('/api/v1/version'); const b = r.body as { version?: string } | undefined; version = b?.version ?? '?'; add('version', r.status === 200 && !!b?.version, r.status === 200 ? `API ${version} · CLI ${VERSION}` : `${url}/api/v1/version → HTTP ${r.status} (API older than 0.1.0?)`); }
   catch (e) { add('version', false, (e as Error).message); }
   // 3. credentials (optional: without any, the remaining checks are skipped, not failed)
   let config: Config | null = null;

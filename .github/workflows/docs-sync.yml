@@ -35,3 +35,7 @@ jobs:
           git config user.name "matelot-release[bot]"; git config user.email "release@matelot.io"
           git add -A docs/latest
           git diff --cached --quiet && echo "docs/latest unchanged" || { git commit -m "docs: latest from platform ${GITHUB_SHA::7}"; git push; }
+      - name: Trigger the website's Pages workflow (deploys, and heals the Pages source even when nothing changed)
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_REPOS_TOKEN }}
+        run: gh api -X POST "repos/$ORG/website/dispatches" -f event_type=docs-synced

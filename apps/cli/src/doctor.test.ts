@@ -14,7 +14,8 @@ function serve(runnersOnline: boolean) {
     const u = req.url!;
     const json = (code: number, body: unknown) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
     if (u === '/api/v1/health/ready') return json(200, { status: 'ok' });
-    if (u === '/api/v1/meta') return json(200, { version: '0.1.0' });
+    if (u === '/api/v1/version') return json(200, { name: 'matelot', version: '0.1.0' });
+    if (u === '/api/v1/meta') return json(401, { message: 'Unauthorized' });
     if (!req.headers.authorization) return json(401, { message: 'Unauthorized' });
     if (u === '/api/v1/api-tokens/whoami') return json(200, { kind: 'user', email: 'admin@localhost' });
     if (u === '/api/v1/organizations') return json(200, [{ id: ORG, slug: 'main', name: 'My organization' }]);

@@ -17,7 +17,7 @@ grep -q '^MATELOT_ORG_NAME=' .env && sed -i "s/^MATELOT_ORG_NAME=.*/MATELOT_ORG_
 grep -q '^MATELOT_ADMIN_PASSWORD=' .env && sed -i "s/^MATELOT_ADMIN_PASSWORD=.*/MATELOT_ADMIN_PASSWORD='Sm0ke#pass\$1 ok'/" .env
 BASE="http://localhost:${MATELOT_HTTP_PORT:-80}"
 log() { printf '\n== %s\n' "$*"; }
-cleanup() { if [ "$KEEP" = 0 ]; then log "down -v"; docker compose down -v --remove-orphans > /dev/null 2>&1 || true; fi; }
+cleanup() { rm -f ./.smoke-login.err ./.smoke-credentials.json; if [ "$KEEP" = 0 ]; then log "down -v"; docker compose down -v --remove-orphans > /dev/null 2>&1 || true; fi; }
 trap cleanup EXIT
 
 wait_ready() { # through the proxy, as a browser would
@@ -43,9 +43,27 @@ log "docker compose up -d"
 docker compose up -d || { echo "docker compose up failed" >&2; diagnose; exit 1; }
 log "waiting for $BASE"; wait_ready
 docker compose logs welcome | tail -12
-log "matelot doctor"
-export MATELOT_URL="$BASE" MATELOT_CREDENTIALS=/nonexistent
-MATELOT_TOKEN="$(token)"; export MATELOT_TOKEN
+log "matelot doctor (before login: the public checks)"
+export MATELOT_URL="$BASE"
+export MATELOT_CREDENTIALS="$PWD/.smoke-credentials.json"; rm -f "$MATELOT_CREDENTIALS"
+$CLI doctor || true
+log "matelot login through the proxy (OAuth code flow, consent approved with the administrator's session)"
+# `matelot login --no-browser` prints the authorize link and waits for the browser callback on 127.0.0.1; this script
+# plays the browser: follow the link (API → consent page redirect), approve with the signed-in administrator, call back.
+KC_TOKEN="$(token)"
+$CLI login --url "$BASE" --no-browser --scope write 2> ./.smoke-login.err &
+LOGIN_PID=$!
+AUTH_URL=""; for i in $(seq 1 30); do AUTH_URL="$(grep -o 'http[^ ]*/api/v1/oauth/authorize?[^ ]*' ./.smoke-login.err | head -1 || true)"; [ -n "$AUTH_URL" ] && break; sleep 1; done
+[ -n "$AUTH_URL" ] || { echo "matelot login printed no authorize link:" >&2; cat ./.smoke-login.err >&2; kill $LOGIN_PID 2>/dev/null; exit 1; }
+CONSENT="$(curl -sS -o /dev/null -w '%{redirect_url}' "$AUTH_URL")"
+case "$CONSENT" in *"/oauth/consent?"*) ;; *) echo "authorize did not redirect to the consent page: [$CONSENT]" >&2; kill $LOGIN_PID 2>/dev/null; exit 1;; esac
+APPROVE_BODY="$(python3 -c 'import sys,json,urllib.parse; q=urllib.parse.parse_qs(urllib.parse.urlsplit(sys.argv[1]).query); print(json.dumps({k: q[k][0] for k in ("client_id","redirect_uri","scope","state","code_challenge") if k in q}))' "$CONSENT")"
+REDIRECT="$(curl -fsS -X POST "$BASE/api/v1/oauth/approve" -H "Authorization: Bearer $KC_TOKEN" -H 'content-type: application/json' -d "$APPROVE_BODY" | python3 -c 'import sys,json; print(json.load(sys.stdin)["redirect"])')"
+curl -fsS -o /dev/null "$REDIRECT"            # the CLI's local callback: it exchanges the code and stores the login
+wait $LOGIN_PID || { echo "matelot login failed:" >&2; cat ./.smoke-login.err >&2; exit 1; }
+rm -f ./.smoke-login.err
+log "matelot doctor (with the stored login)"
+$CLI whoami
 $CLI doctor
 log "create workspace / team / project"
 ORG="$($CLI request GET /api/v1/organizations --json | python3 -c 'import sys,json; print(json.load(sys.stdin)[0]["id"])')"

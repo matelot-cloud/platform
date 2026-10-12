@@ -68,10 +68,26 @@ export function retryingFetch(f: typeof fetch, sleep: (ms: number) => Promise<vo
   }) as typeof fetch;
 }
 
+/** OAuth discovery through whatever proxy fronts the cell: a non-JSON answer almost always means /.well-known is routed
+ *  to the web app instead of the API (Caddy / ingress / dev proxy must forward it). */
+export async function discover(base: string, f: typeof fetch): Promise<{ authorization_endpoint: string; token_endpoint: string }> {
+  const u = `${base}/.well-known/oauth-authorization-server`;
+  let res: Response;
+  try { res = await f(u); } catch (e) { throw new Error(`cannot reach ${u}: ${(e as Error).message}`); }
+  const text = await res.text();
+  let meta: { authorization_endpoint?: string; token_endpoint?: string };
+  try { meta = JSON.parse(text); } catch {
+    const html = /^\s*</.test(text);
+    throw new Error(`${u} returned ${html ? 'HTML' : 'something that is not JSON'} (HTTP ${res.status}) — is /.well-known routed to the API by the reverse proxy / ingress of this cell?`);
+  }
+  if (!res.ok || !meta.authorization_endpoint || !meta.token_endpoint) throw new Error(`${u} answered HTTP ${res.status} without OAuth metadata: ${text.slice(0, 200)}`);
+  return meta as { authorization_endpoint: string; token_endpoint: string };
+}
+
 export async function login(url: string, scope: 'read' | 'write' | 'sudo', opts: { open?: (authorizeUrl: string) => void; noBrowser?: boolean; timeoutMs?: number; fetchImpl?: typeof fetch; sleep?: (ms: number) => Promise<void> } = {}): Promise<StoredCredentials> {
   const base = url.replace(/\/$/, '');
   const f = retryingFetch(opts.fetchImpl ?? fetch, opts.sleep);
-  const meta = (await (await f(`${base}/.well-known/oauth-authorization-server`)).json()) as { authorization_endpoint: string; token_endpoint: string };
+  const meta = await discover(base, f);
   const verifier = randomBytes(32).toString('base64url');
   const challenge = createHash('sha256').update(verifier).digest('base64url');
   const state = randomBytes(16).toString('base64url');
@@ -119,7 +135,7 @@ export async function freshToken(url: string, fetchImplRaw: typeof fetch = fetch
   if (c.expiresAt && new Date(c.expiresAt).getTime() - Date.now() > 60_000) return c.accessToken;
   if (!c.refreshToken) return c.expiresAt ? null : c.accessToken; // unknown expiry, no refresh: try it
   try {
-    const meta = (await (await fetchImpl(`${c.url}/.well-known/oauth-authorization-server`)).json()) as { token_endpoint: string };
+    const meta = await discover(c.url, fetchImpl);
     const r = await fetchImpl(meta.token_endpoint, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: c.refreshToken, client_id: CLI_CLIENT_ID }) });
     const tok = (await r.json()) as { access_token?: string; refresh_token?: string; expires_in?: number; scope?: string };
     if (!r.ok || !tok.access_token) return null;

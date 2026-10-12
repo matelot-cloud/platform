@@ -202,6 +202,10 @@ jobs:
           git config user.name "matelot-release[bot]"; git config user.email "release@matelot.io"
           git add -A docs
           git diff --cached --quiet && echo "docs unchanged" || { git commit -m "docs: $LINE from platform v$VERSION"; git push; }
+      - name: Trigger the website's Pages workflow (deploys, and heals the Pages source)
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_REPOS_TOKEN }}
+        run: gh api -X POST "repos/$ORG/website/dispatches" -f event_type=docs-synced
 
   release:
     needs: [version, images, chart, compose, docs]

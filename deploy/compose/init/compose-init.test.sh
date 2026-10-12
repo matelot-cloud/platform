@@ -47,7 +47,7 @@ MATELOT_ORG_NAME="$NAME" MATELOT_DOMAIN=matelot.example.com MATELOT_ACME_EMAIL="
 cmp -s "$T/key1" "$M/secrets/cell-key/CELL_ENCRYPTION_KEY" && cmp -s "$T/pg1" "$M/secrets/postgres/POSTGRES_PASSWORD"
 check_env "$M/env/api.env" KEYCLOAK_ISSUER "https://matelot.example.com/auth/realms/platform"
 check_env "$M/keycloak/keycloak.env" KC_HOSTNAME "https://matelot.example.com/auth"
-grep -q "^matelot.example.com {" "$M/caddy/Caddyfile" && grep -q "^registry.matelot.example.com {" "$M/caddy/Caddyfile" && grep -q "email $EMAIL" "$M/caddy/Caddyfile"
+grep -q "handle /.well-known/\* {" "$M/caddy/Caddyfile" && grep -q "^matelot.example.com {" "$M/caddy/Caddyfile" && grep -q "^registry.matelot.example.com {" "$M/caddy/Caddyfile" && grep -q "email $EMAIL" "$M/caddy/Caddyfile"
 [ "$(cat "$M/secrets/registry/REGISTRY_HOST")" = "registry.matelot.example.com" ]
 python3 -c "import json,sys; r=json.load(open(sys.argv[1])); assert r['sslRequired']=='external' and r['clients'][1]['redirectUris']==['https://matelot.example.com/*']" "$M/keycloak/import/realm.json"
 grep -q "realm: https://matelot.example.com/api/v1/registry/token" "$M/registry/config.yml"

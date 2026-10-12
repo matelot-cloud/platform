@@ -1,5 +1,5 @@
 {{- if .Values.ingress.enabled }}
-# One host per cell: /api -> API, everything else -> the web app (or the API when web is disabled).
+# One host per cell: /api and /.well-known -> API, everything else -> the web app (or the API when web is disabled).
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -22,6 +22,14 @@ spec:
       http:
         paths:
           - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}-api
+                port:
+                  name: http
+          # OAuth / OIDC discovery of the API (matelot login, MCP clients); without this the web app's index.html answers
+          - path: /.well-known
             pathType: Prefix
             backend:
               service:

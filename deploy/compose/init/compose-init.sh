@@ -110,6 +110,9 @@ mkdir -p "$M/caddy" "$M/keycloak/import" "$M/registry" "$M/web" "$M/env"
   handle /api/* {
     reverse_proxy api:3000
   }
+  handle /.well-known/* {
+    reverse_proxy api:3000
+  }
   handle /auth/* {
     reverse_proxy keycloak:8080
   }

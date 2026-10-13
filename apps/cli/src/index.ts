@@ -5,6 +5,7 @@ import { CliError, configFromEnv, request, VERSION } from './client';
 import type { Config } from './client';
 import { signatureHeader } from './signing';
 import { readZip } from './zip-read';
+import { registryInfoText, type RegistryInfo } from './registry-info';
 import { credentialsPath, discoveryMismatch, freshToken, listCells, login, logout, normalizeCellUrl, resolveCellUrl, setCurrentCell } from './login';
 import { FIELD_FLAGS, PARAM_FLAGS, policyRulesFromFlags, RESOURCES, RULE_FLAGS, slaDaysFromFlags } from './resources';
 
@@ -348,7 +349,7 @@ Check the handshake: matelot mcp --check`);
         const r = spawnSync('docker', ['login', info.host, '-u', username, '--password-stdin'], { input: password, stdio: ['pipe', 'inherit', 'inherit'] });
         if (r.error && (r.error as NodeJS.ErrnoException).code === 'ENOENT') throw new CliError('docker is not installed on this runner (needed for `registry login`)');
         if (r.status !== 0) throw new CliError(`docker login ${info.host} failed`);
-        if (!flags.quiet) console.log(`logged in to ${info.host} as ${config.keyId}`);
+        if (!flags.quiet) console.log(`logged in to ${info.host} as ${username}${config.token ? ' (personal token)' : ' (CI token)'} — push to ${info.host}/$(matelot registry path --service <serviceId>):<tag>`);
         return;
       }
       if (sub === 'path') {
@@ -520,6 +521,7 @@ async function runResource(resource: string, positional: string[], flags: Record
   else body = payload;
   const res = await request<unknown>(config, cmd.method, url, body);
   if (typeof res === 'string' && !flags.json) { process.stdout.write(res.endsWith('\n') ? res : `${res}\n`); return true; } // CSV and other text
+  if (resource === 'registry' && verb === 'info' && !flags.json && res && typeof res === 'object') { console.log(registryInfoText(res as RegistryInfo)); return true; }
   if (resource === 'usage' && !flags.json && res && typeof res === 'object') { console.log(usageText(res as UsageReport)); return true; }
   if (resource === 'onboarding' && !flags.json && res && typeof res === 'object') { console.log(onboardingText(res as OnboardingReport, verb)); return true; }
   if (resource === 'coverage' && !flags.json && res && typeof res === 'object') { console.log(coverageText(res as CoverageReport, flags.uncovered === true || flags.uncovered === 'true')); return true; }

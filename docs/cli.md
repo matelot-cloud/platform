@@ -283,7 +283,7 @@ Form: `matelot <resource> <verb> [flags]`.
 
 | Command | API | Does |
 |---|---|---|
-| `matelot registry info` | `GET /registry/info` | Built-in registry info |
+| `matelot registry info` | `GET /registry/info` | Built-in registry: host, login, the repository pattern and why other names are refused (`insufficient_scope`) |
 | `matelot registry reconcile` | `POST /organizations/:org/registry/reconcile` | Read the built-in registry now |
 
 ### registries

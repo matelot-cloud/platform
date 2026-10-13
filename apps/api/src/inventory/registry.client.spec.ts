@@ -109,3 +109,24 @@ describe('ACR-style scoped tokens: tags/list needs metadata_read, manifests need
     void r;
   });
 });
+
+describe('RegistryClient: built-in registry dialled at its internal address; network errors name the host', () => {
+  const realFetch = global.fetch;
+  afterEach(() => { global.fetch = realFetch; });
+  it('with a baseUrl the image host stays in the ref (token scope, messages) but requests go to the internal address', async () => {
+    const urls: string[] = [];
+    global.fetch = (async (url: string) => { urls.push(String(url)); return new Response(JSON.stringify({ tags: ['1', '2'] }), { status: 200, headers: { 'content-type': 'application/json' } }); }) as typeof fetch;
+    const { RegistryClient } = await import('./registry.client');
+    const client = new RegistryClient({ registry: 'localhost:5000', repository: 'ws/team/proj/api' }, { type: 'none' }, true, 'preset-token', 'http://registry:5000/');
+    expect(await client.tags()).toEqual(['1', '2']);
+    expect(urls[0]).toBe('http://registry:5000/v2/ws/team/proj/api/tags/list?n=100');
+  });
+  it('"fetch failed" becomes "cannot reach registry <host> at <origin>: <code>"', async () => {
+    global.fetch = (async () => { throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED', message: 'connect ECONNREFUSED 127.0.0.1:5000' } }); }) as typeof fetch;
+    const { RegistryClient } = await import('./registry.client');
+    const internal = new RegistryClient({ registry: 'localhost:5000', repository: 'a/b' }, { type: 'none' }, true, 't', 'http://registry:5000');
+    await expect(internal.tags()).rejects.toThrow('cannot reach registry localhost:5000 at http://registry:5000: ECONNREFUSED (connect ECONNREFUSED 127.0.0.1:5000)');
+    const direct = new RegistryClient({ registry: 'ghcr.io', repository: 'a/b' }, { type: 'none' });
+    await expect(direct.tags()).rejects.toThrow('cannot reach registry ghcr.io: ECONNREFUSED');
+  });
+});

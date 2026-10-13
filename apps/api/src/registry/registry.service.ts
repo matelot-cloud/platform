@@ -34,6 +34,8 @@ export interface RegistryEvent {
 export class RegistryService {
   private readonly logger = new Logger(RegistryService.name);
   readonly host?: string;
+  /** Base URL the API uses to talk to the built-in registry (REGISTRY_INTERNAL_URL), else derived from the public host. */
+  readonly internalUrl?: string;
   readonly issuer: string;
   readonly service: string;
   private readonly key?: ReturnType<typeof loadRegistryKey>;
@@ -52,6 +54,7 @@ export class RegistryService {
     @Inject(forwardRef(() => InventoryService)) private readonly inventory: InventoryService,
   ) {
     this.host = config.get('REGISTRY_HOST', { infer: true });
+    this.internalUrl = config.get('REGISTRY_INTERNAL_URL', { infer: true });
     this.issuer = config.get('REGISTRY_ISSUER', { infer: true });
     this.service = config.get('REGISTRY_SERVICE', { infer: true });
     this.eventsSecret = config.get('REGISTRY_EVENTS_SECRET', { infer: true });
@@ -71,7 +74,15 @@ export class RegistryService {
   }
 
   info() {
-    return { available: this.available, host: this.host ?? null, convention: '<workspace>/<team>/<project>/<service>:<tag> for builds · <workspace>/<team>/<project>/<service>/<environment>:<tag> = deployed to that environment', login: this.host ? `docker login ${this.host} -u <CI token key id> -p <CI token secret>` : null };
+    return {
+      available: this.available,
+      host: this.host ?? null,
+      convention: '<workspace>/<team>/<project>/<service>:<tag> for builds · <workspace>/<team>/<project>/<service>/<environment>:<tag> = deployed to that environment',
+      login: this.host ? `docker login ${this.host} -u <CI token key id> -p <CI token secret>` : null,
+      // what a push must look like, and why a free-form repository name is refused by the token endpoint
+      pathRule: 'Repositories are the slugs of the service path (lower case): `matelot registry path --service <serviceId>` prints the exact name; `--env <environmentId>` the environment variant. A push to any other name is refused by the registry with "insufficient_scope: authorization failed" — the token endpoint only grants what the service path and the token\'s scope allow.',
+      pathCommand: 'matelot registry path --service <serviceId> [--env <environmentId>]',
+    };
   }
 
   /** Docker's token endpoint: Basic auth = CI token (keyId:secret) → JWT limited to what that token may do. */
@@ -195,12 +206,12 @@ export class RegistryService {
     if (!this.host || !this.key) return { repositories: 0, newTags: 0 };
     const insecure = !this.host.includes('.') || this.host.startsWith('localhost');
     const catalogToken = issueRegistryToken(this.key, { issuer: this.issuer, service: this.service, subject: 'platform', access: [{ type: 'registry', name: 'catalog', actions: ['*'] }] }).token;
-    const repos = await new RegistryClient({ registry: this.host, repository: '_catalog' }, { type: 'none' }, insecure, catalogToken).catalog();
+    const repos = await new RegistryClient({ registry: this.host, repository: '_catalog' }, { type: 'none' }, insecure, catalogToken, this.internalUrl).catalog();
     let newTags = 0;
     for (const repo of repos) {
       const match = await this.resolvePath(repo).catch(() => null);
       if (!match) continue;
-      const client = new RegistryClient({ registry: this.host, repository: repo }, { type: 'none' }, insecure, this.internalToken(repo)!);
+      const client = new RegistryClient({ registry: this.host, repository: repo }, { type: 'none' }, insecure, this.internalToken(repo)!, this.internalUrl);
       const tags = await client.tags().catch(() => [] as string[]);
       if (!tags.length) continue;
       const [img] = await this.db.insert(containerImages).values({ organizationId: match.organizationId, serviceId: match.serviceId, integrationId: null, name: match.buildName }).onConflictDoUpdate({ target: [containerImages.serviceId, containerImages.name], set: { lastSyncedAt: new Date(), lastError: null } }).returning();

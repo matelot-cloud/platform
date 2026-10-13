@@ -37,9 +37,23 @@ export class RegistryClient {
     private readonly credentials: IntegrationCredentials,
     insecure = false,
     private readonly presetBearer?: string,
+    /** Dial this base instead of the image's registry host (the built-in registry's in-cluster address). */
+    baseUrl?: string,
   ) {
-    this.base = `${insecure ? 'http' : 'https'}://${ref.registry}`;
+    this.base = baseUrl ? baseUrl.replace(/\/+$/, '') : `${insecure ? 'http' : 'https'}://${ref.registry}`;
     this.bearer = presetBearer;
+  }
+
+  /** `fetch` says only "fetch failed": name the address that could not be reached and why (ECONNREFUSED, ENOTFOUND, TLS…). */
+  private async fetch(url: string | URL, init?: RequestInit): Promise<Response> {
+    try {
+      return await fetch(url, init);
+    } catch (error) {
+      const cause = (error as { cause?: { code?: string; message?: string } }).cause;
+      const why = cause?.code ? `${cause.code}${cause.message ? ` (${cause.message})` : ''}` : cause?.message ?? (error instanceof Error ? error.message : String(error));
+      const origin = new URL(String(url)).origin;
+      throw new Error(`cannot reach registry ${this.ref.registry}${origin.endsWith(`://${this.ref.registry}`) ? '' : ` at ${origin}`}: ${why}`);
+    }
   }
 
   /** Bearer tokens by challenge scope: ACR hands out metadata_read for the tags list and pull for manifests; one token does not cover both. */
@@ -52,7 +66,7 @@ export class RegistryClient {
       const h = { ...headers };
       const auth = bearer ? `Bearer ${bearer}` : this.bearer ? `Bearer ${this.bearer}` : basic(this.credentials) ? `Basic ${basic(this.credentials)}` : undefined;
       if (auth) h.Authorization = auth;
-      return fetch(`${this.base}${path}`, { method, headers: h, redirect: 'follow' });
+      return this.fetch(`${this.base}${path}`, { method, headers: h, redirect: 'follow' });
     };
     // best guess for the scope this path needs (manifests/blobs → pull), so a cached token is reused without a round trip
     const guessed = /^\/v2\/(.+)\/(manifests|blobs)\//.exec(path) ? `repository:${this.ref.repository}:pull` : null;
@@ -69,7 +83,7 @@ export class RegistryClient {
         const tokenHeaders: Record<string, string> = {};
         const b = basic(this.credentials);
         if (b) tokenHeaders.Authorization = `Basic ${b}`;
-        const tokenResponse = await fetch(url, { headers: tokenHeaders });
+        const tokenResponse = await this.fetch(url, { headers: tokenHeaders });
         if (!tokenResponse.ok) throw new Error(`registry ${this.ref.registry} refused the credentials for scope ${scope} (${tokenResponse.status} ${cloudError(await tokenResponse.text().catch(() => ''))})`);
         const body = (await tokenResponse.json()) as { token?: string; access_token?: string };
         const bearer = body.token ?? body.access_token;
@@ -143,7 +157,7 @@ export class RegistryClient {
     const headers: Record<string, string> = { 'Content-Type': mediaType };
     const auth = this.bearer ? `Bearer ${this.bearer}` : undefined;
     if (auth) headers.Authorization = auth;
-    const response = await fetch(`${this.base}/v2/${this.ref.repository}/manifests/${encodeURIComponent(reference)}`, { method: 'PUT', headers, body });
+    const response = await this.fetch(`${this.base}/v2/${this.ref.repository}/manifests/${encodeURIComponent(reference)}`, { method: 'PUT', headers, body });
     if (!response.ok) throw new Error(`put manifest ${this.ref.repository}:${reference} → ${response.status} ${(await response.text()).slice(0, 120)}`);
     return response.headers.get('docker-content-digest');
   }

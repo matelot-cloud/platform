@@ -47,6 +47,9 @@ export const envSchema = z.object({
 
   // Built-in container registry (Docker Distribution in the cell, token auth delegated to this API)
   REGISTRY_HOST: z.preprocess(emptyToUndefined, z.string().optional()),
+  /** Where the API itself reaches the built-in registry (http://registry:5000 in Compose, the Service in the chart): the
+   *  public REGISTRY_HOST is a Caddy/ingress name — inside the api container `localhost:5000` is the api. */
+  REGISTRY_INTERNAL_URL: z.preprocess(emptyToUndefined, z.string().url().optional()),
   REGISTRY_TOKEN_KEY_PATH: z.preprocess(emptyToUndefined, z.string().optional()),
   REGISTRY_ISSUER: z.string().default('secops-cell'),
   REGISTRY_SERVICE: z.string().default('secops-registry'),

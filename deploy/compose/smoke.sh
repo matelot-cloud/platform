@@ -42,7 +42,7 @@ cli_json() {
   printf '%s' "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); $expr"
 }
 if [ "$CHECK" = 1 ]; then printf 'CLI command: %q' "${CLI[0]}"; printf ' %q' "${CLI[@]:1}"; echo; cli --version; exit 0; fi
-cleanup() { rm -f ./.smoke-login.err ./.smoke-cli.err ./.smoke-credentials.json; if [ "$KEEP" = 0 ]; then rm -f ./.env.smoke; log "down -v"; docker compose down -v --remove-orphans > /dev/null 2>&1 || true; fi; }
+cleanup() { rm -rf ./.smoke-login.err ./.smoke-cli.err ./.smoke-credentials.json ./.smoke-Dockerfile ./.smoke-context.txt ./.smoke-ctx; if [ "$KEEP" = 0 ]; then rm -f ./.env.smoke; log "down -v"; docker compose down -v --remove-orphans > /dev/null 2>&1 || true; fi; }
 trap cleanup EXIT
 
 wait_ready() { # through the proxy, as a browser would
@@ -114,6 +114,25 @@ WS="$(cli_json 'print(d["id"])' -- workspace create --org "$ORG" --slug smoke --
 TEAM="$(cli_json 'print(d["id"])' -- team create --workspace "$WS" --slug platform --name Platform)"
 PROJECT="$(cli_json 'print(d["id"])' -- project create --team "$TEAM" --slug payments --name Payments)"
 echo "project $PROJECT"
+log "built-in registry: login → docker push → the push notification registers the image → image sync reads the tags"
+SVC="$(cli_json 'print(d["id"])' -- service create --project "$PROJECT" --slug api --name API)"
+cli registry info
+cli registry login                                            # the stored login (personal token) → docker login localhost:5000
+IMAGE_PATH="$(cli registry path --service "$SVC")"            # smoke/platform/payments/api
+echo "image path: $IMAGE_PATH"
+printf 'FROM scratch\nCOPY smoke.txt /smoke.txt\n' > ./.smoke-Dockerfile; echo "smoke $(date -u +%FT%TZ)" > ./.smoke-context.txt
+mkdir -p ./.smoke-ctx && cp ./.smoke-context.txt ./.smoke-ctx/smoke.txt
+docker build -q -t "localhost:${MATELOT_REGISTRY_PORT:-5000}/$IMAGE_PATH:1" -f ./.smoke-Dockerfile ./.smoke-ctx > /dev/null
+docker push "localhost:${MATELOT_REGISTRY_PORT:-5000}/$IMAGE_PATH:1"
+echo "pushed; a push elsewhere must be refused by the registry (the repository is not a service path):"
+docker tag "localhost:${MATELOT_REGISTRY_PORT:-5000}/$IMAGE_PATH:1" "localhost:${MATELOT_REGISTRY_PORT:-5000}/not-a-service:1"
+if docker push "localhost:${MATELOT_REGISTRY_PORT:-5000}/not-a-service:1" > ./.smoke-cli.err 2>&1; then echo "a push outside the service paths was accepted" >&2; cat ./.smoke-cli.err >&2; exit 1; fi
+grep -q "insufficient_scope\|denied\|unauthorized" ./.smoke-cli.err || { echo "unexpected push failure:" >&2; cat ./.smoke-cli.err >&2; exit 1; }; echo "refused as expected"
+IMG=""; for _ in $(seq 1 30); do IMG="$(cli_json 'print(next((i["id"] for i in d if i["name"].endswith("/'"$IMAGE_PATH"'")), ""))' -- images list --service "$SVC")"; [ -n "$IMG" ] && break; sleep 2; done
+[ -n "$IMG" ] || { echo "the push notification did not register the image (docker compose logs registry api):" >&2; docker compose logs --tail 30 registry api >&2; exit 1; }
+echo "image registered: $IMG"
+cli_json 'assert d["tags"] >= 1, d; print("image sync:", d)' -- image sync --service "$SVC" --id "$IMG"
+cli_json 'i=[i for i in d if i["id"]=="'"$IMG"'"][0]; assert i.get("lastError") in (None, ""), i; assert any(t.get("tag")=="1" for t in i["tags"]), i; print("tags:", [t["tag"] for t in i["tags"]])' -- images list --service "$SVC"
 log "the write scope stops at destructive operations: archiving the project must be refused (403), not done"
 if cli request DELETE "/api/v1/projects/$PROJECT" --json > ./.smoke-cli.err 2>&1; then echo "a write-scoped token archived a project" >&2; cat ./.smoke-cli.err >&2; exit 1; fi
 grep -q "sudo" ./.smoke-cli.err || { echo "unexpected refusal:" >&2; cat ./.smoke-cli.err >&2; exit 1; }; rm -f ./.smoke-cli.err; echo "refused as expected"

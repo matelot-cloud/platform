@@ -213,7 +213,9 @@ export class InventoryService {
       // ECR/ACR credentials are exchanged for short-lived Docker credentials; static ones pass through.
       const docker = await dockerCredentialsFor(ref.registry, stored, integration ? `integration:${integration.id}` : undefined);
       const creds: IntegrationCredentials = docker ? { type: 'basic', username: docker.username, password: docker.password } : { type: 'none' };
-      const client = new RegistryClient(ref, creds, insecure || image.name.startsWith('localhost') || (!!builtIn && !this.registry.host!.includes('.')), builtIn ? (this.registry.internalToken(ref.repository) ?? undefined) : undefined);
+      // The built-in registry is dialled at its internal address (REGISTRY_INTERNAL_URL): its public host is Caddy / the
+      // ingress, and `localhost:5000` inside the api container is the api itself.
+      const client = new RegistryClient(ref, creds, insecure || image.name.startsWith('localhost') || (!!builtIn && !this.registry.host!.includes('.')), builtIn ? (this.registry.internalToken(ref.repository) ?? undefined) : undefined, builtIn ? this.registry.internalUrl : undefined);
       const all = await client.tags();
       // Public images can carry thousands of tags; keep the newest 100 by version (semver-ish sort), plus mutable channel tags.
       const channel = all.filter((t) => /^(latest|stable|main|edge|nightly)$/i.test(t));

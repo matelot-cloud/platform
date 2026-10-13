@@ -20,6 +20,10 @@ data:
   WEB_BASE_URL: {{ printf "%s://%s" (include "cell.scheme" .) (include "cell.apiHost" .) | quote }}
   # the public base of the API behind the ingress: OAuth/OIDC metadata (matelot login, MCP), keyless identity issuer
   API_PUBLIC_URL: {{ printf "%s://%s" (include "cell.scheme" .) (include "cell.apiHost" .) | quote }}
+{{- if .Values.registry.enabled }}
+  # how the api reaches the built-in registry (the public REGISTRY_HOST is the ingress name)
+  REGISTRY_INTERNAL_URL: {{ printf "http://%s-registry:5000" .Release.Name | quote }}
+{{- end }}
   GITHUB_APP_ID: {{ .Values.github.appId | quote }}
   GITHUB_APP_SLUG: {{ .Values.github.slug | quote }}
   GITHUB_API_URL: {{ .Values.github.apiUrl | quote }}

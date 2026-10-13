@@ -225,6 +225,7 @@ kv "$E" BOOTSTRAP_ADMIN_EMAILS "$ADMIN_EMAIL"
 kv "$E" CORS_ORIGINS "$BASE_URL"
 kv "$E" WEB_BASE_URL "$BASE_URL"
 kv "$E" API_PUBLIC_URL "$BASE_URL"        # what the OAuth metadata, registry realm and runner commands advertise (Caddy routes /api here)
+kv "$E" REGISTRY_INTERNAL_URL http://registry:5000   # how the api reaches the built-in registry (the public REGISTRY_HOST is Caddy; localhost:5000 inside the api container is the api)
 kv "$E" GITHUB_APP_ID ""
 kv "$E" GITHUB_APP_SLUG ""
 kv "$E" GITHUB_API_URL https://api.github.com

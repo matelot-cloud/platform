@@ -4,9 +4,11 @@
 #   scripts/cell-restore.sh -r acme -n tenant-acme acme-20261009T021700Z.tar.gz          # secrets + databases
 #   scripts/cell-restore.sh -r acme -n tenant-acme --secrets-only ARCHIVE                 # new cluster: before helm install
 #   scripts/cell-restore.sh -r acme -n tenant-acme --databases-only ARCHIVE               # … after helm install
-#   scripts/cell-restore.sh --compose [DIR] [--secrets-only|--databases-only] ARCHIVE      # Docker Compose cell
+#   scripts/cell-restore.sh --compose [DIR] [--yes] [--secrets-only|--databases-only] ARCHIVE  # Docker Compose cell
 # Databases: the API, worker, managed runners and Keycloak are scaled to 0 while each database is dropped and recreated
-# from its dump inside the postgres pod, then scaled back. Needs kubectl; --yes skips the confirmation.
+# from its dump inside the postgres pod, then scaled back. Needs kubectl (or docker for --compose); --yes/-y skips the
+# confirmation (scripts, CI). A Compose restore works into a running fresh cell: it aligns the Postgres role with the
+# restored password, restarts the cell and waits for every container to be healthy.
 set -euo pipefail
 RELEASE="${RELEASE:-}"; NAMESPACE="${NAMESPACE:-}"; MODE=all; YES=0; ARCHIVE=""; COMPOSE=""
 # shellcheck source=scripts/lib/compose.sh

@@ -15,11 +15,19 @@ read -ra CLI <<< "${MATELOT_CLI:-matelot}"
 cli() { "${CLI[@]}" "$@"; }   # every CLI call in this script goes through here (or cli_json below)
 # cell-backup.sh / cell-restore.sh: ../../scripts in the platform checkout, ./scripts in the published docker/ folder
 SCRIPTS="${CELL_SCRIPTS:-}"; [ -n "$SCRIPTS" ] || { if [ -f ../../scripts/cell-backup.sh ]; then SCRIPTS="$(cd ../../scripts && pwd)"; else SCRIPTS="$(pwd)/scripts"; fi; }
-[ -f .env ] || cp .env.example .env
-# values with spaces and shell/JSON metacharacters: a cell whose organization name or password breaks a generated
-# file must fail here, not at a customer (quoting rules of compose .env: single quotes keep $ and # literal)
-grep -q '^MATELOT_ORG_NAME=' .env && sed -i "s/^MATELOT_ORG_NAME=.*/MATELOT_ORG_NAME='Acme Corp (EU) #1'/" .env
-grep -q '^MATELOT_ADMIN_PASSWORD=' .env && sed -i "s/^MATELOT_ADMIN_PASSWORD=.*/MATELOT_ADMIN_PASSWORD='Sm0ke#pass\$1 ok'/" .env
+# The stack runs from its own env file (.env.smoke, via COMPOSE_ENV_FILES, inherited by every `docker compose` below and
+# by the backup/restore scripts): the user's .env is never read or written. Values with spaces and shell/JSON
+# metacharacters on purpose — a cell whose organization name or password breaks a generated file must fail here, not at
+# a customer (quoting rules of compose .env: single quotes keep $ and # literal).
+[ "$CHECK" = 1 ] || {
+  { grep -v '^MATELOT_ORG_NAME=\|^MATELOT_ADMIN_PASSWORD=\|^MATELOT_VERSION=' .env.example
+    echo "MATELOT_VERSION=${MATELOT_VERSION:-latest}"            # CI: the images built from this commit
+    [ -z "${MATELOT_REGISTRY_PREFIX:-}" ] || echo "MATELOT_REGISTRY_PREFIX=$MATELOT_REGISTRY_PREFIX"
+    echo "MATELOT_ORG_NAME='Acme Corp (EU) #1'"
+    echo "MATELOT_ADMIN_PASSWORD='Sm0ke#pass\$1 ok'"
+  } > .env.smoke
+  export COMPOSE_ENV_FILES="$PWD/.env.smoke"
+}
 BASE="http://localhost:${MATELOT_HTTP_PORT:-80}"
 log() { printf '\n== %s\n' "$*"; }
 # cli_json <python expr over `d`> -- <cli args…>: runs the CLI with --json, fails with its stderr (and stdout) printed when
@@ -34,7 +42,7 @@ cli_json() {
   printf '%s' "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); $expr"
 }
 if [ "$CHECK" = 1 ]; then printf 'CLI command: %q' "${CLI[0]}"; printf ' %q' "${CLI[@]:1}"; echo; cli --version; exit 0; fi
-cleanup() { rm -f ./.smoke-login.err ./.smoke-cli.err ./.smoke-credentials.json; if [ "$KEEP" = 0 ]; then log "down -v"; docker compose down -v --remove-orphans > /dev/null 2>&1 || true; fi; }
+cleanup() { rm -f ./.smoke-login.err ./.smoke-cli.err ./.smoke-credentials.json; if [ "$KEEP" = 0 ]; then rm -f ./.env.smoke; log "down -v"; docker compose down -v --remove-orphans > /dev/null 2>&1 || true; fi; }
 trap cleanup EXIT
 
 wait_ready() { # through the proxy, as a browser would
@@ -112,13 +120,26 @@ grep -q "sudo" ./.smoke-cli.err || { echo "unexpected refusal:" >&2; cat ./.smok
 log "backup --compose"
 rm -rf ./smoke-backups; bash "$SCRIPTS/cell-backup.sh" --compose . -d ./smoke-backups
 ARCHIVE="$(ls ./smoke-backups/*.tar.gz)"
-log "destroy: docker compose down -v"
+ADMIN_PW_BEFORE="$(docker compose run --rm --no-deps init show | sed -n 's/^Admin password: *//p')"
+log "disaster: docker compose down -v, then a fresh start (a new host: new secrets are generated before anyone restores)"
 docker compose down -v
-log "restore --compose $ARCHIVE"
+sed -i '/^MATELOT_ADMIN_PASSWORD=/d' .env.smoke     # the new host has no fixed password: everything is generated afresh
+docker compose up -d; wait_ready
+ADMIN_PW_FRESH="$(docker compose run --rm --no-deps init show | sed -n 's/^Admin password: *//p')"
+[ "$ADMIN_PW_FRESH" != "$ADMIN_PW_BEFORE" ] || { echo "the fresh start kept the old admin password — the volumes were not removed?" >&2; exit 1; }
+if cli doctor > /dev/null 2>&1 && cli whoami > /dev/null 2>&1; then echo "the stored login still works on a fresh cell — the restore test would prove nothing" >&2; exit 1; fi
+echo "fresh cell: the stored login is rejected as expected"
+log "restore --compose $ARCHIVE (--yes) into the running fresh cell"
 bash "$SCRIPTS/cell-restore.sh" --compose . --yes "$ARCHIVE"
 wait_ready
-MATELOT_TOKEN="$(token)"; export MATELOT_TOKEN     # same generated password: the secrets came back with the archive
+log "after the restore: the ORIGINAL stored login works again (cell key, API secrets and the token's hash came back)"
+unset MATELOT_TOKEN
+cli whoami
 cli doctor
 cli_json 'assert d["slug"]=="payments", d; print("project restored:", d["name"])' -- request GET "/api/v1/projects/$PROJECT"
+ADMIN_PW_AFTER="$(docker compose run --rm --no-deps init show | sed -n 's/^Admin password: *//p')"
+[ "$ADMIN_PW_AFTER" = "$ADMIN_PW_BEFORE" ] || { echo "admin password after the restore differs from the one backed up" >&2; exit 1; }
+docker compose logs welcome | grep -q -- "$ADMIN_PW_BEFORE" || { echo "the welcome banner does not show the restored admin password:" >&2; docker compose logs welcome >&2; exit 1; }
+echo "welcome banner shows the restored admin login"
 rm -rf ./smoke-backups
 log "smoke test passed"

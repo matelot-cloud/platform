@@ -16,3 +16,7 @@ deploy/registry/certs/
 
 # generated docs preview (make docs-sync / tools/docs-site)
 dist/
+# compose smoke test scratch (deploy/compose/smoke.sh)
+.env.smoke
+.smoke-*
+smoke-backups/

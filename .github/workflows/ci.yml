@@ -128,10 +128,9 @@ jobs:
         working-directory: deploy/compose
         env:
           MATELOT_CLI: node ../../apps/cli/dist/index.js
-        run: |
-          cp .env.example .env
-          printf 'MATELOT_VERSION=ci\nMATELOT_REGISTRY_PREFIX=secops\n' >> .env
-          bash smoke.sh
+          MATELOT_VERSION: ci            # smoke.sh writes these into its own .env.smoke (the user's .env is never used)
+          MATELOT_REGISTRY_PREFIX: secops
+        run: bash smoke.sh
       - name: Logs on failure
         if: failure()
         working-directory: deploy/compose

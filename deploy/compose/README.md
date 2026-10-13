@@ -18,7 +18,7 @@ docker compose logs -f welcome  # URL + administrator login once the cell answer
 | `postgres/` | creates the keycloak database on the first start |
 | `backup/` | the backup job script and the in-database restore script (copies of the Helm chart's) |
 | `scripts/` (published repo only) | `cell-backup.sh --compose`, `cell-restore.sh --compose` and their lib |
-| `smoke.sh` | end-to-end check: up → doctor → project → backup → `down -v` → restore (what CI runs on every commit); `MATELOT_CLI="node …/index.js"` to use a checkout, `--check` only resolves the CLI |
+| `smoke.sh` | end-to-end check: up → doctor → project → backup → `down -v` → `up -d` (new secrets) → restore → the original login works (what CI runs on every commit). Runs from its own `.env.smoke` (`COMPOSE_ENV_FILES`), never touches your `.env`; `MATELOT_CLI="node …/index.js"` to use a checkout, `--check` only resolves the CLI |
 
 Day 2: `scripts/cell-backup.sh --compose . -d ./backups` · upgrade = `MATELOT_VERSION` in `.env`, `docker compose
 pull && docker compose up -d` · `matelot doctor` · `docker compose run --rm init show` prints the admin login again.

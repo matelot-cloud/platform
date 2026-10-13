@@ -80,7 +80,7 @@ export class RegistryService {
       convention: '<workspace>/<team>/<project>/<service>:<tag> for builds · <workspace>/<team>/<project>/<service>/<environment>:<tag> = deployed to that environment',
       login: this.host ? `docker login ${this.host} -u <CI token key id> -p <CI token secret>` : null,
       // what a push must look like, and why a free-form repository name is refused by the token endpoint
-      pathRule: 'Repositories are the slugs of the service path (lower case): `matelot registry path --service <serviceId>` prints the exact name; `--env <environmentId>` the environment variant. A push to any other name is refused by the registry with "insufficient_scope: authorization failed" — the token endpoint only grants what the service path and the token\'s scope allow.',
+      pathRule: 'Repositories are the slugs of the service path (lower case): `matelot registry path --service <serviceId>` prints the full pushable reference (host included); `--env <environmentId>` the environment variant. A push to any other name is refused by the registry with "insufficient_scope: authorization failed" — the token endpoint only grants what the service path and the token\'s scope allow.',
       pathCommand: 'matelot registry path --service <serviceId> [--env <environmentId>]',
     };
   }

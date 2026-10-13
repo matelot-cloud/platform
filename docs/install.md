@@ -65,7 +65,7 @@ matelot login --url http://localhost
 matelot doctor                   # API, version, login, organization, runners online, registry
 matelot registry login           # docker login to the cell's registry with your credentials
 matelot registry info            # host and the repository pattern: <workspace>/<team>/<project>/<service>:<tag>
-docker push localhost:5000/$(matelot registry path --service <serviceId>):1   # any other repository name is refused
+docker push "$(matelot registry path --service <serviceId>)":1   # prints host + path; any other repository name is refused
 ```
 
 ### A3. Settings (.env)

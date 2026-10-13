@@ -118,17 +118,18 @@ log "built-in registry: login → docker push → the push notification register
 SVC="$(cli_json 'print(d["id"])' -- service create --project "$PROJECT" --slug api --name API)"
 cli registry info
 cli registry login                                            # the stored login (personal token) → docker login localhost:5000
-IMAGE_PATH="$(cli registry path --service "$SVC")"            # smoke/platform/payments/api
-echo "image path: $IMAGE_PATH"
+IMAGE_REF="$(cli registry path --service "$SVC")"             # the full pushable reference: localhost:5000/smoke/platform/payments/api
+echo "image reference: $IMAGE_REF"
+case "$IMAGE_REF" in "localhost:${MATELOT_REGISTRY_PORT:-5000}/"*) ;; *) echo "registry path must start with the registry host" >&2; exit 1;; esac
 printf 'FROM scratch\nCOPY smoke.txt /smoke.txt\n' > ./.smoke-Dockerfile; echo "smoke $(date -u +%FT%TZ)" > ./.smoke-context.txt
 mkdir -p ./.smoke-ctx && cp ./.smoke-context.txt ./.smoke-ctx/smoke.txt
-docker build -q -t "localhost:${MATELOT_REGISTRY_PORT:-5000}/$IMAGE_PATH:1" -f ./.smoke-Dockerfile ./.smoke-ctx > /dev/null
-docker push "localhost:${MATELOT_REGISTRY_PORT:-5000}/$IMAGE_PATH:1"
+docker build -q -t "$IMAGE_REF:1" -f ./.smoke-Dockerfile ./.smoke-ctx > /dev/null
+docker push "$IMAGE_REF:1"
 echo "pushed; a push elsewhere must be refused by the registry (the repository is not a service path):"
-docker tag "localhost:${MATELOT_REGISTRY_PORT:-5000}/$IMAGE_PATH:1" "localhost:${MATELOT_REGISTRY_PORT:-5000}/not-a-service:1"
+docker tag "$IMAGE_REF:1" "localhost:${MATELOT_REGISTRY_PORT:-5000}/not-a-service:1"
 if docker push "localhost:${MATELOT_REGISTRY_PORT:-5000}/not-a-service:1" > ./.smoke-cli.err 2>&1; then echo "a push outside the service paths was accepted" >&2; cat ./.smoke-cli.err >&2; exit 1; fi
 grep -q "insufficient_scope\|denied\|unauthorized" ./.smoke-cli.err || { echo "unexpected push failure:" >&2; cat ./.smoke-cli.err >&2; exit 1; }; echo "refused as expected"
-IMG=""; for _ in $(seq 1 30); do IMG="$(cli_json 'print(next((i["id"] for i in d if i["name"].endswith("/'"$IMAGE_PATH"'")), ""))' -- images list --service "$SVC")"; [ -n "$IMG" ] && break; sleep 2; done
+IMG=""; for _ in $(seq 1 30); do IMG="$(cli_json 'print(next((i["id"] for i in d if i["name"].lower()=="'"$IMAGE_REF"'".lower()), ""))' -- images list --service "$SVC")"; [ -n "$IMG" ] && break; sleep 2; done
 [ -n "$IMG" ] || { echo "the push notification did not register the image (docker compose logs registry api):" >&2; docker compose logs --tail 30 registry api >&2; exit 1; }
 echo "image registered: $IMG"
 cli_json 'assert d["tags"] >= 1, d; print("image sync:", d)' -- image sync --service "$SVC" --id "$IMG"

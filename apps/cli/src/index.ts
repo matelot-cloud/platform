@@ -41,7 +41,7 @@ Commands
   promote  --env <environmentId> --tag X                 copy build image <project>/<service>:X into the environment repository (= deploy)
   registry login [--connection NAME|ID --service ID]    docker login: the cell's registry, or an ECR/ACR/Docker Hub connection (short-lived credentials from the platform)
   registry connections --service <serviceId>              list the registry connections a service can use
-  registry path --service <serviceId> [--env <environmentId>]   built-in registry: build (or environment) image path
+  registry path --service <serviceId> [--env <environmentId>]   built-in registry: the full pushable reference (host included) of the build (or environment) image
   registry path --service <serviceId> --connection NAME --repository NAME [--create]   external registry (ECR/ACR/Hub…): image path; --create makes the ECR repository if missing
   sbom     --service <serviceId> --file bom.json --target source|image [--version X] [--image REF]
   request  <METHOD> </api/v1/path> [json-body]           any endpoint
@@ -349,7 +349,7 @@ Check the handshake: matelot mcp --check`);
         const r = spawnSync('docker', ['login', info.host, '-u', username, '--password-stdin'], { input: password, stdio: ['pipe', 'inherit', 'inherit'] });
         if (r.error && (r.error as NodeJS.ErrnoException).code === 'ENOENT') throw new CliError('docker is not installed on this runner (needed for `registry login`)');
         if (r.status !== 0) throw new CliError(`docker login ${info.host} failed`);
-        if (!flags.quiet) console.log(`logged in to ${info.host} as ${username}${config.token ? ' (personal token)' : ' (CI token)'} — push to ${info.host}/$(matelot registry path --service <serviceId>):<tag>`);
+        if (!flags.quiet) console.log(`logged in to ${info.host} as ${username}${config.token ? ' (personal token)' : ' (CI token)'} — docker push "$(matelot registry path --service <serviceId>)":<tag>`);
         return;
       }
       if (sub === 'path') {

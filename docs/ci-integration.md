@@ -23,7 +23,7 @@ Every CLI release attaches the npm package to a GitHub Release there:
 
 ```bash
 npm install -g https://github.com/matelot-cloud/setup-cli/releases/latest/download/matelot-cli.tgz          # newest release
-npm install -g https://github.com/matelot-cloud/setup-cli/releases/download/v2.22.3/matelot-cli-2.22.3.tgz  # pinned
+npm install -g https://github.com/matelot-cloud/setup-cli/releases/download/v2.22.4/matelot-cli-2.22.4.tgz  # pinned
 ```
 
 Do not install with the `github:<owner>/<repo>` git form: npm 10 links such an install to its temporary clone
@@ -31,7 +31,7 @@ and then deletes it, so `matelot` ends up as a dangling symlink. In GitHub Actio
 action, which installs the CLI at the tag it was used with and exports the variables:
 
 ```yaml
-- uses: matelot-cloud/setup-cli@v2   # or @v2.22.3
+- uses: matelot-cloud/setup-cli@v2   # or @v2.22.4
   with:
     url: ${{ vars.MATELOT_URL }}
     key-id: ${{ secrets.MATELOT_KEY_ID }}
@@ -85,7 +85,7 @@ build inside the registry without re-uploading — *is* the deployment; the clus
 environment repository. A project CI token may use only its project's namespace.
 
 The repository name is not free-form: it must be the service's path (lower-case slugs), which
-`matelot registry path --service <serviceId>` prints; `matelot registry info` shows the host and the pattern. A
+`matelot registry path --service <serviceId>` prints as a full reference, host included (`docker push "$(matelot registry path --service ID)":<tag>`); `matelot registry info` shows the host and the pattern. A
 `docker push` to any other name — `localhost:5000/my-app:1`, a renamed slug, the wrong team — is refused by the
 registry with `insufficient_scope: authorization failed`: the token endpoint grants push only for repositories that
 resolve to a service the token may write to. That refusal is the security decision, not a login problem.

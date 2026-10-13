@@ -17,7 +17,7 @@ Path flags: `--org`, `--project`, `--service`, `--env`, `--id` (or a positional 
 | `matelot release --service ID --version V [--notes T]` | record a release |
 | `matelot sbom --service ID --file bom.json --target source\|image [--version V] [--image REF]` | upload an SBOM |
 | `matelot registry login [--connection NAME --service ID]` | docker login to the built-in registry or an ECR/ACR/Docker Hub connection |
-| `matelot registry path --service ID [--env ID] [--connection NAME --repository NAME [--create]]` | image path in the built-in or an external registry |
+| `matelot registry path --service ID [--env ID] [--connection NAME --repository NAME [--create]]` | the full pushable image reference (host included) in the built-in or an external registry: `docker push "$(matelot registry path --service ID)":<tag>` |
 | `matelot registry connections --service ID` | registry connections a service can use |
 | `matelot request METHOD /api/v1/path [json]` | any endpoint |
 

@@ -84,7 +84,7 @@ api:
 web:
   enabled: true
   productName: ""            # defaults to "<tenant.name> Security Platform"
-  docsUrl: https://matelot-cloud.github.io/website/docs/latest/   # the public documentation site opened by the sidebar's "Documentation" (a mirror of it for air-gapped cells)
+  docsUrl: https://matelot.cloud/docs/latest/   # the public documentation site opened by the sidebar's "Documentation" (a mirror of it for air-gapped cells)
   image:
     repository: ghcr.io/matelot-cloud/web
     tag: ""                  # defaults to Chart.appVersion

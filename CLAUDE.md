@@ -153,7 +153,7 @@ providers · 17 provisioning control plane.
 - Product name is a placeholder ("Security Platform" / `secops`).
 - MCP server: apps/api/src/mcp (tools generated from OpenAPI; docs/mcp.md). CLI: `matelot mcp`.
 - Public website = the `matelot-cloud/website` repository (landing page from its `content.json` on the Luminary
-  template; https://matelot-cloud.github.io/website, custom domain = its `SITE_DOMAIN` variable). The docs are rendered
+  template; https://matelot.cloud, custom domain = its `SITE_DOMAIN` variable). The docs are rendered
   from `docs/*.md` here by `tools/docs-site/build.mjs` (page list: `SITE` table; public docs may not link into this
   repo) and pushed there by `docs-sync.yml` (latest) and `release.yml` (`docs/vX.Y`). `make docs-check` is the CI gate;
   `make docs-sync WEBSITE_DIR=../website` previews the whole site. The web app does not bundle docs; its sidebar link

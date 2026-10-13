@@ -55,7 +55,7 @@ released. Issues, discussions and releases live in `matelot-cloud/matelot` and a
    - **release**: `gh release create vX.Y.Z --repo matelot-cloud/matelot` with the CHANGELOG section, the image and chart
      digests, the `cosign verify` commands and the SBOM files attached.
 6. Check: `helm pull oci://ghcr.io/matelot-cloud/charts/secops-cell --version X.Y.Z`, `docker pull ghcr.io/matelot-cloud/api:X.Y.Z`,
-   the release page, https://matelot-cloud.github.io/website/docs/vX.Y/install.html.
+   the release page, https://matelot.cloud/docs/vX.Y/install.html.
 7. Upgrade a cell on kind from the published chart (`helm upgrade … oci://… --version X.Y.Z`) before announcing.
 
 ### One-time setup (done once per organization)
@@ -137,6 +137,10 @@ provisioning runbook — and this file stay internal). Public docs may not link 
 link to the public repositories or the site instead. `make docs-check` is what CI runs.
 
 ## Versions, tags and what a customer sees
+
+- Images carry two tags per release: the bare version (`0.1.0-rc.8`, from `type=semver`) and the git tag (`v0.1.0-rc.8`,
+  from `type=ref,event=tag`). Everything customer-facing takes the **bare** version: `MATELOT_VERSION` in Compose, the
+  chart's `image.tag`, the release notes; the `v…` tag only mirrors the git tag.
 
 - Images: `ghcr.io/matelot-cloud/<name>:X.Y.Z` (what the chart pulls: `appVersion`), `vX.Y.Z` (same digest), `latest`.
 - Chart: `oci://ghcr.io/matelot-cloud/charts/secops-cell:X.Y.Z`, `appVersion: X.Y.Z` → a customer upgrades images and

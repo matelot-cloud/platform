@@ -11,7 +11,7 @@ export interface RuntimeConfig {
   docsUrl?: string;
 }
 
-export const DEFAULT_DOCS_URL = 'https://matelot-cloud.github.io/website/docs/latest/';
+export const DEFAULT_DOCS_URL = 'https://matelot.cloud/docs/latest/';
 export const docsUrl = (c: Pick<RuntimeConfig, 'docsUrl'>): string => (c.docsUrl?.trim() ? c.docsUrl.trim() : DEFAULT_DOCS_URL);
 
 export async function loadRuntimeConfig(): Promise<RuntimeConfig> {

@@ -24,7 +24,7 @@ run no-managed-runners --set managedRunners.enabled=false --set registry.enabled
 grep -q 'kind: CronJob' "$OUT/backup-pvc.yaml" && ! grep -q 'kind: CronJob' "$OUT/defaults.yaml" || { echo "backup CronJob rendering is wrong" >&2; exit 1; }
 grep -q 'kind: PersistentVolumeClaim' "$OUT/backup-pvc.yaml" && grep -q 'initContainers' "$OUT/backup-s3.yaml" || { echo "backup storage rendering is wrong" >&2; exit 1; }
 grep -q 'DATABASE_URL' "$OUT/external-db.yaml" || { echo "external-db backup should use DATABASE_URL" >&2; exit 1; }
-grep -q '"docsUrl": "https://matelot-cloud.github.io/website/docs/latest/"' "$OUT/defaults.yaml" || { echo "web config.json should carry the default docsUrl" >&2; exit 1; }
+grep -q '"docsUrl": "https://matelot.cloud/docs/latest/"' "$OUT/defaults.yaml" || { echo "web config.json should carry the default docsUrl" >&2; exit 1; }
 grep -q 'API_PUBLIC_URL: "http://acme.platform.local"' "$OUT/defaults.yaml" || { echo "api-configmap must set API_PUBLIC_URL to the cell's public URL" >&2; exit 1; }
 grep -q 'path: /.well-known' "$OUT/defaults.yaml" || { echo "the app ingress must route /.well-known to the API (matelot login discovery)" >&2; exit 1; }
 # data outlives `helm uninstall`: every PVC the chart creates is kept; Keycloak waits for Postgres instead of restarting

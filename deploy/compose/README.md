@@ -2,11 +2,12 @@
 
 One cell on one host: the quick start for evaluation and small teams (Kubernetes/Helm is the production path).
 This folder is published as `docker/` in https://github.com/matelot-cloud/matelot on every release; the full guide is
-https://matelot-cloud.github.io/website/docs/latest/install.html#option-a-docker-compose.
+https://matelot.cloud/docs/latest/install.html#option-a-docker-compose.
 
 ```bash
+git clone --depth 1 https://github.com/matelot-cloud/matelot && cd matelot/docker
 cp .env.example .env            # MATELOT_DOMAIN (localhost to try it), MATELOT_ADMIN_EMAIL
-docker compose up -d
+docker compose up -d            # pulls ghcr.io/matelot-cloud/{api,web,worker,runner} (public, no login)
 docker compose logs -f welcome  # URL + administrator login once the cell answers
 ```
 
@@ -20,8 +21,9 @@ docker compose logs -f welcome  # URL + administrator login once the cell answer
 | `scripts/` (published repo only) | `cell-backup.sh --compose`, `cell-restore.sh --compose` and their lib |
 | `smoke.sh` | end-to-end check: up → doctor → project → backup → `down -v` → `up -d` (new secrets) → restore → the original login works (what CI runs on every commit). Runs from its own `.env.smoke` (`COMPOSE_ENV_FILES`), never touches your `.env`; `MATELOT_CLI="node …/index.js"` to use a checkout, `--check` only resolves the CLI |
 
-Day 2: `scripts/cell-backup.sh --compose . -d ./backups` · upgrade = `MATELOT_VERSION` in `.env`, `docker compose
-pull && docker compose up -d` · `matelot doctor` · `docker compose run --rm init show` prints the admin login again.
+Day 2: `scripts/cell-backup.sh --compose . -d ./backups` · upgrade = `MATELOT_VERSION` in `.env` (the bare version,
+`0.1.0`, not the `v0.1.0` git tag — images are published under both tags), `docker compose pull && docker compose up -d`
+· `matelot doctor` · `docker compose run --rm init show` prints the admin login again.
 
 Design notes: every service runs as a non-root user (Caddy binds 80/443 through `ip_unprivileged_port_start`);
 memory limits add up to about 4 GB; the registry is `localhost:5000` on localhost (Docker treats localhost as an

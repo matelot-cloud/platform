@@ -3,14 +3,14 @@ name: secops-cell
 description: >-
   One Matelot cell: the product-security platform (API, worker, web, managed runners, registry,
   Postgres, Redis, Keycloak) in a single namespace. One Helm release per organization.
-home: https://matelot-cloud.github.io/website/
+home: https://matelot.cloud/
 sources:
   - https://github.com/matelot-cloud/helm-charts
   - https://github.com/matelot-cloud/matelot
 maintainers:
   - name: Matelot
     url: https://github.com/matelot-cloud
-icon: https://matelot-cloud.github.io/website/assets/logo.png
+icon: https://matelot.cloud/assets/logo.png
 type: application
 version: 0.1.0
 appVersion: "0.1.0"

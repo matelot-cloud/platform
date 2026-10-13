@@ -22,7 +22,7 @@ x-config-env: &config-env
   MATELOT_ORG_NAME: ${MATELOT_ORG_NAME:-My organization}
   MATELOT_ACME_EMAIL: ${MATELOT_ACME_EMAIL:-}
   MATELOT_REGISTRY_PORT: ${MATELOT_REGISTRY_PORT:-5000}
-  MATELOT_DOCS_URL: ${MATELOT_DOCS_URL:-https://matelot-cloud.github.io/website/docs/latest/}
+  MATELOT_DOCS_URL: ${MATELOT_DOCS_URL:-https://matelot.cloud/docs/latest/}
   MATELOT_LOG_LEVEL: ${MATELOT_LOG_LEVEL:-info}
   MATELOT_LICENSE: ${MATELOT_LICENSE:-}   # M13: licence key (Free tier when empty); also Settings → License in the app
 # api / worker entrypoint: load the generated secrets and config from the volume (eval'd by `sh -c`), then start

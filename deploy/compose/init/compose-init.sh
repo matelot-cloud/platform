@@ -18,7 +18,7 @@ ADMIN_EMAIL="${MATELOT_ADMIN_EMAIL:-admin@localhost}"
 ORG_SLUG="${MATELOT_ORG_SLUG:-main}"
 ORG_NAME="${MATELOT_ORG_NAME:-My organization}"
 REGISTRY_PORT="${MATELOT_REGISTRY_PORT:-5000}"
-DOCS_URL="${MATELOT_DOCS_URL:-https://matelot-cloud.github.io/website/docs/latest/}"
+DOCS_URL="${MATELOT_DOCS_URL:-https://matelot.cloud/docs/latest/}"
 case "$DOMAIN" in
   localhost|127.0.0.1|*.localhost|[0-9]*.[0-9]*.[0-9]*.[0-9]*) SCHEME=http; LOCAL=1;;
   *) SCHEME="${MATELOT_SCHEME:-https}"; LOCAL=0;;

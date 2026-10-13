@@ -33,7 +33,7 @@ backup archive, so you can start with Compose and move later without losing anyt
 ### A2. Start it
 
 ```bash
-git clone https://github.com/matelot-cloud/matelot.git && cd matelot/docker   # or download the docker/ folder
+git clone --depth 1 https://github.com/matelot-cloud/matelot && cd matelot/docker   # or download the docker/ folder
 cp .env.example .env
 # edit .env: MATELOT_DOMAIN (keep localhost to try it), MATELOT_ADMIN_EMAIL, optionally MATELOT_ADMIN_PASSWORD
 docker compose up -d
@@ -72,7 +72,7 @@ docker push "$(matelot registry path --service <serviceId>)":1   # prints host +
 
 | Variable | Default | What |
 | --- | --- | --- |
-| `MATELOT_VERSION` | the release the file shipped with | image tag of the four Matelot images; change it to upgrade |
+| `MATELOT_VERSION` | the release the file shipped with | image tag of the four Matelot images — the bare version (`0.1.0`, `0.1.0-rc.8`), not the `v…` git tag (images carry both); change it to upgrade |
 | `MATELOT_DOMAIN` | `localhost` | hostname users open; a real name switches to HTTPS and `registry.<domain>` |
 | `MATELOT_ACME_EMAIL` | empty | Let's Encrypt contact |
 | `MATELOT_ADMIN_EMAIL` / `MATELOT_ADMIN_PASSWORD` | `admin@localhost` / generated | the first administrator (password set here only before the first start) |

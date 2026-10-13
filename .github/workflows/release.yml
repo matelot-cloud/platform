@@ -25,7 +25,7 @@ on:
 env:
   REGISTRY: ghcr.io
   ORG: matelot-cloud
-  SITE: https://matelot-cloud.github.io/website
+  SITE: https://matelot.cloud
   CHART_DIR: deploy/helm/secops-cell
   CHART_NAME: secops-cell
 
@@ -299,6 +299,8 @@ jobs:
             echo '```'
             echo
             echo "Docker Compose: https://github.com/$ORG/matelot/tree/main/docker (compose.yaml for $VERSION; \`MATELOT_VERSION=$VERSION\` in .env, then \`docker compose pull && docker compose up -d\`)."
+            echo
+            echo "Images are tagged \`$VERSION\` and \`v$VERSION\` (the git tag); \`MATELOT_VERSION\` and the chart's \`image.tag\` take the bare version, \`$VERSION\`."
             echo
             echo "Install or upgrade: $SITE/docs/${{ needs.version.outputs.line }}/install.html"
           } >> notes.md

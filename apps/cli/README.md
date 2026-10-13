@@ -1,6 +1,6 @@
 # matelot-cli
 
-Command-line client for [Matelot](https://matelot-cloud.github.io/website/). Install (Node ≥ 18, no dependencies, no build): `npm install -g https://github.com/matelot-cloud/setup-cli/releases/latest/download/matelot-cli.tgz` — pinned: `releases/download/vX.Y.Z/matelot-cli-X.Y.Z.tgz` — or the GitHub Action below. Not `github:…#tag`: npm 10 leaves that install as a dangling symlink. Authenticates with **signed CI tokens** (HMAC over
+Command-line client for [Matelot](https://matelot.cloud/). Install (Node ≥ 18, no dependencies, no build): `npm install -g https://github.com/matelot-cloud/setup-cli/releases/latest/download/matelot-cli.tgz` — pinned: `releases/download/vX.Y.Z/matelot-cli-X.Y.Z.tgz` — or the GitHub Action below. Not `github:…#tag`: npm 10 leaves that install as a dangling symlink. Authenticates with **signed CI tokens** (HMAC over
 timestamp, nonce, method, path and body — the secret never travels), created in a project's
 *Settings → CI tokens*.
 

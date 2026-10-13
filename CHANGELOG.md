@@ -4,6 +4,11 @@
 
 Images `ghcr.io/matelot-cloud/{api,web,worker,runner}` and the chart `oci://ghcr.io/matelot-cloud/charts/secops-cell`, signed, with SBOM attestations; install guide at https://matelot-cloud.github.io/website/docs/latest/install.html. The sections below are the drops that make up the release, newest first.
 
+### Docs: custom domain everywhere; the clone step; image tag spelling
+- Every customer-facing link now uses https://matelot.cloud (Compose README and `.env`/`compose.yaml` defaults, `MATELOT_DOCS_URL`, the web app's default `docsUrl`, chart `Chart.yaml`/`values.yaml`, CLI README, the public READMEs/SUPPORT/SECURITY/profile, image labels via `SITE` in release.yml, the website's `content.json` url); the GitHub Pages address keeps serving as a fallback.
+- The Compose quick start starts with what a customer actually types: `git clone --depth 1 https://github.com/matelot-cloud/matelot && cd matelot/docker` (docker/README.md, install.md, the public README), and notes that `docker compose up -d` pulls the public ghcr.io images without a login.
+- Images carry two tags (`0.1.0-rc.8` and `v0.1.0-rc.8`); `MATELOT_VERSION` and the chart's `image.tag` take the bare version — said in install.md, docker/README.md, the release notes template and release-process.md.
+
 ### Fix: release pipeline — worker build hung 3 h 37 min; `npm pack` directory lost on regeneration
 - **Timeouts on every job** of every workflow (`timeout-minutes`): images 25 (a multi-arch build not done by then is hung — the arm64 leg under QEMU stalled on `images (worker)` for v0.1.0-rc.7), ci compose 45, the rest 5–25. A hang now fails in minutes.
 - **Worker built from the api job:** the worker is the second target of the api Dockerfile, so the `api` matrix leg builds it right after the api image on the same builder (`also: worker`): the shared stages are cache hits instead of a second full QEMU build. All image builds use the GitHub Actions cache (`type=gha`, scope per image; the worker also reads the api scope). Signing/SBOM/digest steps moved to `.github/scripts/sign-image.sh` (shellchecked) so both targets share them; SBOM artifacts are `sbom-<name>.spdx.json`.

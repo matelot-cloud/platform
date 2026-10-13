@@ -55,7 +55,7 @@ jobs:
           GH_TOKEN: ${{ secrets.PUBLIC_REPOS_TOKEN }}
         run: |
           VERSION=${GITHUB_REF_NAME#cli-v}
-          cd /tmp/setup-cli && npm pack --pack-destination /tmp/pack > /dev/null
+          mkdir -p /tmp/pack && cd /tmp/setup-cli && npm pack --pack-destination /tmp/pack > /dev/null
           cp "/tmp/pack/matelot-cli-$VERSION.tgz" /tmp/pack/matelot-cli.tgz     # fixed name for releases/latest/download/
           flags=(); case "$VERSION" in *-*) flags+=(--prerelease);; esac
           notes="Matelot CLI $VERSION. Install: \`npm install -g https://github.com/$ORG/setup-cli/releases/download/v$VERSION/matelot-cli-$VERSION.tgz\` (newest: \`releases/latest/download/matelot-cli.tgz\`); GitHub Actions: \`uses: $ORG/setup-cli@v$VERSION\`. Built from platform ${GITHUB_SHA::7}."

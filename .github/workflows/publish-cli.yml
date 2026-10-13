@@ -16,6 +16,9 @@ jobs:
   publish:
     outputs: { version: "${{ steps.v.outputs.version }}" }
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PACK: /tmp/pack      # where `npm pack` writes the tarball; the step creates it (scripts/check-workflows.sh guards this)
     defaults: { run: { working-directory: apps/cli } }
     steps:
       - uses: actions/checkout@v7
@@ -55,14 +58,14 @@ jobs:
           GH_TOKEN: ${{ secrets.PUBLIC_REPOS_TOKEN }}
         run: |
           VERSION=${GITHUB_REF_NAME#cli-v}
-          mkdir -p /tmp/pack && cd /tmp/setup-cli && npm pack --pack-destination /tmp/pack > /dev/null
-          cp "/tmp/pack/matelot-cli-$VERSION.tgz" /tmp/pack/matelot-cli.tgz     # fixed name for releases/latest/download/
+          mkdir -p "$PACK" && cd /tmp/setup-cli && npm pack --pack-destination "$PACK" > /dev/null
+          cp "$PACK/matelot-cli-$VERSION.tgz" "$PACK/matelot-cli.tgz"     # fixed name for releases/latest/download/
           flags=(); case "$VERSION" in *-*) flags+=(--prerelease);; esac
           notes="Matelot CLI $VERSION. Install: \`npm install -g https://github.com/$ORG/setup-cli/releases/download/v$VERSION/matelot-cli-$VERSION.tgz\` (newest: \`releases/latest/download/matelot-cli.tgz\`); GitHub Actions: \`uses: $ORG/setup-cli@v$VERSION\`. Built from platform ${GITHUB_SHA::7}."
           if gh release view "v$VERSION" --repo "$ORG/setup-cli" > /dev/null 2>&1; then
-            gh release upload "v$VERSION" --repo "$ORG/setup-cli" --clobber "/tmp/pack/matelot-cli-$VERSION.tgz" /tmp/pack/matelot-cli.tgz
+            gh release upload "v$VERSION" --repo "$ORG/setup-cli" --clobber "$PACK/matelot-cli-$VERSION.tgz" "$PACK/matelot-cli.tgz"
           else
-            gh release create "v$VERSION" --repo "$ORG/setup-cli" --title "matelot-cli $VERSION" --notes "$notes" "${flags[@]}" "/tmp/pack/matelot-cli-$VERSION.tgz" /tmp/pack/matelot-cli.tgz
+            gh release create "v$VERSION" --repo "$ORG/setup-cli" --title "matelot-cli $VERSION" --notes "$notes" "${flags[@]}" "$PACK/matelot-cli-$VERSION.tgz" "$PACK/matelot-cli.tgz"
           fi
       - name: Publish to npm (when NPM_TOKEN is configured)
         env:
@@ -75,6 +78,7 @@ jobs:
     # exactly the documented commands, on a machine that has nothing but Node: no checkout, no pnpm, no build
     needs: publish
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     env:
       VERSION: ${{ needs.publish.outputs.version }}
     steps:

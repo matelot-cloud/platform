@@ -32,6 +32,7 @@ env:
 jobs:
   version:
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     outputs:
       version: ${{ steps.v.outputs.version }}       # 1.2.3 or 1.2.3-rc.1
       line: ${{ steps.v.outputs.line }}             # v1.2  (docs folder)
@@ -48,6 +49,7 @@ jobs:
   images:
     needs: version
     runs-on: ubuntu-24.04
+    timeout-minutes: 25          # a multi-arch build that does not finish in 25 min is hung (the arm64 leg under QEMU stalled for 3 h once): fail fast, re-run the failed jobs
     permissions:
       contents: read
       packages: write
@@ -56,17 +58,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # context: the runner image builds from its own folder (as the Makefile does); the others from the repo root
-          - { name: api,    context: ., file: apps/api/Dockerfile,    target: runtime }
-          - { name: worker, context: ., file: apps/api/Dockerfile,    target: worker }
-          - { name: web,    context: ., file: apps/web/Dockerfile,    target: "" }
-          - { name: runner, context: apps/runner, file: apps/runner/Dockerfile, target: "" }
+          # context: the runner image builds from its own folder (as the Makefile does); the others from the repo root.
+          # The worker is a second target of the api Dockerfile: built in the api job right after the api image, on the
+          # same builder, so every stage up to the final one is a cache hit instead of a second full multi-arch build.
+          - { name: api,    context: ., file: apps/api/Dockerfile,    target: runtime, also: worker, also_target: worker }
+          - { name: web,    context: ., file: apps/web/Dockerfile,    target: "", also: "", also_target: "" }
+          - { name: runner, context: apps/runner, file: apps/runner/Dockerfile, target: "", also: "", also_target: "" }
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v4
       - uses: docker/login-action@v4
         with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - uses: sigstore/cosign-installer@v3
+      - uses: anchore/sbom-action/download-syft@v0
       - id: meta
         uses: docker/metadata-action@v6
         with:
@@ -95,24 +100,67 @@ jobs:
           provenance: false
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,scope=${{ matrix.name }},mode=max
-      - uses: sigstore/cosign-installer@v3
-      - uses: anchore/sbom-action/download-syft@v0
       - name: Sign the image and attach its SBOM (keyless, GitHub OIDC)
         env:
+          NAME: ${{ matrix.name }}
           IMAGE: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ matrix.name }}@${{ steps.build.outputs.digest }}
-        run: |
-          cosign sign --yes "$IMAGE"
-          syft "$IMAGE" -o spdx-json > sbom.spdx.json
-          cosign attest --yes --type spdxjson --predicate sbom.spdx.json "$IMAGE"
-          echo "${{ matrix.name }} ${{ steps.build.outputs.digest }}" > "digest-${{ matrix.name }}.txt"
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: bash .github/scripts/sign-image.sh
       - uses: actions/upload-artifact@v7
         with: { name: "digest-${{ matrix.name }}", path: "digest-${{ matrix.name }}.txt" }
       - uses: actions/upload-artifact@v7
-        with: { name: "sbom-${{ matrix.name }}", path: sbom.spdx.json }
+        with: { name: "sbom-${{ matrix.name }}", path: "sbom-${{ matrix.name }}.spdx.json" }
+      # ---- second target of the same Dockerfile (the worker, from the api job)
+      - id: meta-also
+        if: matrix.also != ''
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ matrix.also }}
+          flavor: latest=${{ needs.version.outputs.prerelease == 'false' }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=ref,event=tag
+          labels: |
+            org.opencontainers.image.title=Matelot ${{ matrix.also }}
+            org.opencontainers.image.vendor=Matelot
+            org.opencontainers.image.url=${{ env.SITE }}/
+            org.opencontainers.image.documentation=${{ env.SITE }}/docs/latest/install.html
+            org.opencontainers.image.source=https://github.com/${{ env.ORG }}/matelot
+            org.opencontainers.image.licenses=LicenseRef-Matelot-EULA
+      - id: build-also
+        if: matrix.also != ''
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          target: ${{ matrix.also_target }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta-also.outputs.tags }}
+          labels: ${{ steps.meta-also.outputs.labels }}
+          provenance: false
+          cache-from: |
+            type=gha,scope=${{ matrix.name }}
+            type=gha,scope=${{ matrix.also }}
+          cache-to: type=gha,scope=${{ matrix.also }},mode=max
+      - name: Sign the second image and attach its SBOM
+        if: matrix.also != ''
+        env:
+          NAME: ${{ matrix.also }}
+          IMAGE: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ matrix.also }}@${{ steps.build-also.outputs.digest }}
+          DIGEST: ${{ steps.build-also.outputs.digest }}
+        run: bash .github/scripts/sign-image.sh
+      - uses: actions/upload-artifact@v7
+        if: matrix.also != ''
+        with: { name: "digest-${{ matrix.also }}", path: "digest-${{ matrix.also }}.txt" }
+      - uses: actions/upload-artifact@v7
+        if: matrix.also != ''
+        with: { name: "sbom-${{ matrix.also }}", path: "sbom-${{ matrix.also }}.spdx.json" }
 
   chart:
     needs: version
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: read
       packages: write
@@ -157,6 +205,7 @@ jobs:
   compose:
     needs: version
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions: { contents: read }
     steps:
       - uses: actions/checkout@v7
@@ -181,6 +230,7 @@ jobs:
   docs:
     needs: version
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions: { contents: read }
     steps:
       - uses: actions/checkout@v7
@@ -209,7 +259,12 @@ jobs:
 
   release:
     needs: [version, images, chart, compose, docs]
+    # Runs when every upstream job succeeded — in this attempt or an earlier one: "Re-run failed jobs" re-runs only the
+    # failed image leg and this job, and the artifacts of earlier attempts stay available, so one hung image build is
+    # recovered by a single re-run instead of a new tag.
+    if: ${{ !cancelled() && needs.version.result == 'success' && needs.images.result == 'success' && needs.chart.result == 'success' && needs.compose.result == 'success' && needs.docs.result == 'success' }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions: { contents: read }
     steps:
       - uses: actions/checkout@v7
@@ -217,6 +272,10 @@ jobs:
         with: { pattern: "digest-*", merge-multiple: true, path: digests }
       - uses: actions/download-artifact@v8
         with: { pattern: "sbom-*", path: sboms }
+      - name: Every image has a digest (a partial re-run must not publish a release with an image missing)
+        run: |
+          for n in api worker web runner; do [ -s "digests/digest-$n.txt" ] || { echo "::error::no digest for $n — its image job did not finish; re-run the failed jobs"; exit 1; }; done
+          cat digests/*.txt
       - name: "Release notes: CHANGELOG section + digests"
         env:
           VERSION: ${{ needs.version.outputs.version }}
@@ -243,7 +302,7 @@ jobs:
             echo
             echo "Install or upgrade: $SITE/docs/${{ needs.version.outputs.line }}/install.html"
           } >> notes.md
-          for d in sboms/*/; do n=$(basename "$d" | sed 's/^sbom-//'); cp "$d/sbom.spdx.json" "matelot-$n-$VERSION.spdx.json"; done
+          for d in sboms/*/; do n=$(basename "$d" | sed 's/^sbom-//'); cp "$d/sbom-$n.spdx.json" "matelot-$n-$VERSION.spdx.json"; done
           cat notes.md
       - name: Create the GitHub Release in matelot-cloud/matelot
         env:

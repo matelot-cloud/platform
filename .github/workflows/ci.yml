@@ -7,6 +7,7 @@ on:
 jobs:
   api:
     runs-on: ubuntu-24.04
+    timeout-minutes: 25
     services:
       postgres:
         image: postgres:16
@@ -36,6 +37,7 @@ jobs:
 
   web:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -51,12 +53,15 @@ jobs:
 
   layout:
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - name: Only the monorepo's top-level directories exist (stale copies from old drops fail here)
         run: bash scripts/check-layout.sh
       - name: No retired names survive (old organization, old CLI mirror, old domain)
         run: bash scripts/check-forbidden.sh
+      - name: Workflow guards (timeouts on every job, npm pack directory, worker built from the api job, release re-run safe)
+        run: bash scripts/check-workflows.sh
       - name: Compose init script (generated files survive hostile values; secrets generated once)
         run: bash deploy/compose/init/compose-init.test.sh
       - name: Compose backup/restore helpers (archive copy-out / secrets copy-in stream through the container, no bind mounts; runs as the unprivileged runner user)
@@ -78,6 +83,7 @@ jobs:
 
   chart:
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: azure/setup-helm@v5
@@ -90,6 +96,7 @@ jobs:
 
   image:
     runs-on: ubuntu-24.04
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4
@@ -105,6 +112,7 @@ jobs:
   compose:
     # the Docker Compose quick start, end to end, with the images built from this commit (deploy/compose/smoke.sh)
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4

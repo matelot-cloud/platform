@@ -156,6 +156,19 @@ link to the public repositories or the site instead. `make docs-check` is what C
   the repository root; `release.yml` and `ci.yml` carry the context per matrix entry.
 - cosign reads Docker's credential store, which `helm registry login` does not write: the chart job logs in with
   `docker/login-action` before pushing and signing (a freshly created private package answers UNAUTHORIZED otherwise).
+- Every job has `timeout-minutes` (images 25: a multi-arch build that has not finished by then is hung — the arm64 leg
+  under QEMU once ran 3 h 37 min; ci compose 45, the rest 5–25). The worker image is the second target of the api
+  Dockerfile and is built in the **api** leg right after the api image on the same builder (`also: worker` in the
+  matrix), so its shared stages are cache hits instead of a second full multi-arch build; every image job also uses
+  the GitHub Actions cache (`type=gha`, one scope per image, the worker reading the api scope too).
+- **A hung or failed image leg is recovered with "Re-run failed jobs"**, not a new tag: the `release` job runs when
+  every upstream job succeeded in this or an earlier attempt (`if: !cancelled() && needs.*.result == 'success'`),
+  artifacts of earlier attempts stay available, and a pre-check refuses to publish unless all four image digests
+  (api, worker, web, runner) are present.
+- `publish-cli.yml` creates the pack directory itself (`PACK` job env, `mkdir -p "$PACK" && npm pack
+  --pack-destination "$PACK"`). `scripts/check-workflows.sh` (layout CI job, `make check-layout`) fails when a
+  regenerated workflow loses any of the above: a job without a timeout, a pack step without the mkdir, a separate worker
+  leg, a release job without the re-run guard.
 
 ## Local checks before tagging
 

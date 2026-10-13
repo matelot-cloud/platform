@@ -118,7 +118,7 @@ docs-sync: ## Render docs/ into a local clone of matelot-cloud/website (WEBSITE_
 > cd $(WEBSITE_DIR) && node tools/build.mjs && echo "preview: npx serve $(WEBSITE_DIR)/dist"
 
 check-layout: ## Fail on stale top-level directories left by old drops and on retired names (what CI runs)
-> bash scripts/check-layout.sh && bash scripts/check-forbidden.sh
+> bash scripts/check-layout.sh && bash scripts/check-forbidden.sh && bash scripts/check-workflows.sh
 
 helm-lint: ## Lint and render the chart in every supported configuration (defaults, production, backups, S3, external DB, TLS)
 > bash scripts/chart-test.sh

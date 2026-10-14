@@ -33,9 +33,25 @@ scripts/cell-provision.sh new --slug acme --name "ACME" --domain platform.local 
 DB_PASSWORD=… KC_ADMIN_PASSWORD=… scripts/cell-provision.sh apply --slug acme
 ```
 
-gives https://acme.platform.local with a certificate from the local CA: the browser shows a warning you can click
-through (no flags), or trust the CA once — `kind-up.sh` prints the command. `make deploy TENANT=acme` (the chart with
-the images from this checkout) uses the same issuer.
+gives https://acme.platform.local with a certificate from the local CA. Then, on the machine the **browser** runs on:
+
+- hosts file: `127.0.0.1 acme.platform.local auth-acme.platform.local registry-acme.platform.local` — `/etc/hosts`, and
+  on WSL also `C:\Windows\System32\drivers\etc\hosts` (as Administrator), because the Windows browser does not read
+  WSL's file;
+- the CA: export it once with `kubectl -n cert-manager get secret matelot-dev-ca -o jsonpath='{.data.ca\.crt}' | base64 -d
+  > ~/matelot-dev-ca.crt`, then either click through the certificate warning (no flags needed) or trust it — macOS
+  `security add-trusted-cert -d -r trustRoot -k ~/Library/Keychains/login.keychain-db ~/matelot-dev-ca.crt`; Linux copy
+  to `/usr/local/share/ca-certificates/` + `update-ca-certificates`; Windows `certutil -addstore -user Root
+  matelot-dev-ca.crt` (PowerShell), from WSL `/mnt/c/Windows/System32/certutil.exe -addstore -user Root "$(wslpath -w
+  ~/matelot-dev-ca.crt)"`;
+- the CLI: Node does not read the OS trust store — `NODE_EXTRA_CA_CERTS=~/matelot-dev-ca.crt matelot login --url
+  https://acme.platform.local` (export it in your shell profile for every `matelot` command); `docker login
+  registry-acme.platform.local` needs the CA in Docker's trust (`/etc/docker/certs.d/registry-acme.platform.local/ca.crt`).
+
+`make deploy TENANT=acme` (the chart with the images from this checkout) uses the same issuer. Switching an installed
+cell from `tls: false` to `true` (or changing the domain) is a normal `apply`: the chart's post-upgrade hook
+`<release>-realm-sync` updates the Keycloak realm's redirect URIs and `sslRequired` through the admin API — the realm is
+imported only once, so without it the login would answer "Invalid parameter: redirect_uri".
 
 ## 2. Inputs per cell
 

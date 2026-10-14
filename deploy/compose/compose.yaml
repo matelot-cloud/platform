@@ -213,6 +213,21 @@ services:
       init: { condition: service_completed_successfully }
       web: { condition: service_healthy }
 
+  # `start --import-realm` imports once (IGNORE_EXISTING): after a MATELOT_DOMAIN / scheme change the redirect URIs in the
+  # database would stay old. This runs on every `up` once Keycloak is healthy and applies the rendered realm's URL settings
+  # through the admin API (init/realm-sync.js, the chart's post-install/post-upgrade hook); users are never touched.
+  realm-sync:
+    image: ${MATELOT_REGISTRY_PREFIX:-ghcr.io/matelot-cloud}/api:${MATELOT_VERSION:-latest}
+    <<: *app-image
+    entrypoint: ["bash", "/init/compose-init.sh", "realm-update"]
+    environment: *config-env
+    volumes:
+      - ./init:/init:ro
+      - config:/matelot:ro
+    restart: "no"
+    depends_on:
+      keycloak: { condition: service_healthy }
+
   # prints the URL and the first administrator's login once the cell answers; `docker compose logs welcome` shows it again
   welcome:
     image: ${MATELOT_REGISTRY_PREFIX:-ghcr.io/matelot-cloud}/api:${MATELOT_VERSION:-latest}
@@ -240,6 +255,7 @@ services:
     depends_on:
       caddy: { condition: service_healthy }
       api: { condition: service_healthy }
+      realm-sync: { condition: service_completed_successfully }
 
   # `docker compose --profile backup run --rm backup`: pg_dump of both databases + secrets + registry blobs → backups volume
   backup:

@@ -99,5 +99,13 @@ print("   an image tag change rolls only", ", ".join(changed))
 PY
 # the Docker Compose stack ships copies of the chart's backup scripts: they must be identical (release.yml publishes both)
 for f in backup.sh restore-db.sh; do cmp -s "$CHART/files/$f" "deploy/compose/backup/$f" || { echo "deploy/compose/backup/$f differs from $CHART/files/$f (copy it over)" >&2; exit 1; }; done
+cmp -s "$CHART/files/realm-sync.js" deploy/compose/init/realm-sync.js || { echo "deploy/compose/init/realm-sync.js differs from $CHART/files/realm-sync.js (copy it over)" >&2; exit 1; }
+# the realm-sync hook: post-install + post-upgrade, mounts the realm ConfigMap, runs the shared script; Keycloak's import
+# directory gets realm.json only (the script must not land in /opt/keycloak/data/import)
+grep -q 'helm.sh/hook: post-install,post-upgrade' "$OUT/defaults.yaml" && grep -q 'node, /realm/realm-sync.js\|"node", "/realm/realm-sync.js"' "$OUT/defaults.yaml" || { echo "realm-sync hook Job missing" >&2; exit 1; }
+grep -q 'items: \[{ key: realm.json, path: realm.json }\]\|key: realm.json' "$OUT/defaults.yaml" || { echo "keycloak must mount only realm.json from the realm ConfigMap" >&2; exit 1; }
+# the http → https upgrade scenario at the rendering level: the realm the hook applies carries the https redirect URI
+grep -q '"https://acme.platform.local/\*"' "$OUT/tls.yaml" && grep -q '"sslRequired": "external"' "$OUT/tls.yaml" || { echo "tls=true realm must carry https redirect URIs and sslRequired external" >&2; exit 1; }
+grep -q '"http://acme.platform.local/\*"' "$OUT/defaults.yaml" || { echo "tls=false realm must carry the http redirect URI" >&2; exit 1; }
 docker compose -f deploy/compose/compose.yaml --env-file deploy/compose/.env.example config --quiet 2>/dev/null && echo "   compose.yaml renders" || echo "   (docker compose not available: compose.yaml not rendered here)"
 echo "chart ok ($OUT)"

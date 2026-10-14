@@ -16,6 +16,7 @@ docker compose logs -f welcome  # URL + administrator login once the cell answer
 | `compose.yaml` | the stack: `init` (first-start generation, the only root container), postgres, redis, keycloak, api, worker, web, runner, registry, caddy (the one published port pair), `welcome`, and the `backup` profile |
 | `.env.example` | every setting; nothing secret — secrets are generated on first start into the `config` volume |
 | `init/compose-init.sh` | generates secrets once (same layout as the Kubernetes Secrets), rewrites the derived configuration (Caddyfile, Keycloak realm, registry config, web config.json) on every start; `show`, `restore-secrets`, `realm-update` modes |
+| `init/realm-sync.js` | run by the `realm-sync` service on every `up` (after Keycloak is healthy): applies the rendered realm's redirect URIs / `sslRequired` through the admin API, because `--import-realm` imports only once; a copy of the chart's `files/realm-sync.js` |
 | `postgres/` | creates the keycloak database on the first start |
 | `backup/` | the backup job script and the in-database restore script (copies of the Helm chart's) |
 | `scripts/` (published repo only) | `cell-backup.sh --compose`, `cell-restore.sh --compose` and their lib |

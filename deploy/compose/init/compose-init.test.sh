@@ -61,4 +61,8 @@ bash compose-init.sh restore-secrets "$T/restore" > /dev/null
 [ "$(cat "$M/secrets/cell-key/CELL_ENCRYPTION_KEY")" = "abc" ] || { echo "FAIL: restore-secrets" >&2; exit 1; }
 # ownership of the data volumes (only meaningful as root; as a user chown fails silently in the script? no: it must not fail the run)
 [ -d "$T/v/postgres" ]
+# realm-update runs the shared realm-sync script with the bootstrap admin from the secrets: against a closed port it
+# must give up with a clear message after REALM_SYNC_TIMEOUT (the script itself is tested by realm-sync.test.js)
+out="$(KEYCLOAK_URL=http://127.0.0.1:1/auth REALM_SYNC_TIMEOUT=1 bash compose-init.sh realm-update 2>&1)" && { echo "FAIL: realm-update should fail against a closed port" >&2; exit 1; }
+printf '%s' "$out" | grep -q "keycloak at http://127.0.0.1:1/auth not ready after 1s" || { echo "FAIL: realm-update message: $out" >&2; exit 1; }
 echo "compose-init ok"

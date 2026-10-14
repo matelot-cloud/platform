@@ -81,9 +81,9 @@ docker push "$(matelot registry path --service <serviceId>)":1   # prints host +
 | `MATELOT_LICENSE` | empty | licence key (Free tier when empty; entitlements arrive with the commercial release) |
 | `MATELOT_BACKUP_RETENTION_DAYS` | 14 | archives kept on the backups volume |
 
-Changing `MATELOT_DOMAIN` after the first start: Keycloak imported the realm with the old redirect URIs, so run
-`docker compose run --rm init realm-update` after `docker compose up -d` (or edit the `platform-web` client in the
-Keycloak admin console). Everything else regenerates on every start.
+Changing `MATELOT_DOMAIN` (or the scheme) after the first start is just `docker compose up -d`: Keycloak imported the
+realm once, so the one-shot `realm-sync` service updates the realm's redirect URIs and `sslRequired` through the admin
+API on every start (users untouched; `docker compose logs realm-sync`). Everything else regenerates on every start.
 
 ### A4. Backups and restore
 

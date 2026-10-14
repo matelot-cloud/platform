@@ -68,6 +68,7 @@ log "docker compose up -d"
 docker compose up -d || { echo "docker compose up failed" >&2; diagnose; exit 1; }
 log "waiting for $BASE"; wait_ready
 docker compose logs welcome | tail -12
+docker compose logs realm-sync | grep -q "realm platform synced\|realm platform: already in sync" || { echo "realm-sync did not run (docker compose logs realm-sync):" >&2; docker compose logs realm-sync >&2; exit 1; }
 log "matelot doctor (before login: the public checks)"
 export MATELOT_URL="$BASE"
 export MATELOT_CREDENTIALS="$PWD/.smoke-credentials.json"; rm -f "$MATELOT_CREDENTIALS"

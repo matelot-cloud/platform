@@ -8,7 +8,8 @@
 #     Keycloak: redirect URIs of an existing realm are updated by `compose-init.sh realm-update`, see the README);
 #   - data volumes get the uid of the non-root user that runs each service.
 # Modes: (default) init · show (print the admin login) · restore-secrets DIR (copy a backup's secrets/ in, then init)
-#        realm-update (stack running: point the imported Keycloak realm at the current MATELOT_DOMAIN)
+#        realm-update (stack running: point the imported Keycloak realm at the current MATELOT_DOMAIN / scheme — the
+#        `realm-sync` service does this on every `up`; init/realm-sync.js is a copy of the chart's files/realm-sync.js)
 set -euo pipefail
 M="${MATELOT_CONFIG_DIR:-/matelot}"      # the config volume (overridable for the unit test)
 V="${MATELOT_VOLUMES_DIR:-/volumes}"     # the data volumes, for ownership
@@ -52,22 +53,11 @@ if [ "$MODE" = restore-secrets ]; then
   MODE=init
 fi
 if [ "$MODE" = realm-update ]; then
-  # Keycloak imports realm.json once; after a domain change the platform-web redirect URIs and sslRequired are updated in place
-  exec node -e '
-    const [base, user, pass, sslRequired] = process.argv.slice(1);
-    const kc = "http://keycloak:8080/auth";
-    (async () => {
-      const t = await (await fetch(`${kc}/realms/master/protocol/openid-connect/token`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "password", client_id: "admin-cli", username: user, password: pass }) })).json();
-      if (!t.access_token) throw new Error("keycloak admin login failed: " + JSON.stringify(t));
-      const h = { authorization: `Bearer ${t.access_token}`, "content-type": "application/json" };
-      const r = await fetch(`${kc}/admin/realms/platform`, { method: "PUT", headers: h, body: JSON.stringify({ sslRequired }) });
-      if (!r.ok) throw new Error(`realm update: HTTP ${r.status}`);
-      const [c] = await (await fetch(`${kc}/admin/realms/platform/clients?clientId=platform-web`, { headers: h })).json();
-      const u = await fetch(`${kc}/admin/realms/platform/clients/${c.id}`, { method: "PUT", headers: h, body: JSON.stringify({ ...c, redirectUris: [`${base}/*`] }) });
-      if (!u.ok) throw new Error(`client update: HTTP ${u.status}`);
-      console.log(`realm platform updated: redirect ${base}/*, sslRequired ${sslRequired}`);
-    })().catch((e) => { console.error(e.message); process.exit(1); });
-  ' "$BASE_URL" "$(cat "$M/secrets/keycloak/KC_BOOTSTRAP_ADMIN_USERNAME")" "$(cat "$M/secrets/keycloak/KC_BOOTSTRAP_ADMIN_PASSWORD")" "$([ "$SCHEME" = https ] && echo external || echo none)"
+  # Keycloak imports realm.json once (IGNORE_EXISTING); after a domain or scheme change the realm in the database is
+  # brought in line by the shared script (redirect URIs, sslRequired, …; users untouched)
+  KC_BOOTSTRAP_ADMIN_USERNAME="$(cat "$M/secrets/keycloak/KC_BOOTSTRAP_ADMIN_USERNAME")"; KC_BOOTSTRAP_ADMIN_PASSWORD="$(cat "$M/secrets/keycloak/KC_BOOTSTRAP_ADMIN_PASSWORD")"
+  export KC_BOOTSTRAP_ADMIN_USERNAME KC_BOOTSTRAP_ADMIN_PASSWORD
+  exec node "$(dirname "$0")/realm-sync.js" "${KEYCLOAK_URL:-http://keycloak:8080/auth}" "$M/keycloak/import/realm.json"
 fi
 command -v openssl > /dev/null || { echo "openssl is required in the init image" >&2; exit 1; }
 

@@ -52,6 +52,53 @@ require_cluster() {
 }
 # ${VAR} placeholders of the values file, comments excluded
 placeholders() { sed 's/ *#.*$//' "$VALUES" | grep -o '\${[A-Z0-9_]*}' | sort -u || true; }
+# values_get <key> [<key>…]: one scalar from the values file ($VALUES) by key path, parsed as YAML (PyYAML when
+# installed, else a small indentation parser for the shapes this template uses) — never by grep: an inline comment
+# such as `cluster-issuer: selfsigned   # letsencrypt in production` must yield `selfsigned`, and quotes must be dropped.
+values_get() { python3 - "$VALUES" "$@" <<'PY'
+import sys
+file, path = sys.argv[1], sys.argv[2:]
+text = open(file, encoding="utf-8").read()
+try:
+    import yaml
+    data = yaml.safe_load(text)
+except ImportError:
+    def strip(line):  # comment outside quotes
+        out, q = [], None
+        for ch in line:
+            if q: out.append(ch); q = None if ch == q else q
+            elif ch in "\"'": q = ch; out.append(ch)
+            elif ch == "#": break
+            else: out.append(ch)
+        return "".join(out).rstrip()
+    def scalar(v):
+        v = v.strip()
+        if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'": return v[1:-1]
+        if v in ("true", "True"): return True
+        if v in ("false", "False"): return False
+        if v.startswith("[") and v.endswith("]"): return [scalar(x) for x in v[1:-1].split(",") if x.strip()]
+        if v.startswith("{") and v.endswith("}"): return {}
+        return v
+    data, stack = {}, [(-1, {})]
+    stack[0] = (-1, data)
+    for raw in text.splitlines():
+        line = strip(raw)
+        if not line.strip() or line.lstrip().startswith("-"): continue
+        indent = len(line) - len(line.lstrip())
+        key, _, val = line.strip().partition(":")
+        while stack and indent <= stack[-1][0]: stack.pop()
+        parent = stack[-1][1]
+        if val.strip() == "": parent[key] = {}; stack.append((indent, parent[key]))
+        else: parent[key] = scalar(val)
+cur = data
+for part in path:
+    cur = (cur or {}).get(part) if isinstance(cur, dict) else None
+if cur is None: print("")
+elif isinstance(cur, bool): print("true" if cur else "false")
+elif isinstance(cur, list): print(",".join(str(x) for x in cur))
+else: print(cur)
+PY
+}
 
 # ---- new: write the cell's values file from the template --------------------------------------
 cmd_new() {
@@ -81,17 +128,18 @@ preflight() {
     if [ -z "${!v:-}" ]; then echo "   missing environment variable: $v (referenced in $VALUES)" >&2; missing=1; else echo "   secret:    $v (from environment)"; fi
   done
   [ "$missing" = 0 ] || exit 1
-  local cls; cls="$(sed -n 's/^ *className: *\(.*\)$/\1/p' "$VALUES" | head -1 | tr -d '"')"; cls="${cls:-nginx}"
+  local cls; cls="$(values_get ingress className)"; cls="${cls:-nginx}"
   local failed=0
   if kubectl get ingressclass "$cls" > /dev/null 2>&1; then echo "   ingress:   class $cls present"; else echo "   ingress:   class $cls NOT found (ingress.className)" >&2; failed=1; fi
-  if grep -q '^ *tls: *true' "$VALUES"; then
-    local issuer; issuer="$(sed -n 's/.*cert-manager.io\/cluster-issuer: *//p' "$VALUES" | head -1 | tr -d '"')"
+  local tls; tls="$(values_get ingress tls)"
+  if [ "$tls" = true ]; then
+    local issuer; issuer="$(values_get ingress annotations cert-manager.io/cluster-issuer)"
     if [ -n "$issuer" ]; then
       if kubectl get clusterissuer "$issuer" > /dev/null 2>&1; then echo "   tls:       ClusterIssuer $issuer present"; else echo "   tls:       ClusterIssuer $issuer NOT found (cert-manager)" >&2; failed=1; fi
     else echo "   tls:       on, no cert-manager issuer annotation — provide the Secret $RELEASE-app-tls (and -auth-tls, -registry-tls) yourself"; fi
   fi
-  local domain; domain="$(sed -n 's/^ *domain: *\(.*\)$/\1/p' "$VALUES" | head -1 | tr -d '"' | sed 's/ *#.*//')"
-  if ! grep -q '^ *tls: *true' "$VALUES"; then
+  local domain; domain="$(values_get tenant domain)"
+  if [ "$tls" != true ]; then
     case "$domain" in localhost|*.localhost|127.0.0.1) echo "   tls:       off (fine on localhost)";;
       *) echo "   tls:       OFF on $SLUG.$domain — WARNING: browsers treat only https:// and localhost as secure contexts; the Keycloak login page will fail (\"Crypto.subtle is available only in secure contexts\"). Set ingress.tls: true with a cert-manager issuer (kind: selfsigned). API and CLI still work." >&2;;
     esac

@@ -32,15 +32,21 @@ kubectl wait --for=condition=Ready clusterissuer/selfsigned --timeout=60s
 cat <<MSG
 
 kind cluster "secops" is ready: ingress-nginx, cert-manager, ClusterIssuer "selfsigned" (local CA "matelot-dev-ca").
-Add the tenant hosts to /etc/hosts, e.g. for TENANT=acme:
+Add the tenant hosts to the hosts file of the machine the BROWSER runs on — /etc/hosts here, and on WSL also
+C:\Windows\System32\drivers\etc\hosts (as Administrator) for the Windows browser — e.g. for TENANT=acme:
 
   127.0.0.1 acme.platform.local auth-acme.platform.local registry-acme.platform.local
 
-Cells use HTTPS with certificates from that CA (make deploy / cell-provision.sh new on this context set it). The browser
-shows a certificate warning you can click through; to remove it, trust the CA once:
+Cells use HTTPS with certificates from that CA (make deploy / cell-provision.sh new on this context set it). Export it
+once:
 
-  kubectl -n cert-manager get secret matelot-dev-ca -o jsonpath='{.data.ca\.crt}' | base64 -d > matelot-dev-ca.crt
-  (macOS: security add-trusted-cert -d -r trustRoot -k ~/Library/Keychains/login.keychain-db matelot-dev-ca.crt ·
-   Linux: copy to /usr/local/share/ca-certificates/ and update-ca-certificates · or import it in the browser)
+  kubectl -n cert-manager get secret matelot-dev-ca -o jsonpath='{.data.ca\.crt}' | base64 -d > ~/matelot-dev-ca.crt
+
+Browser: a certificate warning you can click through, or trust the CA — macOS: security add-trusted-cert -d -r trustRoot
+  -k ~/Library/Keychains/login.keychain-db ~/matelot-dev-ca.crt · Linux: copy to /usr/local/share/ca-certificates/ and
+  update-ca-certificates · Windows (PowerShell): certutil -addstore -user Root matelot-dev-ca.crt, from WSL:
+  /mnt/c/Windows/System32/certutil.exe -addstore -user Root "$(wslpath -w ~/matelot-dev-ca.crt)"
+CLI (Node does not read the OS store): NODE_EXTRA_CA_CERTS=~/matelot-dev-ca.crt matelot login --url https://acme.platform.local
+  (put the variable in your shell profile); docker login registry-acme.platform.local needs the CA in Docker's trust too.
 
 MSG

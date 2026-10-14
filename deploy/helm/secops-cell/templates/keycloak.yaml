@@ -21,6 +21,70 @@ metadata:
 data:
   realm.json: |-
 {{ tpl (.Files.Get "files/realm.json.tpl") . | indent 4 }}
+  realm-sync.js: |-
+{{ .Files.Get "files/realm-sync.js" | indent 4 }}
+---
+# `start --import-realm` imports once (IGNORE_EXISTING): after a scheme or hostname change the clients' redirect URIs in
+# the database stay old ("Invalid parameter: redirect_uri"). This hook applies the rendered realm's URL-shaped settings
+# (sslRequired, redirectUris, webOrigins, rootUrl…) through the admin API after every install and upgrade — users,
+# roles and anything created by hand are not touched (files/realm-sync.js; the Compose stack runs the same script).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-realm-sync
+  labels:
+    {{- include "cell.labels" . | nindent 4 }}
+    app.kubernetes.io/name: realm-sync
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "5"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/name: realm-sync
+    spec:
+      restartPolicy: Never
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: realm-sync
+          image: {{ include "cell.image" . | quote }}
+          command: ["node", "/realm/realm-sync.js", {{ printf "http://%s-keycloak:8080" .Release.Name | quote }}, "/realm/realm.json"]
+          env:
+            - name: REALM_SYNC_TIMEOUT
+              value: "540"
+          envFrom:
+            - secretRef:
+                name: {{ .Release.Name }}-keycloak
+          volumeMounts:
+            - name: realm
+              mountPath: /realm
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests: { cpu: 10m, memory: 64Mi }
+            limits: { cpu: 200m, memory: 128Mi }
+      volumes:
+        - name: realm
+          configMap:
+            name: {{ .Release.Name }}-keycloak-realm
 ---
 apiVersion: v1
 kind: Service
@@ -132,6 +196,7 @@ spec:
         - name: realm
           configMap:
             name: {{ .Release.Name }}-keycloak-realm
+            items: [{ key: realm.json, path: realm.json }]   # only the realm: the import directory must hold JSON only
 {{- if .Values.ingress.enabled }}
 ---
 apiVersion: networking.k8s.io/v1

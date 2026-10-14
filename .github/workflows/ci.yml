@@ -64,6 +64,8 @@ jobs:
         run: bash scripts/check-workflows.sh
       - name: Compose init script (generated files survive hostile values; secrets generated once)
         run: bash deploy/compose/init/compose-init.test.sh
+      - name: "cell-provision.sh: new picks the issuer per context; preflight reads the generated values as YAML (inline comments)"
+        run: bash scripts/cell-provision.test.sh
       - name: Compose backup/restore helpers (archive copy-out / secrets copy-in stream through the container, no bind mounts; runs as the unprivileged runner user)
         run: bash scripts/lib/compose.test.sh
       - name: Shell scripts parse and pass shellcheck (operator scripts, compose stack, chart hooks)
@@ -78,6 +80,8 @@ jobs:
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile --filter matelot-cli
       - run: pnpm --filter matelot-cli build
+      - name: Keycloak realm sync (http → https upgrade applied through the admin API; users untouched; idempotent)
+        run: node deploy/helm/secops-cell/files/realm-sync.test.js
       - name: smoke.sh resolves a multi-word MATELOT_CLI (--check runs no Docker; exit 127 here was the compose job's failure)
         run: MATELOT_CLI="node ../../apps/cli/dist/index.js" bash deploy/compose/smoke.sh --check
 

@@ -20,3 +20,6 @@ dist/
 .env.smoke
 .smoke-*
 smoke-backups/
+
+# final archives written by scripts/cell-decommission.sh (contain database dumps and secrets)
+/decommissioned/

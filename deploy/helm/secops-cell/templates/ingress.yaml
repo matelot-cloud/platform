@@ -6,9 +6,15 @@ metadata:
   name: {{ .Release.Name }}-app
   labels:
     {{- include "cell.labels" . | nindent 4 }}
-  {{- with .Values.ingress.annotations }}
+  {{- if or .Values.ingress.annotations (include "cell.insecureContext" .) }}
   annotations:
+    {{- with .Values.ingress.annotations }}
     {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- if include "cell.insecureContext" . }}
+    # also in NOTES.txt: browsers cannot sign in over plain HTTP on this hostname
+    matelot.cloud/insecure-context: {{ include "cell.insecureContextWarning" . | quote }}
+    {{- end }}
   {{- end }}
 spec:
   ingressClassName: {{ .Values.ingress.className }}

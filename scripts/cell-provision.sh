@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Provision (or upgrade) one tenant cell from its values file in deploy/cells/<slug>.values.yaml.
-#   scripts/cell-provision.sh new  --slug globex --name "Globex Corporation" --domain platform.example.com --admin ciso@globex.com
-#       writes deploy/cells/globex.values.yaml from deploy/cells/_template.values.yaml (then edit it, commit it)
+#   scripts/cell-provision.sh new  --slug globex --name "Globex Corporation" --domain platform.example.com --admin ciso@globex.com [--issuer letsencrypt]
+#       writes deploy/cells/globex.values.yaml from deploy/cells/_template.values.yaml (then edit it, commit it);
+#       the cert-manager issuer defaults to `selfsigned` when the current context is the kind cluster, else `letsencrypt`
 #   scripts/cell-provision.sh apply --slug globex [--tag 0.2.0] [--dry-run] [--no-wait] [--no-backup]
 #       preflight → (existing cell: pre-upgrade backup) → helm upgrade --install → wait for the workloads (progress
 #       every 15 s) → (new cell: first backup, which also binds the backups PVC) → checks
@@ -19,7 +20,7 @@ CELLS=deploy/cells
 # shellcheck source=scripts/lib/wait.sh
 source scripts/lib/wait.sh
 CMD="${1:-}"; shift || true
-SLUG=""; NAME=""; DOMAIN=""; ADMINS=""; TAG=""; DRY=0; WAIT=1; FIRST_BACKUP=1; TIMEOUT="${TIMEOUT:-900}"; EXTRA=()
+SLUG=""; NAME=""; DOMAIN=""; ADMINS=""; TAG=""; ISSUER=""; DRY=0; WAIT=1; FIRST_BACKUP=1; TIMEOUT="${TIMEOUT:-900}"; EXTRA=()
 usage() { sed -n '2,11p' "$0"; exit "${1:-0}"; }
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -28,6 +29,7 @@ while [ $# -gt 0 ]; do
     --domain) DOMAIN="$2"; shift 2;;
     --admin) ADMINS="$2"; shift 2;;
     --tag) TAG="$2"; shift 2;;
+    --issuer) ISSUER="$2"; shift 2;;
     --dry-run) DRY=1; shift;;
     --no-wait) WAIT=0; shift;;
     --no-backup) FIRST_BACKUP=0; shift;;
@@ -56,8 +58,11 @@ cmd_new() {
   [ -n "$NAME" ] && [ -n "$DOMAIN" ] && [ -n "$ADMINS" ] || { echo "new needs --name, --domain and --admin" >&2; exit 1; }
   [ -f "$VALUES" ] && { echo "$VALUES exists; edit it or delete it first" >&2; exit 1; }
   local admins; admins="$(printf '%s' "$ADMINS" | tr ',' '\n' | sed 's/^ *//; s/ *$//' | sed 's/.*/"&"/' | paste -sd, -)"
-  sed -e "s|__SLUG__|$SLUG|g" -e "s|__NAME__|$NAME|g" -e "s|__DOMAIN__|$DOMAIN|g" -e "s|__ADMINS__|[$admins]|g" "$CELLS/_template.values.yaml" > "$VALUES"
-  echo "wrote $VALUES"
+  # TLS is not optional on a real hostname (browsers sign in only in a secure context); the issuer is the only choice:
+  # the kind cluster has the local CA issuer `selfsigned` (scripts/kind-up.sh), anything else defaults to `letsencrypt`
+  if [ -z "$ISSUER" ]; then case "$(kubectl config current-context 2>/dev/null || true)" in kind-secops) ISSUER=selfsigned;; *) ISSUER=letsencrypt;; esac; fi
+  sed -e "s|__SLUG__|$SLUG|g" -e "s|__NAME__|$NAME|g" -e "s|__DOMAIN__|$DOMAIN|g" -e "s|__ADMINS__|[$admins]|g" -e "s|__ISSUER__|$ISSUER|g" "$CELLS/_template.values.yaml" > "$VALUES"
+  echo "wrote $VALUES (TLS on, cert-manager issuer: $ISSUER)"
   echo "next: review it (images, TLS issuer, database, backups), commit it, then: scripts/cell-provision.sh apply --slug $SLUG"
 }
 
@@ -86,6 +91,11 @@ preflight() {
     else echo "   tls:       on, no cert-manager issuer annotation — provide the Secret $RELEASE-app-tls (and -auth-tls, -registry-tls) yourself"; fi
   fi
   local domain; domain="$(sed -n 's/^ *domain: *\(.*\)$/\1/p' "$VALUES" | head -1 | tr -d '"' | sed 's/ *#.*//')"
+  if ! grep -q '^ *tls: *true' "$VALUES"; then
+    case "$domain" in localhost|*.localhost|127.0.0.1) echo "   tls:       off (fine on localhost)";;
+      *) echo "   tls:       OFF on $SLUG.$domain — WARNING: browsers treat only https:// and localhost as secure contexts; the Keycloak login page will fail (\"Crypto.subtle is available only in secure contexts\"). Set ingress.tls: true with a cert-manager issuer (kind: selfsigned). API and CLI still work." >&2;;
+    esac
+  fi
   local h; for h in "$SLUG.$domain" "auth-$SLUG.$domain" "registry-$SLUG.$domain"; do
     if getent hosts "$h" > /dev/null 2>&1; then echo "   dns:       $h resolves"; else echo "   dns:       $h does not resolve yet (fine on kind / before the wildcard record)"; fi
   done

@@ -63,7 +63,7 @@ make web            web app on :5173 (proxies /api)
 make test           unit tests (RBAC matrix)
 pnpm db:generate    after editing apps/api/src/database/schema.ts (see Working on the schema — never hand-write a migration without the snapshot)
 make check-layout   fail on stale top-level directories (CI does too)
-make kind-up / kind-load / deploy TENANT=acme
+make kind-up / kind-load / deploy TENANT=acme   kind-up installs ingress-nginx + cert-manager + ClusterIssuer `selfsigned`; deploy uses it (HTTPS: browsers sign in only in a secure context)
 make backup TENANT=acme / restore TENANT=acme ARCHIVE=…   cell backup (CronJob in the chart) and restore; docs/backup-restore.md
 deploy/compose/smoke.sh   the Compose quick start end to end (up → doctor → project → backup → down -v → restore); CI job `compose`
 make provision TENANT=globex / decommission TENANT=globex   real cells from deploy/cells/<slug>.values.yaml; docs/cell-provisioning.md

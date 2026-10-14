@@ -9,6 +9,10 @@ Watch it come up:
   kubectl -n {{ .Release.Namespace }} get pods -w
 
 First-time note: Keycloak takes a minute or two to start; API pods wait on migrations in an init container.
+{{- if include "cell.insecureContext" . }}
+
+{{ include "cell.insecureContextWarning" . }}
+{{- end }}
 {{ if .Values.backup.enabled }}
 Backups: CronJob {{ .Release.Name }}-backup ({{ .Values.backup.schedule }} UTC){{ if .Values.backup.pvc.enabled }}, kept {{ .Values.backup.retentionDays }} days on PVC {{ .Release.Name }}-backups{{ end }}{{ if .Values.backup.s3.enabled }}, copied to s3://{{ .Values.backup.s3.bucket }}/{{ .Values.backup.s3.prefix }}{{ end }}.
   Run one now:             kubectl -n {{ .Release.Namespace }} create job {{ .Release.Name }}-backup-now --from=cronjob/{{ .Release.Name }}-backup

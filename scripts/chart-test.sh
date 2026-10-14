@@ -19,8 +19,17 @@ run backup-pvc --set backup.enabled=true
 run backup-s3 --set backup.enabled=true --set backup.pvc.enabled=false --set backup.s3.enabled=true --set backup.s3.bucket=b --set backup.s3.prefix=cells/acme
 run external-db --set postgres.bundled=false --set postgres.externalUrl=postgresql://u:p@db:5432/platform --set postgres.externalKeycloakJdbcUrl=jdbc:postgresql://db:5432/keycloak --set backup.enabled=true
 run tls --set ingress.tls=true
+run insecure-hostname --set ingress.tls=false --set tenant.domain=platform.example.com
+run plain-localhost --set ingress.tls=false --set tenant.domain=localhost
 run no-managed-runners --set managedRunners.enabled=false --set registry.enabled=false
 # what must and must not be there
+# plain HTTP on a hostname that is not localhost cannot sign in (browsers: secure contexts only): the chart must say so —
+# in NOTES.txt (helm template never prints it) and as an annotation on the Ingress (what this test can see)
+grep -q 'matelot.cloud/insecure-context: "WARNING: ingress.tls is false' "$OUT/insecure-hostname.yaml" || { echo "tls=false on a real hostname must carry the insecure-context warning" >&2; exit 1; }
+grep -q 'Crypto.subtle is available only in secure contexts' "$OUT/insecure-hostname.yaml" || { echo "the insecure-context warning must quote the browser error" >&2; exit 1; }
+grep -q 'insecure-context' "$OUT/tls.yaml" && { echo "tls=true must not warn" >&2; exit 1; }
+grep -q 'insecure-context' "$OUT/plain-localhost.yaml" && { echo "plain HTTP on localhost must not warn" >&2; exit 1; }
+grep -q 'cell.insecureContext' "$CHART/templates/NOTES.txt" || { echo "NOTES.txt must carry the insecure-context warning" >&2; exit 1; }
 grep -q 'kind: CronJob' "$OUT/backup-pvc.yaml" && ! grep -q 'kind: CronJob' "$OUT/defaults.yaml" || { echo "backup CronJob rendering is wrong" >&2; exit 1; }
 grep -q 'kind: PersistentVolumeClaim' "$OUT/backup-pvc.yaml" && grep -q 'initContainers' "$OUT/backup-s3.yaml" || { echo "backup storage rendering is wrong" >&2; exit 1; }
 grep -q 'DATABASE_URL' "$OUT/external-db.yaml" || { echo "external-db backup should use DATABASE_URL" >&2; exit 1; }

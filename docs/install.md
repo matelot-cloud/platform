@@ -130,7 +130,7 @@ docker compose down -v       # removes everything
 | --- | --- |
 | Kubernetes 1.28 or newer, `kubectl` and Helm 3.12+ | any conformant distribution; tested on kind, EKS, GKE and AKS storage defaults |
 | An ingress controller (class `nginx` by default) | the chart creates three Ingresses per cell |
-| cert-manager with a `ClusterIssuer`, **or** your own TLS Secrets | hostnames `<slug>.<domain>`, `auth-<slug>.<domain>`, `registry-<slug>.<domain>` |
+| cert-manager with a `ClusterIssuer`, **or** your own TLS Secrets | hostnames `<slug>.<domain>`, `auth-<slug>.<domain>`, `registry-<slug>.<domain>`. **TLS is mandatory for any hostname other than `localhost`:** browsers treat only `https://` and `localhost` as secure contexts, and the Keycloak login page needs one (`Crypto.subtle is available only in secure contexts`). With `ingress.tls: false` on a real hostname the API and the CLI work but nobody can sign in with a browser; the chart says so in its install notes. For a local cluster, a self-signed cert-manager issuer is enough (click through the certificate warning, or trust the local CA once) |
 | A DNS record for those hostnames (a wildcard `*.<domain>` is simplest) | |
 | A default StorageClass | Postgres, the registry and backups use volumes; `WaitForFirstConsumer` classes are fine |
 | Outbound access to `ghcr.io` | images and the chart are public packages; mirror them for air-gapped clusters |

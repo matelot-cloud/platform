@@ -84,6 +84,7 @@ deploy: ## Deploy (or upgrade) one tenant cell: make deploy TENANT=acme
 >   --namespace tenant-$(TENANT) --create-namespace \
 >   --set tenant.slug=$(TENANT) \
 >   --set tenant.name="$(TENANT_NAME)" \
+>   --set ingress.tls=true --set 'ingress.annotations.cert-manager\.io/cluster-issuer=selfsigned' \
 >   --set "tenant.adminEmails={admin@$(TENANT).local}" \
 >   --set "keycloak.seedUsers[0].username=admin" \
 >   --set "keycloak.seedUsers[0].email=admin@$(TENANT).local" \

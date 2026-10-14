@@ -26,6 +26,16 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version }}
 {{- printf "auth-%s.%s" .Values.tenant.slug .Values.tenant.domain -}}
 {{- end -}}
 
+{{/* "true" when browsers will refuse to sign in: plain HTTP on a hostname that is not localhost. Browsers treat only
+     https:// and localhost as secure contexts, and Keycloak's login page needs crypto.subtle ("Crypto.subtle is
+     available only in secure contexts"). The API and the CLI still work over plain HTTP. */}}
+{{- define "cell.insecureContext" -}}
+{{- if and (not .Values.ingress.tls) (not (or (eq .Values.tenant.domain "localhost") (hasSuffix ".localhost" .Values.tenant.domain) (eq .Values.tenant.domain "127.0.0.1"))) -}}true{{- end -}}
+{{- end -}}
+{{- define "cell.insecureContextWarning" -}}
+WARNING: ingress.tls is false and the hostname {{ include "cell.apiHost" . }} is not localhost: browsers treat only https:// and localhost as secure contexts, so the Keycloak login page will fail with "Crypto.subtle is available only in secure contexts". Set ingress.tls=true with a cert-manager issuer (on kind: scripts/kind-up.sh installs the `selfsigned` ClusterIssuer) or provide the TLS Secrets. The API and the CLI are not affected.
+{{- end -}}
+
 {{- define "cell.image" -}}
 {{- printf "%s:%s" .Values.image.repository (.Values.image.tag | default .Chart.AppVersion) -}}
 {{- end -}}

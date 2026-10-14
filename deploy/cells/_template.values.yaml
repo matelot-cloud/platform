@@ -25,9 +25,9 @@ api:
 
 ingress:
   className: nginx
-  tls: true
+  tls: true                     # mandatory for any hostname but localhost: browsers sign in only in a secure context (HTTPS)
   annotations:
-    cert-manager.io/cluster-issuer: letsencrypt
+    cert-manager.io/cluster-issuer: __ISSUER__   # letsencrypt in production; selfsigned on kind (scripts/kind-up.sh)
 
 postgres:
   bundled: true                 # production: bundled: false + externalUrl / externalKeycloakJdbcUrl (managed database)

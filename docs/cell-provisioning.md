@@ -11,7 +11,7 @@ decommissioning. The control plane that will automate it later (roadmap step 17)
 | --- | --- | --- |
 | Kubernetes 1.28+, `kubectl` and `helm` 3 with access | | `kubectl config current-context` |
 | An ingress controller, class `nginx` by default | one Ingress per host per cell | `kubectl get ingressclass` |
-| cert-manager with a `ClusterIssuer` (e.g. `letsencrypt`) | TLS for `<slug>.<domain>`, `auth-<slug>.<domain>`, `registry-<slug>.<domain>` | `kubectl get clusterissuer` |
+| cert-manager with a `ClusterIssuer` (e.g. `letsencrypt`) | TLS for `<slug>.<domain>`, `auth-<slug>.<domain>`, `registry-<slug>.<domain>` — **mandatory**: browsers sign in only in a secure context (HTTPS or localhost); with `ingress.tls: false` on a real hostname Keycloak's login page fails with "Crypto.subtle is available only in secure contexts" (preflight warns, the chart's NOTES warn) | `kubectl get clusterissuer` |
 | A wildcard DNS record `*.<domain>` → the ingress | one record covers every cell | `dig +short x.<domain>` |
 | A default StorageClass (or set `*.storageClassName`) | Postgres, registry, backups | `kubectl get storageclass` |
 | The four images: `ghcr.io/matelot-cloud/{api,worker,web,runner}` at the same tag (public packages; a private mirror needs `imagePullSecrets`) | released by `.github/workflows/release.yml` | |
@@ -20,6 +20,22 @@ decommissioning. The control plane that will automate it later (roadmap step 17)
 
 Cells are isolated by NetworkPolicy (nothing outside the namespace reaches a cell except the ingress controller),
 so the ingress controller's namespace must match `ingress.controllerNamespace` (default `ingress-nginx`).
+
+**Local cluster (kind) with a working browser login.** `scripts/kind-up.sh` creates the cluster with ingress-nginx,
+cert-manager (`CERT_MANAGER_VERSION`, default v1.17.2) and a local CA as ClusterIssuer `selfsigned`
+(`deploy/kind/cert-manager-selfsigned.yaml`). `cell-provision.sh new` picks that issuer automatically when the current
+context is `kind-secops` (`--issuer` overrides), so:
+
+```bash
+scripts/kind-up.sh
+scripts/cell-provision.sh new --slug acme --name "ACME" --domain platform.local --admin admin@acme.local
+# /etc/hosts: 127.0.0.1 acme.platform.local auth-acme.platform.local registry-acme.platform.local
+DB_PASSWORD=… KC_ADMIN_PASSWORD=… scripts/cell-provision.sh apply --slug acme
+```
+
+gives https://acme.platform.local with a certificate from the local CA: the browser shows a warning you can click
+through (no flags), or trust the CA once — `kind-up.sh` prints the command. `make deploy TENANT=acme` (the chart with
+the images from this checkout) uses the same issuer.
 
 ## 2. Inputs per cell
 

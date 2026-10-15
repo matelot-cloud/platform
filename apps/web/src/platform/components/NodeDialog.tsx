@@ -45,9 +45,8 @@ export function NodeDialog({
   };
 
   return (
-    <Modal isOpen onClose={onClose} className="max-w-150 p-6 lg:p-10">
+    <Modal isOpen title={<>{title}</>} onClose={onClose} className="max-w-150 p-6 lg:p-10">
       <form onSubmit={submit}>
-        <h4 className="mb-6 text-lg font-semibold text-gray-800 dark:text-white/90">{title}</h4>
         <div className="space-y-5">
           <div>
             <Label htmlFor="node-name">Name</Label>

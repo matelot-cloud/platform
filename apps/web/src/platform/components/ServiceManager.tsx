@@ -69,12 +69,10 @@ export function ServiceManager({ organization, project, service, kinds, critical
   ];
 
   return (
-    <Modal isOpen onClose={onClose} className="max-w-240 p-0">
+    <Modal isOpen onClose={onClose} className="max-w-240 p-0" title={service.name} description={`${project.name} · ${humanize(service.kind)}`}>
       <div className="flex flex-col md:flex-row">
         <aside className="border-b border-gray-100 p-4 md:w-60 md:shrink-0 md:border-e md:border-b-0 dark:border-gray-800">
-          <p className="truncate text-base font-semibold text-gray-800 dark:text-white/90">{service.name}</p>
-          <p className={`truncate text-xs ${muted}`}>{project.name} · {humanize(service.kind)}</p>
-          <nav className="mt-4 flex gap-1 overflow-x-auto md:flex-col">
+          <nav className="flex gap-1 overflow-x-auto md:flex-col">
             {nav.map((n) => (
               <button key={n.key} type="button" onClick={() => setSection(n.key)} className={cn("flex shrink-0 items-center gap-2.5 rounded-lg px-3 py-2 text-start text-sm", section === n.key ? "bg-brand-50 font-medium text-brand-600 dark:bg-brand-500/15 dark:text-brand-400" : "text-gray-600 hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-white/5", n.key === "danger" && section !== n.key && "text-error-500")}>
                 <span className="inline-flex size-5 items-center justify-center rounded-md bg-gray-100 text-[11px] font-semibold dark:bg-white/10">{n.icon}</span>{n.label}

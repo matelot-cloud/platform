@@ -70,6 +70,14 @@ spec:
             - secretRef:
                 name: {{ .Release.Name }}-registry
             {{- end }}
+          {{- if .Values.keycloak.bundled }}
+          # user administration (create, reset, invite links) through the bundled Keycloak's admin API
+          env:
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
+              valueFrom: { secretKeyRef: { name: {{ .Release.Name }}-keycloak, key: KC_BOOTSTRAP_ADMIN_USERNAME } }
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Release.Name }}-keycloak, key: KC_BOOTSTRAP_ADMIN_PASSWORD } }
+          {{- end }}
           readinessProbe:
             httpGet:
               path: /api/v1/health/ready

@@ -58,12 +58,8 @@ function ChannelDialog({ organization, channel, onClose, scope, initialKind }: {
   const toggle = (e: string) => setSelected((v) => (v.includes(e) ? v.filter((x) => x !== e) : [...v, e]));
   const emailOff = kind === "email" && caps.data && !caps.data.email;
   return (
-    <Modal isOpen onClose={onClose} className="max-w-190 p-0">
+    <Modal isOpen onClose={onClose} className="max-w-190 p-0" title={channel ? `Edit ${channel.name}` : "New notification channel"} description="Pick where messages go, then which events should reach it.">
       <form onSubmit={(ev) => { ev.preventDefault(); save.mutate({ id: channel?.id, name, kind, url: url || undefined, events: selected, projectId: projectId || null }, { onSuccess: onClose }); }}>
-        <div className="border-b border-gray-100 px-8 py-5 dark:border-gray-800">
-          <h4 className="text-lg font-semibold text-gray-800 dark:text-white/90">{channel ? `Edit ${channel.name}` : "New notification channel"}</h4>
-          <p className={`mt-0.5 text-sm ${muted}`}>Pick where messages go, then which events should reach it.</p>
-        </div>
         <div className="grid grid-cols-1 gap-8 px-8 py-6 lg:grid-cols-5">
           <div className="space-y-5 lg:col-span-3">
             <div>

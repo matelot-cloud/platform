@@ -3,6 +3,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/rea
 import { useDashboard } from '../state/DashboardContext';
 import { ApiError, useApi } from './client';
 import type {
+  MemberScopeType, MembersResponse, RoleInfo, MemberCandidate, AddMembersResult, ServiceAccount, TokenRow, CreatedToken, AdminCapabilities, AdminUserDetail, IssuedLink, InviteInfo,
   CoverageCheckId,
   OrganizationCoverage,
   ProjectCoverage,
@@ -1260,3 +1261,127 @@ export function useOrganizationCoverage(organizationId: string | undefined, gap?
   return useQuery({ queryKey: ['organizations', organizationId, 'coverage', gap ?? 'all'], queryFn: () => { const q = gap ? `?gap=${encodeURIComponent(gap)}` : ''; return api<OrganizationCoverage>(`/organizations/${organizationId}/coverage${q}`); }, enabled: !!organizationId, retry, refetchInterval });
 }
 
+
+// ---- members (GitLab-style, every level), service accounts, user administration, setup links ----------------------
+const memberScopeQs = (scope: { type: string; id: string }) => `scopeType=${scope.type}&scopeId=${scope.id}`;
+function useInvalidateMembers() {
+  const queryClient = useQueryClient();
+  return () => {
+    for (const key of ['members', 'member-candidates', 'service-accounts', 'memberships', 'me', 'admin']) void queryClient.invalidateQueries({ queryKey: [key] });
+  };
+}
+
+export function useMembers(scope: { type: MemberScopeType; id: string } | undefined) {
+  const api = useApi();
+  const refetchInterval = useRefetchInterval();
+  return useQuery({ queryKey: ['members', scope?.type, scope?.id], queryFn: () => api<MembersResponse>(`/members?${memberScopeQs(scope!)}`), enabled: !!scope, retry, refetchInterval });
+}
+
+export function useMemberRoles(scope: { type: MemberScopeType; id: string } | undefined) {
+  const api = useApi();
+  return useQuery({ queryKey: ['members', 'roles', scope?.type, scope?.id], queryFn: () => api<RoleInfo[]>(`/members/roles?${memberScopeQs(scope!)}`), enabled: !!scope, retry, staleTime: 60_000 });
+}
+
+export function useMemberCandidates(scope: { type: MemberScopeType; id: string }, q: string, enabled: boolean) {
+  const api = useApi();
+  return useQuery({ queryKey: ['member-candidates', scope.type, scope.id, q], queryFn: () => api<MemberCandidate[]>(`/members/candidates?${memberScopeQs(scope)}&q=${encodeURIComponent(q)}`), enabled: enabled && q.trim().length >= 1, retry, staleTime: 10_000 });
+}
+
+export function useAddMembers() {
+  const api = useApi();
+  const invalidate = useInvalidateMembers();
+  return useMutation({
+    mutationFn: (input: { scopeType: MemberScopeType; scopeId: string; role: string; userIds?: string[]; emails?: string[]; expiresAt?: string; reason?: string }) => api<AddMembersResult>('/members', { method: 'POST', json: input }),
+    onSuccess: invalidate,
+  });
+}
+
+export function useUpdateMember() {
+  const api = useApi();
+  const invalidate = useInvalidateMembers();
+  return useMutation({
+    mutationFn: ({ membershipId, ...body }: { membershipId: string; role?: string; expiresAt?: string | null; reason?: string }) => api<unknown>(`/members/${membershipId}`, { method: 'PATCH', json: body }),
+    onSuccess: invalidate,
+  });
+}
+
+export function useRemoveMember() {
+  const api = useApi();
+  const invalidate = useInvalidateMembers();
+  return useMutation({ mutationFn: (membershipId: string) => api<void>(`/members/${membershipId}`, { method: 'DELETE' }), onSuccess: invalidate });
+}
+
+export function useServiceAccounts(scope: { type: MemberScopeType; id: string }, enabled = true) {
+  const api = useApi();
+  return useQuery({ queryKey: ['service-accounts', scope.type, scope.id], queryFn: () => api<ServiceAccount[]>(`/service-accounts?${memberScopeQs(scope)}`), enabled, retry });
+}
+
+export function useCreateServiceAccount() {
+  const api = useApi();
+  const invalidate = useInvalidateMembers();
+  return useMutation({ mutationFn: (input: { scopeType: MemberScopeType; scopeId: string; name: string; description?: string; role?: string }) => api<ServiceAccount>('/service-accounts', { method: 'POST', json: input }), onSuccess: invalidate });
+}
+
+export function useDeleteServiceAccount() {
+  const api = useApi();
+  const invalidate = useInvalidateMembers();
+  return useMutation({ mutationFn: (id: string) => api<{ deleted: boolean; memberships: number; tokens: number }>(`/service-accounts/${id}`, { method: 'DELETE' }), onSuccess: invalidate });
+}
+
+export function useToggleServiceAccount() {
+  const api = useApi();
+  const invalidate = useInvalidateMembers();
+  return useMutation({ mutationFn: ({ id, disabled }: { id: string; disabled: boolean }) => api<ServiceAccount>(`/service-accounts/${id}`, { method: 'PATCH', json: { disabled } }), onSuccess: invalidate });
+}
+
+export function useServiceAccountTokens(id: string | undefined) {
+  const api = useApi();
+  return useQuery({ queryKey: ['service-accounts', 'tokens', id], queryFn: () => api<TokenRow[]>(`/service-accounts/${id}/tokens`), enabled: !!id, retry });
+}
+
+export function useServiceAccountTokenActions(id: string) {
+  const api = useApi();
+  const invalidate = useInvalidateMembers();
+  const create = useMutation({ mutationFn: (input: { name: string; scope: 'read' | 'write'; expiresInDays?: number }) => api<CreatedToken>(`/service-accounts/${id}/tokens`, { method: 'POST', json: input }), onSuccess: invalidate });
+  const rotate = useMutation({ mutationFn: (tokenId: string) => api<CreatedToken>(`/service-accounts/${id}/tokens/${tokenId}/rotate`, { method: 'POST' }), onSuccess: invalidate });
+  const revoke = useMutation({ mutationFn: (tokenId: string) => api<unknown>(`/service-accounts/${id}/tokens/${tokenId}`, { method: 'DELETE' }), onSuccess: invalidate });
+  return { create, rotate, revoke };
+}
+
+export function useCreateScopeAccessToken() {
+  const api = useApi();
+  const invalidate = useInvalidateMembers();
+  return useMutation({
+    mutationFn: (input: { scopeType: MemberScopeType; scopeId: string; name: string; role: string; scope: 'read' | 'write'; expiresInDays?: number }) => api<{ serviceAccount: ServiceAccount; token: CreatedToken }>('/scope-access-tokens', { method: 'POST', json: input }),
+    onSuccess: invalidate,
+  });
+}
+
+export function useAdminCapabilities(enabled: boolean) {
+  const api = useApi();
+  return useQuery({ queryKey: ['admin', 'capabilities'], queryFn: () => api<AdminCapabilities>('/admin/users/capabilities'), enabled, retry, staleTime: 60_000 });
+}
+
+export function useAdminUser(id: string | undefined) {
+  const api = useApi();
+  return useQuery({ queryKey: ['admin', 'users', id], queryFn: () => api<AdminUserDetail>(`/admin/users/${id}`), enabled: !!id, retry });
+}
+
+export function useAdminUserActions() {
+  const api = useApi();
+  const invalidate = useInvalidateMembers();
+  const create = useMutation({ mutationFn: (input: { email: string; firstName?: string; lastName?: string; temporaryPassword?: string; reason?: string }) => api<{ user: AdminUser } & IssuedLink>('/admin/users', { method: 'POST', json: input }), onSuccess: invalidate });
+  const reset = useMutation({ mutationFn: ({ id, ...body }: { id: string; temporaryPassword?: string; reason?: string }) => api<IssuedLink>(`/admin/users/${id}/reset-password`, { method: 'POST', json: body }), onSuccess: invalidate });
+  const remove = useMutation({ mutationFn: (id: string) => api<{ deleted: boolean; memberships: number; tokens: number; activeTokens: number }>(`/admin/users/${id}`, { method: 'DELETE' }), onSuccess: invalidate });
+  return { create, reset, remove };
+}
+
+export function useInvite(token: string) {
+  const api = useApi();
+  return useQuery({ queryKey: ['invite', token], queryFn: () => api<InviteInfo>(`/invites/${encodeURIComponent(token)}`), retry: false });
+}
+
+export function useCompleteInvite(token: string) {
+  const api = useApi();
+  return useMutation({ mutationFn: (password: string) => api<{ email: string; signInUrl: string }>(`/invites/${encodeURIComponent(token)}`, { method: 'POST', json: { password } }) });
+}

@@ -6,8 +6,9 @@ import type { Config } from './client';
 import { signatureHeader } from './signing';
 import { readZip } from './zip-read';
 import { registryInfoText, type RegistryInfo } from './registry-info';
+import { membersSummary } from './members-text';
 import { credentialsPath, discoveryMismatch, freshToken, listCells, login, logout, normalizeCellUrl, resolveCellUrl, setCurrentCell } from './login';
-import { FIELD_FLAGS, PARAM_FLAGS, policyRulesFromFlags, RESOURCES, RULE_FLAGS, slaDaysFromFlags } from './resources';
+import { FIELD_FLAGS, PARAM_FLAGS, policyRulesFromFlags, RESOURCES, RULE_FLAGS, SCOPE_SEGMENTS, slaDaysFromFlags } from './resources';
 
 const sum = (c?: Record<string, number> | null) => (c ? Object.values(c).reduce((a, b) => a + b, 0) : 0);
 interface GateResult { result: 'pass' | 'warn' | 'fail'; pending?: boolean; correlation?: { status: string; error: string | null; waitedMs: number } | null; violations: { policyName: string; action: string; message: string }[]; policies: { name: string }[]; facts: { sbomId: string | null; findings: Record<string, number> | null; kevOpen: number | null; secretsOpen: number; iacOpen?: Record<string, number> | null; sastOpen?: Record<string, number> | null } }
@@ -119,6 +120,14 @@ async function main() {
     return;
   }
   if (command === 'doctor') { await doctor(str(flags.url), !!flags.json); return; }
+  // a one-time setup link needs no login: the cell comes from the link itself (or MATELOT_URL)
+  if (command === 'invite') {
+    const link = str(flags.link) ?? '';
+    const url = normalizeCellUrl(/^https?:\/\//.test(link) ? link.replace(/\/invite\/.*$/, '') : (process.env.MATELOT_URL ?? process.env.SECOPS_URL ?? resolveCellUrl(undefined, process.env) ?? ''));
+    if (!url) throw new CliError('usage: matelot invite show|accept --link https://<cell>/invite/<token> [--password …]');
+    await runResource(command, positional, flags, { url, keyId: '', secret: '', anonymous: true });
+    return;
+  }
   const config = configFromEnv();
   if (config.fromLogin) { const t = await freshToken(config.url); if (!t) throw new CliError(`your login to ${config.url} expired: run matelot login --url ${config.url}`); config.token = t; }
 
@@ -486,13 +495,26 @@ async function runResource(resource: string, positional: string[], flags: Record
     if (verbs.length) throw new CliError(`usage: matelot ${resource} <${verbs.join('|')}> …`);
     return false;
   }
+  // `--scope projects/ID` for the commands that take scopeType + scopeId in the body / query (members, service accounts)
+  if (cmd.fields?.includes('scopeType') && !cmd.path.includes(':scope') && typeof flags.scope === 'string') {
+    const raw = flags.scope.replace(/^\/+|\/+$/g, '');
+    const m = /^([a-z]+)\/([0-9a-f-]{36})$/i.exec(raw);
+    const type = raw === 'org' ? 'ORGANIZATION' : m ? SCOPE_SEGMENTS[m[1]!.toLowerCase()] : undefined;
+    if (!type) throw new CliError('--scope must be organizations/ID, workspaces/ID, teams/ID, projects/ID (or org for your organization)');
+    const id = raw === 'org' ? await defaultOrg(config) : m![2]!;
+    const { scope: _s, ...rest } = flags;
+    flags = { ...rest, 'scope-type': type, 'scope-id': id! };
+  }
+  // a one-time setup link may be given whole: https://cell/invite/TOKEN
+  if (typeof flags.link === 'string') flags = { ...flags, link: flags.link.replace(/^.*\/invite\//, '').replace(/[?#].*$/, '') };
   // path params from flags (or a positional id)
   let path = cmd.path;
   for (const [flag, name] of Object.entries(PARAM_FLAGS)) {
-    if (!path.includes(`:${name}`)) continue;
+    const param = new RegExp(`:${name}(?![A-Za-z])`);   // ":to" must not match ":tokenId"
+    if (!param.test(path)) continue;
     const v = str(flags[flag]) ?? (name === 'id' ? positional[1] : undefined) ?? process.env[`SECOPS_${flag.toUpperCase()}`] ?? (flag === 'org' ? await defaultOrg(config) : undefined);
     if (!v) throw new CliError(`--${flag} is required for "matelot ${resource} ${verb}"`);
-    path = path.replace(`:${name}`, name === 'scope' ? v.replace(/^\/+|\/+$/g, '') : encodeURIComponent(v));
+    path = path.replace(param, name === 'scope' ? v.replace(/^\/+|\/+$/g, '') : encodeURIComponent(v));
   }
   // fields from flags
   // Unknown flags are an error, not silently ignored (a typo like --enforced must not create a policy without enforcement)
@@ -506,8 +528,9 @@ async function runResource(resource: string, positional: string[], flags: Record
     const flag = aliases.find((a) => flags[a] !== undefined) ?? f;
     const raw = flags[flag];
     if (raw === undefined) continue;
+    if (f === 'expiresAt' && (raw === 'none' || raw === 'never')) { payload[f] = null; continue; }
     if (f === 'expiresAt' && typeof raw === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw)) { payload[f] = `${raw}T23:59:59Z`; continue; }
-    payload[f] = raw === true ? true : ['environmentKinds', 'environments', 'events'].includes(f) ? String(raw).split(',').map((x) => x.trim()).filter(Boolean) : f === 'expiresInDays' || f === 'limit' || f === 'days' ? Number(raw) : raw === 'true' ? true : raw === 'false' ? false : raw;
+    payload[f] = raw === true ? true : ['environmentKinds', 'environments', 'events', 'emails', 'userIds'].includes(f) ? String(raw).split(',').map((x) => x.trim()).filter(Boolean) : f === 'expiresInDays' || f === 'limit' || f === 'days' ? Number(raw) : raw === 'true' ? true : raw === 'false' ? false : raw;
   }
   // --body '{...}': raw JSON merged last — nested fields (auth, rules, settings) exactly as the web app sends them
   if (typeof flags.body === 'string') { try { Object.assign(payload, JSON.parse(flags.body)); } catch { throw new CliError('--body must be valid JSON'); } }
@@ -525,7 +548,7 @@ async function runResource(resource: string, positional: string[], flags: Record
   if (resource === 'usage' && !flags.json && res && typeof res === 'object') { console.log(usageText(res as UsageReport)); return true; }
   if (resource === 'onboarding' && !flags.json && res && typeof res === 'object') { console.log(onboardingText(res as OnboardingReport, verb)); return true; }
   if (resource === 'coverage' && !flags.json && res && typeof res === 'object') { console.log(coverageText(res as CoverageReport, flags.uncovered === true || flags.uncovered === 'true')); return true; }
-  const summary = flags.json ? null : connectionSummary(resource, verb, res);
+  const summary = flags.json ? null : connectionSummary(resource, verb, res) ?? membersSummary(resource, verb, res);
   if (summary !== null) { if (!flags.quiet) console.log(summary); return true; }
   if (flags.json || !Array.isArray(res) && !(res && typeof res === 'object' && Array.isArray((res as Record<string, unknown>).tokens))) console.log(JSON.stringify(res, null, 2));
   else table((Array.isArray(res) ? res : (res as { tokens: Record<string, unknown>[] }).tokens) as Record<string, unknown>[], cmd.columns);

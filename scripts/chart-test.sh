@@ -71,12 +71,13 @@ runner = by(first, "Secret", "acme-managed-runner")["stringData"]["MANAGED_RUNNE
 config = by(first, "ConfigMap", "acme-registry-config")["data"]["config.yml"]
 assert reg["REGISTRY_EVENTS_SECRET"] in config, "registry config.yml and Secret disagree on REGISTRY_EVENTS_SECRET"
 open(f"{out}/reg.key", "w").write(reg["registry.key"]); open(f"{out}/reg.crt", "w").write(reg["registry.crt"])
-second = render([f"--set=encryptionKey={cell_key}", f"--set=registry.eventsSecret={reg['REGISTRY_EVENTS_SECRET']}", f"--set=managedRunners.secret={runner}", f"--set-file=registry.tokenKey={out}/reg.key", f"--set-file=registry.tokenCert={out}/reg.crt"])
+seed = by(first, "Secret", "acme-keycloak")["stringData"]["SEED_ADMIN_PASSWORD"]
+second = render([f"--set=encryptionKey={cell_key}", f"--set=registry.eventsSecret={reg['REGISTRY_EVENTS_SECRET']}", f"--set=managedRunners.secret={runner}", f"--set=keycloak.seedAdminPassword={seed}", f"--set-file=registry.tokenKey={out}/reg.key", f"--set-file=registry.tokenCert={out}/reg.crt"])
 a, b = checksums(first), checksums(second)
 for w in a:
     if a[w] != b[w]:
         print(f"{w}: checksums differ between install and upgrade:\n  install {a[w]}\n  upgrade {b[w]}"); sys.exit(1)
-for kind, name in [("Secret", "acme-cell-key"), ("Secret", "acme-registry"), ("Secret", "acme-managed-runner"), ("Secret", "acme-api-secrets"), ("ConfigMap", "acme-registry-config")]:
+for kind, name in [("Secret", "acme-cell-key"), ("Secret", "acme-registry"), ("Secret", "acme-managed-runner"), ("Secret", "acme-api-secrets"), ("Secret", "acme-keycloak"), ("ConfigMap", "acme-registry-config")]:
     assert by(first, kind, name) == by(second, kind, name), f"{kind}/{name} renders differently on install vs upgrade"
 print("   install and upgrade render identical checksums for", ", ".join(sorted(a)))
 
@@ -86,7 +87,15 @@ def pod_templates(docs):
            {f"CronJob/{d['metadata']['name']}": d["spec"]["jobTemplate"]["spec"]["template"] for d in docs if d["kind"] == "CronJob"}
 # (generated secrets pinned as above: without a cluster each `helm template` would roll new ones, and the registry's
 #  checksum legitimately covers its token key pair — on a real upgrade `lookup` returns the stored pair)
-pinned = [f"--set=encryptionKey={cell_key}", f"--set=registry.eventsSecret={reg['REGISTRY_EVENTS_SECRET']}", f"--set=managedRunners.secret={runner}", f"--set-file=registry.tokenKey={out}/reg.key", f"--set-file=registry.tokenCert={out}/reg.crt"]
+pinned = [f"--set=encryptionKey={cell_key}", f"--set=registry.eventsSecret={reg['REGISTRY_EVENTS_SECRET']}", f"--set=managedRunners.secret={runner}", f"--set=keycloak.seedAdminPassword={seed}", f"--set-file=registry.tokenKey={out}/reg.key", f"--set-file=registry.tokenCert={out}/reg.crt"]
+# the realm-sync hook seeds tenant.adminEmails with the generated temporary password; off with keycloak.seedAdmins=false
+job = by(first, "Job", "acme-realm-sync"); env = {e["name"]: e for e in job["spec"]["template"]["spec"]["containers"][0]["env"]}
+assert env["SEED_USERS"]["value"] == ",".join(yaml.safe_load(open(f"{chart}/values.yaml"))["tenant"]["adminEmails"]), "SEED_USERS must be tenant.adminEmails"
+assert env["SEED_PASSWORD"]["valueFrom"]["secretKeyRef"] == {"name": "acme-keycloak", "key": "SEED_ADMIN_PASSWORD"}
+assert job["metadata"]["annotations"]["helm.sh/hook-delete-policy"] == "before-hook-creation", "the last realm-sync Job must stay for kubectl logs"
+noseed = render(["--set", "keycloak.seedAdmins=false"])
+assert "SEED_ADMIN_PASSWORD" not in by(noseed, "Secret", "acme-keycloak")["stringData"] and "SEED_USERS" not in {e["name"] for e in by(noseed, "Job", "acme-realm-sync")["spec"]["template"]["spec"]["containers"][0]["env"]}
+print("   realm-sync seeds", env["SEED_USERS"]["value"], "with SEED_ADMIN_PASSWORD; seedAdmins=false renders neither")
 tag_a = render(pinned + ["--set", "image.tag=1.0.0", "--set", "worker.image.tag=1.0.0", "--set", "web.image.tag=1.0.0", "--set", "managedRunners.image.tag=1.0.0"])
 tag_b = render(pinned + ["--set", "image.tag=1.0.1", "--set", "worker.image.tag=1.0.1", "--set", "web.image.tag=1.0.1", "--set", "managedRunners.image.tag=1.0.1"])
 pa, pb = pod_templates(tag_a), pod_templates(tag_b)
@@ -96,6 +105,21 @@ assert changed == expected, f"an image tag change rolls {changed}, expected only
 for k in ("StatefulSet/acme-postgres", "Deployment/acme-keycloak", "Deployment/acme-redis", "Deployment/acme-registry", "CronJob/acme-backup"):
     assert k in pa and pa[k] == pb[k], f"{k} pod template differs across tags"
 print("   an image tag change rolls only", ", ".join(changed))
+# a TLS switch or a domain change rolls what carries the URLs (api/worker via their ConfigMap checksum, Keycloak via its
+# realm checksum, web config) — never the database, Redis, the runners or the backup job
+http_a = render(pinned + ["--set", "ingress.tls=false"])
+https_b = render(pinned + ["--set", "ingress.tls=true"])
+qa, qb = pod_templates(http_a), pod_templates(https_b)
+rolled = sorted(k for k in qa if qa[k] != qb[k])
+for k in ("StatefulSet/acme-postgres", "Deployment/acme-redis", "StatefulSet/acme-runner", "CronJob/acme-backup", "Deployment/acme-registry"):
+    assert k in qa and qa[k] == qb[k], f"{k} pod template changes on a TLS switch (it must not restart): rolled={rolled}"
+print("   a TLS switch rolls only", ", ".join(rolled))
+dom_b = render(pinned + ["--set", "tenant.domain=other.example.com"])
+ra, rb = pod_templates(http_a), pod_templates(dom_b)
+rolled = sorted(k for k in ra if ra[k] != rb[k])
+for k in ("StatefulSet/acme-postgres", "Deployment/acme-redis", "StatefulSet/acme-runner", "CronJob/acme-backup"):
+    assert k in ra and ra[k] == rb[k], f"{k} pod template changes on a domain change (it must not restart): rolled={rolled}"
+print("   a domain change rolls only", ", ".join(rolled))
 PY
 # the Docker Compose stack ships copies of the chart's backup scripts: they must be identical (release.yml publishes both)
 for f in backup.sh restore-db.sh; do cmp -s "$CHART/files/$f" "deploy/compose/backup/$f" || { echo "deploy/compose/backup/$f differs from $CHART/files/$f (copy it over)" >&2; exit 1; }; done
@@ -107,5 +131,7 @@ grep -q 'items: \[{ key: realm.json, path: realm.json }\]\|key: realm.json' "$OU
 # the http → https upgrade scenario at the rendering level: the realm the hook applies carries the https redirect URI
 grep -q '"https://acme.platform.local/\*"' "$OUT/tls.yaml" && grep -q '"sslRequired": "external"' "$OUT/tls.yaml" || { echo "tls=true realm must carry https redirect URIs and sslRequired external" >&2; exit 1; }
 grep -q '"http://acme.platform.local/\*"' "$OUT/defaults.yaml" || { echo "tls=false realm must carry the http redirect URI" >&2; exit 1; }
+# user administration: the api reaches the bundled Keycloak's admin API with the bootstrap admin from the keycloak Secret
+grep -q 'KEYCLOAK_ADMIN_URL: "http://acme-keycloak:8080"' "$OUT/defaults.yaml" && grep -q 'key: KC_BOOTSTRAP_ADMIN_PASSWORD' "$OUT/defaults.yaml" || { echo "api must get KEYCLOAK_ADMIN_URL and the Keycloak bootstrap admin" >&2; exit 1; }
 docker compose -f deploy/compose/compose.yaml --env-file deploy/compose/.env.example config --quiet 2>/dev/null && echo "   compose.yaml renders" || echo "   (docker compose not available: compose.yaml not rendered here)"
 echo "chart ok ($OUT)"

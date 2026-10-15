@@ -138,6 +138,21 @@ cli_json 'i=[i for i in d if i["id"]=="'"$IMG"'"][0]; assert i.get("lastError") 
 log "the write scope stops at destructive operations: archiving the project must be refused (403), not done"
 if cli request DELETE "/api/v1/projects/$PROJECT" --json > ./.smoke-cli.err 2>&1; then echo "a write-scoped token archived a project" >&2; cat ./.smoke-cli.err >&2; exit 1; fi
 grep -q "sudo" ./.smoke-cli.err || { echo "unexpected refusal:" >&2; cat ./.smoke-cli.err >&2; exit 1; }; rm -f ./.smoke-cli.err; echo "refused as expected"
+log "service account at project level: bot member + token; the token reads the project; revoked, it is refused"
+# managing members needs membership:write — a write-scoped login cannot (sudo or a browser session can)
+if cli service-accounts list --scope "projects/$PROJECT" > /dev/null 2>&1 && cli access-token create --scope "projects/$PROJECT" --name smoke-denied --role READ_ONLY --token-scope read --days 1 > ./.smoke-cli.err 2>&1; then echo "a write-scoped login created a bot member" >&2; exit 1; fi
+grep -q "membership:write" ./.smoke-cli.err || { echo "unexpected refusal:" >&2; cat ./.smoke-cli.err >&2; exit 1; }; rm -f ./.smoke-cli.err
+ADMIN_SESSION="$(token)"   # the administrator's Keycloak session token: full rights, like the web app
+SAT_JSON="$(MATELOT_TOKEN="$ADMIN_SESSION" cli access-token create --scope "projects/$PROJECT" --name smoke-bot --role DEVELOPER --token-scope read --days 1 --json)"
+BOT_ID="$(printf '%s' "$SAT_JSON" | python3 -c 'import sys,json; print(json.load(sys.stdin)["serviceAccount"]["id"])')"
+BOT_TOKEN_ID="$(printf '%s' "$SAT_JSON" | python3 -c 'import sys,json; print(json.load(sys.stdin)["token"]["id"])')"
+BOT_TOKEN="$(printf '%s' "$SAT_JSON" | python3 -c 'import sys,json; print(json.load(sys.stdin)["token"]["token"])')"
+MATELOT_TOKEN="$BOT_TOKEN" cli_json 'assert d["slug"]=="payments", d; print("bot reads project:", d["name"])' -- request GET "/api/v1/projects/$PROJECT"
+MATELOT_TOKEN="$ADMIN_SESSION" cli_json 'm=[r for r in d["members"] if r["user"]["kind"]=="service_account"]; assert m and m[0]["role"]=="DEVELOPER", d; print("listed as a member:", m[0]["user"]["displayName"], m[0]["roleLabel"])' -- members list --scope "projects/$PROJECT"
+MATELOT_TOKEN="$ADMIN_SESSION" cli service-accounts token-revoke --id "$BOT_ID" --token-id "$BOT_TOKEN_ID" > /dev/null
+if MATELOT_TOKEN="$BOT_TOKEN" cli request GET "/api/v1/projects/$PROJECT" > ./.smoke-cli.err 2>&1; then echo "a revoked service-account token still works" >&2; exit 1; fi
+grep -q "401" ./.smoke-cli.err || { echo "unexpected failure for the revoked token:" >&2; cat ./.smoke-cli.err >&2; exit 1; }; rm -f ./.smoke-cli.err; echo "revoked token refused (401)"
+MATELOT_TOKEN="$ADMIN_SESSION" cli service-accounts delete --id "$BOT_ID" > /dev/null
 log "backup --compose"
 rm -rf ./smoke-backups; bash "$SCRIPTS/cell-backup.sh" --compose . -d ./smoke-backups
 ARCHIVE="$(ls ./smoke-backups/*.tar.gz)"

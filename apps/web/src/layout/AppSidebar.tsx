@@ -2,7 +2,7 @@ import { Brand } from "@/components/common/Brand";
 import { Mascot } from "@/components/common/Mascot";
 import { useSidebar } from "@/context/SidebarContext";
 import { BoltIcon, BoxCubeIcon, CheckCircleIcon, ChevronLeftIcon, DataBaseIcon, DocsIcon, FolderIcon, GridIcon, GroupIcon, HorizontaLDots, ListIcon, LockIcon, PieChartIcon, PlugInIcon, SettingsAltIcon, ShootingStarIcon, TaskIcon, UserCircleIcon } from "@/icons";
-import { useMe } from "@/platform/api/hooks";
+import { useMe, useMeta } from "@/platform/api/hooks";
 import { docsUrl, useRuntimeConfig } from "@/platform/runtime-config";
 import { CriticalityBadge } from "@/platform/components/ui";
 import { useRouteContext } from "@/platform/state/context";
@@ -122,7 +122,10 @@ const AppSidebar: React.FC = () => {
   }, [location.pathname]);
 
   const config = useRuntimeConfig();
-  const isAdmin = me.data?.user.platformRole === "admin";
+  const meta = useMeta();
+  // Administration → Users: cell administrators and the admins of the root organization (the API enforces the same)
+  const rootSlug = meta.data?.rootOrganizationSlug;
+  const isAdmin = me.data?.user.platformRole === "admin" || (me.data?.memberships ?? []).some((m) => m.role === "ORG_ADMIN" && m.scopeType === "ORGANIZATION" && !!rootSlug && m.scope?.slug === rootSlug);
   const groups = ctx.projectId ? projectGroups(ctx.projectId) : ctx.workspaceId ? workspaceGroups(ctx.workspaceId) : organizationGroups(isAdmin, docsUrl(config));
   const isActive = (item: NavItem) => (item.exact ? location.pathname === item.path : location.pathname === item.path || location.pathname.startsWith(`${item.path}/`));
 

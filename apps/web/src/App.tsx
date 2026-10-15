@@ -44,6 +44,8 @@ import WorkspaceOverviewPage from "./pages/workspace";
 import WorkspaceIntegrationsPage from "./pages/workspace/integrations";
 import WorkspaceLayout from "./pages/workspace/layout";
 import WorkspaceMembersPage from "./pages/workspace/members";
+import TeamMembersPage from "./pages/workspace/team-members";
+import InvitePage from "./pages/invite";
 import WorkspaceProjectsPage from "./pages/workspace/projects";
 import WorkspaceRepositoriesPage from "./pages/workspace/repositories";
 import WorkspaceSettingsPage from "./pages/workspace/settings";
@@ -96,6 +98,7 @@ export default function App() {
             <Route path="repositories" element={<WorkspaceRepositoriesPage />} />
             <Route path="integrations" element={<WorkspaceIntegrationsPage />} />
             <Route path="members" element={<WorkspaceMembersPage />} />
+            <Route path="teams/:teamId/members" element={<TeamMembersPage />} />
             <Route path="runners" element={<WorkspaceRunnersPage />} />
             <Route path="settings" element={<WorkspaceSettingsPage />} />
             <Route path="policies" element={<WorkspacePoliciesPage />} />
@@ -122,6 +125,10 @@ export default function App() {
         {/* OAuth consent: signed in, but outside the app chrome so nothing invites navigating away mid-flow */}
         <Route element={<RequireAuth><MinimalLayout /></RequireAuth>}>
           <Route path="/oauth/consent" element={<OauthConsentPage />} />
+        </Route>
+        {/* one-time setup link (invite / password reset): no sign-in — the link is the credential */}
+        <Route element={<MinimalLayout />}>
+          <Route path="/invite/:token" element={<InvitePage />} />
         </Route>
         <Route path="*" element={<NotFound />} />
       </Routes>

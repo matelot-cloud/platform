@@ -107,16 +107,21 @@ API=https://globex.platform.example.com/api/v1 KC=https://auth-globex.platform.e
 make backup TENANT=globex          # the first backup, downloaded and checksum-verified
 ```
 
-Then open `https://globex.platform.example.com`: the login goes to the cell's Keycloak. Until an IdP is configured
-there is no user to log in with on a production cell (`seedUsers: []`), which is the next step.
+Then open `https://globex.platform.example.com`: the login goes to the cell's Keycloak, where the administrators of
+`tenant.adminEmails` already exist — the realm-sync hook seeds the missing ones on every install/upgrade with a
+temporary password (`apply` prints how to read it: `kubectl -n tenant-globex get secret globex-keycloak -o
+jsonpath='{.data.SEED_ADMIN_PASSWORD}' | base64 -d`); the first login asks for a new one. Existing users are never
+modified; `keycloak.seedAdmins: false` leaves user creation to the operator or the IdP. The hook's last run stays as
+`job/globex-realm-sync` (`kubectl logs`) — `apply` prints its summary line (`realm-sync: realm platform synced: …`).
 
 ## 5. Handover
 
 1. **Identity.** Open `https://auth-globex.platform.example.com` as the Keycloak admin (`KC_ADMIN_PASSWORD`),
    realm `platform`, and add the customer's identity provider (SAML or OIDC: Entra ID, Okta, Google…) with
    "first login flow" creating users. E-mail must be mapped: the platform keys users on it.
-2. **First administrator.** The person listed in `tenant.adminEmails` logs in; their first login grants ORG_ADMIN on
-   the root organization (audit events `organization.bootstrapped` and `membership.granted`). From there they invite the team (Members).
+2. **First administrator.** Hand the person listed in `tenant.adminEmails` the temporary password from the Secret
+   (§4); their first login sets a new password and grants ORG_ADMIN on the root organization (audit events
+   `organization.bootstrapped` and `membership.granted`). From there they invite the team (Members).
 3. **Setup card.** The Overview shows the organization setup to administrators: connect source code (GitHub App,
    GitLab…), check the managed runner, alerts, team. Service coverage shows what each service still lacks.
 4. **Tell them what they own.** Hostnames, the registry (`registry-globex.…`, `matelot registry login`), where backups

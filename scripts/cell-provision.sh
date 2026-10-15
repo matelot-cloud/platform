@@ -185,6 +185,9 @@ cmd_apply() {
     echo "   helm history $RELEASE -n $NAMESPACE" >&2
     exit 1
   fi
+  # the realm-sync hook ran inside helm (hooks are waited for): one line of what it did, for the apply log
+  local sync_log; sync_log="$("${K[@]}" logs "job/$RELEASE-realm-sync" --tail 3 2>/dev/null | grep -E '^realm ' | tail -1 || true)"
+  echo "   realm-sync: ${sync_log:-no log (kubectl -n $NAMESPACE logs job/$RELEASE-realm-sync)}"
   if [ "$WAIT" = 1 ]; then
     say "waiting for the workloads of $RELEASE (up to ${TIMEOUT}s)"
     wait_cell "$NAMESPACE" "$RELEASE" "$TIMEOUT" || { echo "cell $SLUG did not come up" >&2; exit 1; }
@@ -206,7 +209,9 @@ cmd_check() {
   "${K[@]}" rollout status "deployment/$RELEASE-api" --timeout=300s > /dev/null || bad=1
   "${K[@]}" rollout status "deployment/$RELEASE-worker" --timeout=120s > /dev/null || bad=1
   "${K[@]}" rollout status "deployment/$RELEASE-keycloak" --timeout=300s > /dev/null 2>&1 || true
-  local restarts; restarts="$("${K[@]}" get pods -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.containerStatuses[*].restartCount}{"\n"}{end}' | awk '$2 > 0 {print "   restarts: " $1 " " $2}')"
+  # container restarts with when and why: restartCount is the container's crash/probe counter inside the SAME pod (a
+  # rollout makes a new pod at 0), so a count carried over from the first start is not caused by this upgrade
+  local restarts; restarts="$("${K[@]}" get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.containerStatuses[*].restartCount}{"\t"}{.status.containerStatuses[*].lastState.terminated.reason}{"\t"}{.status.containerStatuses[*].lastState.terminated.finishedAt}{"\t"}{.status.startTime}{"\n"}{end}' 2>/dev/null | awk -F'\t' '{ n = 0; split($2, c, " "); for (i in c) if (c[i] + 0 > n) n = c[i] + 0; if (n > 0) printf "   restarts: %s %d (last: %s at %s; pod started %s)\n", $1, n, ($3 == "" ? "?" : $3), ($4 == "" ? "?" : $4), $5 }')"
   [ -n "$restarts" ] && echo "$restarts"
   # the API answers through its Service (no DNS needed yet); the port comes from the Service, never hard-coded
   local port; port="$("${K[@]}" get service "$RELEASE-api" -o jsonpath='{.spec.ports[?(@.name=="http")].port}' 2>/dev/null)"; port="${port:-80}"
@@ -218,6 +223,10 @@ cmd_check() {
   helm get notes "$RELEASE" -n "$NAMESPACE" 2>/dev/null | sed 's/^/   /'
   [ "$bad" = 0 ] || { echo "cell $SLUG is not healthy" >&2; exit 1; }
   say "cell $SLUG is up"
+  if "${K[@]}" get secret "$RELEASE-keycloak" -o jsonpath='{.data.SEED_ADMIN_PASSWORD}' 2>/dev/null | grep -q .; then
+    echo "   sign in:  $(values_get tenant adminEmails | tr ',' ' ') — temporary password (changed at the first login):"
+    echo "             kubectl -n $NAMESPACE get secret $RELEASE-keycloak -o jsonpath='{.data.SEED_ADMIN_PASSWORD}' | base64 -d; echo"
+  fi
   echo "   handover: docs/cell-provisioning.md §Handover (IdP in Keycloak, first admin login, make backup TENANT=$SLUG)"
 }
 

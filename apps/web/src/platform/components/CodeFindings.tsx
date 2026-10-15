@@ -19,11 +19,9 @@ function CodeFindingDialog({ f, onClose }: { f: CodeFindingRow; onClose: () => v
   const [status, setStatus] = useState<FindingStatus | "">("");
   const [note, setNote] = useState("");
   return (
-    <Modal isOpen onClose={onClose} className="max-w-200 p-6 pe-20 lg:p-8 lg:pe-24">
+    <Modal isOpen onClose={onClose} className="max-w-200 p-6 lg:p-8" title={f.title} description={<><span className="font-mono">{f.ruleId}</span>{f.category ? ` · ${f.category}` : ""} · {f.serviceName} · {f.projectName}</>}>
       <div className="space-y-4">
         <div className="flex flex-wrap items-center gap-2"><SeverityBadge severity={f.severity} /><Badge size="sm" color="light">{KIND_LABEL[f.kind]}</Badge><Badge size="sm" color={f.status === "open" ? "warning" : f.status === "fixed" ? "success" : "light"}>{STATUS_LABEL[f.status]}</Badge></div>
-        <h4 className="text-lg font-semibold text-gray-800 dark:text-white/90">{f.title}</h4>
-        <p className={`text-sm ${muted}`}><span className="font-mono">{f.ruleId}</span>{f.category ? ` · ${f.category}` : ""} · {f.serviceName} · {f.projectName}</p>
         <p className="text-sm"><span className={muted}>Location </span>{f.fileUrl ? <a href={f.fileUrl} target="_blank" rel="noreferrer" className="font-mono text-brand-500 hover:underline">{f.file}{f.startLine ? `:${f.startLine}` : ""}</a> : <span className="font-mono text-gray-800 dark:text-white/90">{f.file}{f.startLine ? `:${f.startLine}` : ""}</span>}{f.repository ? <span className={muted}> in {f.repository}{f.ref ? ` @ ${f.ref.slice(0, 12)}` : ""}</span> : null}</p>
         {f.evidence && <div><p className={`text-xs ${muted}`}>{f.kind === "secret" ? "Evidence (redacted — the value never leaves the runner)" : "Finding"}</p><CodeBlock className="mt-1" wrap code={f.evidence} /></div>}
         {f.resolution && <div><p className="text-sm font-medium text-gray-800 dark:text-white/90">How to fix</p><p className={`text-sm ${muted}`}>{f.resolution}</p></div>}

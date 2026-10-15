@@ -11,6 +11,19 @@ const LOGIN_TOUCH_INTERVAL_MS = 5 * 60 * 1000;
 
 export const normalizeEmail = (email: string) => email.trim().toLowerCase();
 
+/**
+ * The name to show for a user, or null: Keycloak's `name` (first + last) when it is set; `preferred_username` only when
+ * it is a real handle — not the e-mail address, which is what seeded and invited users have as their username. With
+ * null the UI shows the e-mail and derives the initials from it (never a placeholder such as "Cell Admin").
+ */
+export function displayNameFromClaims(claims: Pick<KeycloakClaims, 'name' | 'preferred_username'>, email: string): string | null {
+  const name = claims.name?.trim();
+  if (name) return name;
+  const handle = claims.preferred_username?.trim();
+  if (handle && handle.toLowerCase() !== email && !handle.includes('@')) return handle;
+  return null;
+}
+
 @Injectable()
 export class UsersService {
   constructor(
@@ -25,7 +38,7 @@ export class UsersService {
   async provisionFromClaims(claims: KeycloakClaims): Promise<User> {
     const email = claims.email ? normalizeEmail(claims.email) : undefined;
     if (!email) throw new UnauthorizedException('Access token does not contain an email claim');
-    const displayName = claims.name ?? claims.preferred_username ?? null;
+    const displayName = displayNameFromClaims(claims, email);
 
     const [byExternalId] = await this.db.select().from(users).where(eq(users.externalId, claims.sub)).limit(1);
     if (byExternalId) return this.touch(byExternalId, displayName);
@@ -100,11 +113,13 @@ export class UsersService {
 
   private async touch(user: User, displayName: string | null): Promise<User> {
     const stale = !user.lastLoginAt || Date.now() - user.lastLoginAt.getTime() > LOGIN_TOUCH_INTERVAL_MS;
-    const nameChanged = displayName !== null && displayName !== user.displayName;
+    // a display name that is just the e-mail (stored by older versions from preferred_username) is cleared
+    const emailAsName = !!user.displayName && user.displayName.trim().toLowerCase() === user.email;
+    const nameChanged = (displayName !== null && displayName !== user.displayName) || emailAsName;
     if (!stale && !nameChanged) return user;
     const [updated] = await this.db
       .update(users)
-      .set({ lastLoginAt: new Date(), displayName: displayName ?? user.displayName })
+      .set({ lastLoginAt: new Date(), displayName: displayName ?? (emailAsName ? null : user.displayName) })
       .where(eq(users.id, user.id))
       .returning();
     return updated;

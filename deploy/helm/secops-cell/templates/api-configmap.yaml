@@ -20,6 +20,10 @@ data:
   WEB_BASE_URL: {{ printf "%s://%s" (include "cell.scheme" .) (include "cell.apiHost" .) | quote }}
   # the public base of the API behind the ingress: OAuth/OIDC metadata (matelot login, MCP), keyless identity issuer
   API_PUBLIC_URL: {{ printf "%s://%s" (include "cell.scheme" .) (include "cell.apiHost" .) | quote }}
+{{- if .Values.keycloak.bundled }}
+  # the bundled Keycloak's admin API (user administration, invite / reset links); unset with an external IdP
+  KEYCLOAK_ADMIN_URL: {{ printf "http://%s-keycloak:8080" .Release.Name | quote }}
+{{- end }}
 {{- if .Values.registry.enabled }}
   # how the api reaches the built-in registry (the public REGISTRY_HOST is the ingress name)
   REGISTRY_INTERNAL_URL: {{ printf "http://%s-registry:5000" .Release.Name | quote }}

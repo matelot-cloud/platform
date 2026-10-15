@@ -63,9 +63,8 @@ export function CiTokensPanel({ organizationId, scopeType, scopeId, scopeName }:
       {(create.error || revoke.error) ? <div className="p-4"><ErrorNotice error={create.error ?? revoke.error} /></div> : null}
 
       {dialog && (
-        <Modal isOpen onClose={() => setDialog(false)} className="max-w-170 p-5 sm:p-6 lg:p-8">
+        <Modal isOpen title="New CI token" onClose={() => setDialog(false)} className="max-w-170 p-5 sm:p-6 lg:p-8">
           <form onSubmit={submit} className="space-y-5">
-            <h4 className="text-lg font-semibold text-gray-800 dark:text-white/90">New CI token</h4>
             <div><Label htmlFor="tk-name">Name</Label><input id="tk-name" required autoFocus className={inputClass} placeholder="github-actions deploy" value={name} onChange={(e) => setName(e.target.value)} /></div>
             <div>
               <Label>What it may do</Label>
@@ -79,9 +78,7 @@ export function CiTokensPanel({ organizationId, scopeType, scopeId, scopeName }:
         </Modal>
       )}
       {created?.secret && (
-        <Modal isOpen onClose={() => setCreated(null)} className="max-w-200 p-5 sm:p-6 xl:max-w-300 xl:p-8">
-          <h4 className="text-lg font-semibold text-gray-800 dark:text-white/90">Token "{created.name}" created</h4>
-          <p className="mt-1 mb-4 text-sm text-warning-600">Copy the secret now — it is not stored in readable form and cannot be shown again.</p>
+        <Modal isOpen title={<>Token "{created.name}" created</>} description={<span className="text-warning-600">Copy the secret now — it is not stored in readable form and cannot be shown again.</span>} onClose={() => setCreated(null)} className="max-w-200 p-5 sm:p-6 xl:max-w-300 xl:p-8">
           <CreatedToken token={created} secret={created.secret} url={platformUrl} />
           <div className="mt-6 flex justify-end gap-3">
             <button type="button" className={primaryButton} onClick={() => setCreated(null)}>I saved it</button>

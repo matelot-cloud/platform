@@ -2,19 +2,74 @@
 
 ## Roles (memberships)
 
-A membership gives a user a role on an organization, workspace, team or project; roles inherit downward.
+A membership gives a person (or a service account) a role on an organization, workspace, team or project; roles
+inherit downward, like GitLab group → subgroup → project memberships. Every level has a **Members** page (Organization
+→ Members, Workspace → Members, team → *Team members* on the workspace's Teams & projects page, Project → Members)
+listing the direct members and, read-only, everyone who inherits a role from above — with where it is granted (a
+link), who granted it, when, and the optional expiry date.
 
-| Role | Can |
-|---|---|
-| ORG_ADMIN | everything in the organization |
-| SECURITY_ADMIN | security administration: policies, SLAs, channels, connections, exceptions (request + approve), decisions, remediations |
-| COMPLIANCE_OFFICER | reads + compliance / evidence writes, approve exceptions |
-| CISO | reads + accept risk, approve exceptions, incidents, memberships |
-| CTO | reads + structure writes (workspaces, teams, projects) |
-| TEAM_LEAD | team structure, services, environments, decisions, remediations, request exceptions, pipelines |
-| PRODUCT_SECURITY_ENGINEER | decisions, remediations and issues, request exceptions, pipelines, SBOMs, sees runner pools and runners |
-| DEVELOPER | pipelines, SBOMs, deployments, request exceptions, reads |
-| AUDITOR / READ_ONLY / EXTERNAL_CONSULTANT | reads |
+Roles in the order they are offered, the closest GitLab role, and where each is offered:
+
+| Role | Can | GitLab | Offered at |
+|---|---|---|---|
+| ORG_ADMIN — Organization admin | everything in the organization: settings, members, connections, policies, licence | Owner | organization |
+| SECURITY_ADMIN — Security admin | policies, SLAs, channels, connections, members, exceptions (request + approve), decisions, remediations | Maintainer | every level |
+| CISO | reads + accept risk, approve exceptions, incidents, members | Maintainer | organization, workspace |
+| CTO | reads + structure writes (workspaces, teams, projects, services), members | Maintainer | organization, workspace |
+| COMPLIANCE_OFFICER — Compliance officer | reads + compliance / evidence writes, approve exceptions | Reporter | every level |
+| TEAM_LEAD — Team lead | team structure, services, environments, members, connections, runners, pipelines, decisions | Maintainer | workspace, team, project |
+| PRODUCT_SECURITY_ENGINEER — Product security engineer | decisions, remediations and issues, request exceptions, pipelines, SBOMs, evidence, sees runners | Developer | every level |
+| DEVELOPER — Developer | pipelines, images, SBOMs, releases, deployments, request exceptions, reads findings | Developer | workspace, team, project |
+| AUDITOR — Auditor | reads everything, including the audit trail and evidence | Reporter | every level |
+| EXTERNAL_CONSULTANT — External consultant | reads + risk records; give them an expiry date | Reporter | every level |
+| READ_ONLY — Read only | structure, findings and SBOMs; no audit trail, no evidence | Guest | every level |
+
+**GitLab → Matelot**, for teams moving over: *Owner* → Organization admin (organization) · *Maintainer* → Security
+admin, Team lead, CTO or CISO depending on whether the person administers security, a team's structure, or the
+organization's structure / risk · *Developer* → Developer (builds and ships) or Product security engineer (triages
+findings) · *Reporter* → Auditor, Compliance officer or External consultant · *Guest* → Read only. Matelot has no
+*Planner* role; custom roles are a named capability (`custom_roles`) not built yet.
+
+### Rules (enforced by the API, so the web app, the CLI and the MCP server behave alike)
+
+- **Who manages members:** whoever holds `membership:write` at the scope (organization admin, security admin, CISO, CTO,
+  team lead). With a token that means **sudo** (or the web session): a `write` token cannot manage members.
+- **Never above your own role:** you can grant, change or remove only roles whose permissions you hold at that scope
+  (cell administrators excepted). A team lead can add developers to a project, not security admins.
+- **Raise, never lower:** a direct role at a lower level must add something to what the person inherits from above;
+  `READ_ONLY` on a project for someone who is `AUDITOR` on the workspace is refused, with where the inherited role
+  comes from. Change or remove it where it is granted instead.
+- **One direct membership per person per scope:** adding someone who is already a direct member changes their role.
+- **Expiry (optional):** from the end of the chosen day the membership no longer grants anything; the row stays,
+  marked *expired*, until someone removes or renews it.
+- **The last organization admin** of an organization cannot be removed, demoted or given an expiry.
+- **Leaving:** anyone may remove their own direct membership (except the last organization admin).
+- **Service accounts** can hold roles only at the scope that owns them and below (they are not offered elsewhere).
+- Every change is in the audit trail: `membership.granted`, `membership.updated`, `membership.revoked`,
+  `membership.left`, `user.invited`, `user.created`, `user.disabled`, `user.deleted`, `service_account.*`.
+
+### Adding people
+
+*Invite members* (any Members page, `matelot members add`): search existing people by name or e-mail and/or paste
+several e-mail addresses, pick a role (only the ones offered at that level; the ones above your own are disabled) and
+an optional expiry. An address nobody has used yet is **invited**: with the bundled Keycloak a sign-in account is
+created and a one-time setup link (valid 7 days) is e-mailed when the cell has SMTP, or shown once to copy otherwise;
+with an external identity provider the person simply gets the role at their first sign-in.
+
+### User administration
+
+Administration → Users (cell administrators and admins of the root organization; `matelot users …`): create a user
+(temporary password or setup link), disable / enable (sign-in and every token refused, sessions ended, roles kept),
+reset a password (temporary, or a one-time reset link), delete (their roles and tokens go too; a sole organization
+admin cannot be deleted), and see a person's roles across scopes and their tokens. Only cell administrators change
+the cell role (administrator / user).
+
+### Capabilities (licensing, M13)
+
+Each part of this is a named capability so the licence can map it to Free / Premium / Ultimate later — today all are
+on: `inherited_members`, `member_expiry`, `bulk_invite`, `invite_links`, `user_admin`, `service_accounts`,
+`scope_access_tokens` (`custom_roles` is reserved, not built). `GET /api/v1/meta` lists them; an operator can turn one
+off with `MATELOT_FEATURES_DISABLED=service_accounts,…` on the API.
 
 Exceptions are time-boxed risk acceptances, not policies: `exception:write` (request/create, revoke your own) and
 `exception:approve` (make one active) are separate from `policy:write`. An exception created by someone who can

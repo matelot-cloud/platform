@@ -136,7 +136,8 @@ docker compose down -v       # removes everything
 | Outbound access to `ghcr.io` | images and the chart are public packages; mirror them for air-gapped clusters |
 | Resources for a small cell | about 2 vCPU and 5 GiB of memory requested across all components; Keycloak is the largest |
 
-Optional: an S3-compatible bucket for off-site backups, an SMTP relay for e-mail notifications, a GitHub App for
+Optional: an S3-compatible bucket for off-site backups, an SMTP relay for e-mail notifications and member
+invitations (without one, invitation and password-reset links are shown once to copy), a GitHub App for
 GitHub repositories (any Git host also works with tokens).
 
 ### B2. Choose the cell's values
@@ -180,6 +181,11 @@ Images are `ghcr.io/matelot-cloud/{api,worker,web,runner}` at the chart's `appVe
 unless you mirror them. Everything else (replicas, resources, managed runner count, SMTP via `api.extraEnv`) has a
 documented default in `values.yaml`.
 
+Member management needs nothing extra: with the bundled Keycloak the API reaches its admin API in-cluster
+(`KEYCLOAK_ADMIN_URL`, set by the chart and by Compose) to create invited users and set passwords. Optional API
+settings: `SERVICE_ACCOUNT_TOKEN_MAX_DAYS` (longest service-account token, default 365) and
+`MATELOT_FEATURES_DISABLED` (comma-separated capabilities to turn off, see [Roles](roles.md)).
+
 ### B3. Install
 
 ```bash
@@ -203,11 +209,17 @@ pair, the managed-runner secret); they survive upgrades and are part of every ba
 
 ### B4. First login and identity
 
-1. Open `https://auth-acme.platform.example.com` as the Keycloak admin (`keycloak.adminPassword`), realm `platform`,
-   and add your identity provider (SAML or OIDC: Entra ID, Okta, Google Workspace…). Users are created on first
-   login; the e-mail address is what Matelot keys users on.
-2. Open `https://acme.platform.example.com` and log in as one of `tenant.adminEmails`: that first login grants the
+1. The administrators in `tenant.adminEmails` already exist in Keycloak: the install (and every upgrade) seeds the
+   missing ones with a temporary password, kept in the release's Secret — the first login asks for a new one:
+   ```bash
+   kubectl -n tenant-acme get secret acme-keycloak -o jsonpath='{.data.SEED_ADMIN_PASSWORD}' | base64 -d; echo
+   ```
+   (`keycloak.seedAdminPassword` sets it explicitly; `keycloak.seedAdmins: false` turns the seeding off; users that
+   exist are never modified.) Open `https://acme.platform.example.com` and sign in: that first login grants the
    administrator role on the root organization. Invite the team from **Members**.
+2. For everyone else, open `https://auth-acme.platform.example.com` as the Keycloak admin (`keycloak.adminPassword`),
+   realm `platform`, and add your identity provider (SAML or OIDC: Entra ID, Okta, Google Workspace…). Users are
+   created on first login; the e-mail address is what Matelot keys users on.
 3. The Overview shows the organization setup: connect source code, check the managed runner, alerts, team. From
    there, create a project and a service, attach a repository and run the security pipeline.
 

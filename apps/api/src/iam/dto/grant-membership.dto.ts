@@ -3,9 +3,15 @@ import { IsEmail, IsIn, IsOptional, IsString, IsUUID, MaxLength } from 'class-va
 import { Role, roleEnum, ScopeType, scopeTypeEnum } from '../../database/schema';
 
 export class GrantMembershipDto {
-  @ApiProperty({ example: 'jane@acme.com' })
+  @ApiProperty({ example: 'jane@acme.com', required: false })
+  @IsOptional()
   @IsEmail()
-  email: string;
+  email?: string;
+
+  @ApiProperty({ format: 'uuid', required: false, description: 'An existing user (e.g. a service account) instead of an e-mail' })
+  @IsOptional()
+  @IsUUID()
+  userId?: string;
 
   @ApiProperty({ enum: roleEnum.enumValues })
   @IsIn(roleEnum.enumValues)
@@ -18,6 +24,11 @@ export class GrantMembershipDto {
   @ApiProperty({ format: 'uuid' })
   @IsUUID()
   scopeId: string;
+
+  @ApiProperty({ required: false, description: 'YYYY-MM-DD or ISO timestamp; the membership stops applying then' })
+  @IsOptional()
+  @IsString()
+  expiresAt?: string;
 
   @IsOptional()
   @IsString()

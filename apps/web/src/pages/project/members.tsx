@@ -1,7 +1,9 @@
-import { MembersPanel } from "@/platform/components/MembersPanel";
+import { useTeams } from "@/platform/api/hooks";
+import { ScopeMembers } from "@/platform/components/members/ScopeMembers";
 import { useProject } from "./layout";
 
 export default function ProjectMembersPage() {
   const { organization, project } = useProject();
-  return <MembersPanel key={project.id} organization={organization} initialScope={{ type: "PROJECT", id: project.id }} />;
+  const teams = useTeams(organization.id);
+  return <ScopeMembers key={project.id} scope={{ type: "PROJECT", id: project.id, name: project.name }} workspaceOfTeam={(id) => (teams.data ?? []).find((t) => t.id === id)?.workspaceId} />;
 }

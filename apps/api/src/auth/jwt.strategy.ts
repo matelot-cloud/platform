@@ -45,6 +45,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
   async validate(claims: KeycloakClaims): Promise<AuthenticatedUser> {
     let user = await this.users.provisionFromClaims(claims);
     if (user.disabledAt) throw new UnauthorizedException('This account is disabled');
+    if (user.kind !== 'human') throw new UnauthorizedException('Service accounts sign in with tokens only');
     user = await this.bootstrap.promoteBootstrapAdminIfEligible(user);
     return { id: user.id, email: user.email, displayName: user.displayName, externalId: claims.sub, platformRole: user.platformRole };
   }

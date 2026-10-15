@@ -4,6 +4,52 @@
 
 Images `ghcr.io/matelot-cloud/{api,web,worker,runner}` and the chart `oci://ghcr.io/matelot-cloud/charts/secops-cell`, signed, with SBOM attestations; install guide at https://matelot-cloud.github.io/website/docs/latest/install.html. The sections below are the drops that make up the release, newest first.
 
+### Members at every level, service accounts, user administration; dialog headers and name fallbacks
+
+- **Members** (Organization, Workspace, Team — new *Team members* page —, Project): direct members plus, read-only,
+  everyone inherited from above with a link to where it is granted; columns member, role, source, granted by / at,
+  expires, actions; filter and direct / inherited switch; Edit (role, expiry, reason), Remove, Leave.
+- **Roles per level** in GitLab order with a one-line description and the closest GitLab role; only the roles relevant
+  to the level are offered (`GET /members/roles`). docs/roles.md has the GitLab mapping table and the rules.
+- **Rules in the API:** only `membership:write` holders manage members, and a `write` token cannot (sudo or web);
+  nobody grants, changes or removes a role above their own at that scope; a direct role must raise inherited access,
+  never lower it; one direct membership per person per scope; optional expiry (expired memberships grant nothing);
+  the last organization admin is protected. All audited.
+- **Invite members:** search people, paste several e-mail addresses (bulk), role + optional expiry. Unknown addresses
+  get a Keycloak account and a one-time setup link (`/invite/<token>`, 7 days), e-mailed with SMTP, otherwise shown
+  once to copy; with an external IdP the role applies at first sign-in.
+- **Administration → Users** (cell admins and root-organization admins): create (temporary password or setup link),
+  disable / enable (sessions ended, tokens refused), reset password, delete (memberships and tokens go; sole org admin
+  protected), a person's roles across scopes and their tokens.
+- **Service accounts:** bot users owned by a scope (no password, no browser login, *bot* badge, roles only at the
+  owner scope and below) with tokens — name, read / write, expiry up to `SERVICE_ACCOUNT_TOKEN_MAX_DAYS` (365), last
+  use, rotate, revoke, shown once — and *New access token* (GitLab project access token: bot + role + token in one
+  step). docs/access-tokens.md explains service accounts vs CI tokens.
+- **Capabilities** for the M13 tier mapping, all on today: `inherited_members`, `member_expiry`, `bulk_invite`,
+  `invite_links`, `user_admin`, `service_accounts`, `scope_access_tokens` (`custom_roles` reserved);
+  `MATELOT_FEATURES_DISABLED` turns one off; listed in `GET /meta`.
+- **CLI 2.23.0:** `matelot members list|roles|candidates|add|update|remove --scope projects/ID` (or `org`),
+  `matelot users list|show|create|disable|enable|reset-password|delete`, `matelot service-accounts …` (tokens
+  create / rotate / revoke), `matelot access-token create`, `matelot invite show|accept --link …` (no login needed).
+- Migration `0048_members_service_accounts` (users.kind / owner scope, memberships.expires_at, user_invites).
+  The chart and Compose give the API the bundled Keycloak's admin URL and credentials.
+- Compose smoke: a service account on the project reads it with its token; after revocation the token gets 401.
+- **UI fixes from the review:** every dialog (30, including the new ones) now has a header row with the title, description and the close
+  button aligned — the × no longer overlaps titles or the first field at any width; the old right-padding hacks are
+  gone; the close button has an accessible label and dialogs are announced with their title. Names: a user without
+  a name shows the e-mail and initials from its local part (no more "test test" / "TT"); the user menu no longer
+  repeats the e-mail and truncates long names; the API no longer stores an e-mail as display name (cleared on next
+  login); Keycloak no longer requires first / last name (realm-sync relaxes the user profile — that requirement
+  produced the placeholder names); seeded and invited users get names only from a `first.last` address.
+- Not verified here: the Keycloak admin API calls against a live Keycloak, SMTP delivery of setup links, the new
+  Compose smoke step and the Helm wiring on kind (unit tests use a fake Keycloak).
+
+### Helm: the first administrators are seeded; TLS/domain changes never restart the database; realm-sync keeps its trace
+- **Seeded administrators (parity with Compose).** The realm-sync hook now also creates every `tenant.adminEmails` address that has no user in the realm — username = e-mail, enabled, verified, with `SEED_ADMIN_PASSWORD` from the Secret `<release>-keycloak` (`keycloak.seedAdminPassword`, else generated once and kept across upgrades via `lookup`) as a **temporary** password: the first login asks for a new one. Existing users are never modified (not their password, not their flags); `keycloak.seedAdmins: false` turns it off. NOTES.txt and `cell-provision.sh apply` print how to read it (`kubectl -n <ns> get secret <release>-keycloak -o jsonpath='{.data.SEED_ADMIN_PASSWORD}' | base64 -d`). Compose passes its `MATELOT_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` through the same path (the realm import already created the user; a later e-mail change gets seeded). Tests: realm-sync.test.js creates a missing user with the temporary credential, leaves an existing (disabled) one byte-identical, never PUTs a user, creates nothing on a second run; chart-test asserts `SEED_USERS` = `tenant.adminEmails`, the secretKeyRef, the Secret key, and that `seedAdmins=false` renders neither; the keycloak Secret is in the install == upgrade identity check. Docs: install.md § B4, cell-provisioning.md § 4/5, the public helm-charts README.
+- **Restarts after the TLS upgrade.** The pod templates of postgres, redis, the runners, the registry and the backup CronJob carry nothing derived from the ingress or the domain (no checksum annotation, stable labels), so an upgrade cannot recreate them; chart-test now proves it: a `tls=false → true` render and a domain change must leave those templates byte-identical (only api/worker/web/keycloak roll). What `checks` showed is the container's `restartCount` inside the same pod — a crash or probe kill that survives the upgrade in the counter, most likely from the first start. `checks` now prints when and why: `restarts: acme-postgres-0 1 (last: Error at …; pod started …)`, so a count that predates the upgrade is not read as caused by it; if the pod start time is older than the upgrade, the restart was not the upgrade's.
+- **realm-sync trace.** `hook-delete-policy: before-hook-creation` only: the last run's Job stays for `kubectl -n <ns> logs job/<release>-realm-sync` (deleted right before the next run), and `apply` prints its summary line (`realm-sync: realm platform synced: client platform-web: redirectUris → …; user ciso@… created …`).
+- Not verifiable here: the seeded login on kind (install → read the Secret → first login forces a password change) is the next live check.
+
 ### Fix: realm redirect URIs after an upgrade (Helm); preflight read a YAML comment as the issuer; kind recipe for the CLI and Windows
 - **Keycloak realm sync (chart):** `start --import-realm` is IGNORE_EXISTING, so the tls=false → true upgrade left the `platform-web` client with http redirect URIs ("Invalid parameter: redirect_uri"). New `files/realm-sync.js` applies the rendered realm's URL-shaped settings through the admin API — realm `sslRequired`; per client (by clientId) `redirectUris`, `webOrigins`, `rootUrl`, `baseUrl`, `adminUrl`, the post-logout attribute — and nothing else: users, roles, mappers, hand-made attributes stay; missing clients are reported, not created; idempotent. The chart runs it as the post-install/post-upgrade hook Job `<release>-realm-sync` (api image, non-root, waits for Keycloak and for the realm to exist, 600 s deadline); the script ships in the realm ConfigMap, and Keycloak now mounts only `realm.json` from it (its import directory must hold JSON only). Compose is equivalent: a one-shot `realm-sync` service runs the same script (`init/realm-sync.js`, parity checked by chart-test) on every `up` after Keycloak is healthy, `welcome` waits for it, and `compose-init.sh realm-update` delegates to it.
 - Tests: `files/realm-sync.test.js` (layout CI job) — a fake Keycloak admin API imported with http URIs, the rendered realm says https: after the sync the client has the https URIs and `sslRequired: external`, users/roles/groups are never called, mappers and hand-made attributes survive, a second run changes nothing, a wrong password fails before touching anything. chart-test asserts the hook (annotations, command, realm-only mount) and the rendering of both sides of the scenario (http realm with tls=false, https realm with tls=true); compose-init.test.sh covers the `realm-update` wiring; smoke.sh checks `realm-sync` ran.

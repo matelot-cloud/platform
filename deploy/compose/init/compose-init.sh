@@ -56,7 +56,9 @@ if [ "$MODE" = realm-update ]; then
   # Keycloak imports realm.json once (IGNORE_EXISTING); after a domain or scheme change the realm in the database is
   # brought in line by the shared script (redirect URIs, sslRequired, …; users untouched)
   KC_BOOTSTRAP_ADMIN_USERNAME="$(cat "$M/secrets/keycloak/KC_BOOTSTRAP_ADMIN_USERNAME")"; KC_BOOTSTRAP_ADMIN_PASSWORD="$(cat "$M/secrets/keycloak/KC_BOOTSTRAP_ADMIN_PASSWORD")"
-  export KC_BOOTSTRAP_ADMIN_USERNAME KC_BOOTSTRAP_ADMIN_PASSWORD
+  # the administrator exists from the realm import; a MATELOT_ADMIN_EMAIL changed later is seeded (temporary password)
+  SEED_USERS="$ADMIN_EMAIL"; SEED_PASSWORD="$(cat "$M/secrets/keycloak/SEED_ADMIN_PASSWORD")"
+  export KC_BOOTSTRAP_ADMIN_USERNAME KC_BOOTSTRAP_ADMIN_PASSWORD SEED_USERS SEED_PASSWORD
   exec node "$(dirname "$0")/realm-sync.js" "${KEYCLOAK_URL:-http://keycloak:8080/auth}" "$M/keycloak/import/realm.json"
 fi
 command -v openssl > /dev/null || { echo "openssl is required in the init image" >&2; exit 1; }
@@ -157,7 +159,7 @@ cat > "$M/keycloak/import/realm.json" <<REALM
     }
   ],
   "users": [
-    { "username": "admin", "email": "$(json_str "$ADMIN_EMAIL")", "emailVerified": true, "enabled": true, "firstName": "Cell", "lastName": "Admin",
+    { "username": "admin", "email": "$(json_str "$ADMIN_EMAIL")", "emailVerified": true, "enabled": true,
       "credentials": [{ "type": "password", "value": "$(json_str "$SEED_PASSWORD")", "temporary": false }] }
   ]
 }
@@ -215,6 +217,7 @@ kv "$E" BOOTSTRAP_ADMIN_EMAILS "$ADMIN_EMAIL"
 kv "$E" CORS_ORIGINS "$BASE_URL"
 kv "$E" WEB_BASE_URL "$BASE_URL"
 kv "$E" API_PUBLIC_URL "$BASE_URL"        # what the OAuth metadata, registry realm and runner commands advertise (Caddy routes /api here)
+kv "$E" KEYCLOAK_ADMIN_URL http://keycloak:8080/auth   # user administration and invite links through Keycloak's admin API (bootstrap admin from secrets/keycloak)
 kv "$E" REGISTRY_INTERNAL_URL http://registry:5000   # how the api reaches the built-in registry (the public REGISTRY_HOST is Caddy; localhost:5000 inside the api container is the api)
 kv "$E" GITHUB_APP_ID ""
 kv "$E" GITHUB_APP_SLUG ""

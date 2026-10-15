@@ -70,6 +70,16 @@ export const envSchema = z.object({
   SMTP_FROM: z.preprocess(emptyToUndefined, z.string().optional()),
   /** true = implicit TLS (465); false = STARTTLS (587) */
   SMTP_SECURE: z.preprocess(emptyToUndefined, z.coerce.boolean().optional()),
+  /** Keycloak admin API (user administration, invites, password resets): the bundled Keycloak's in-cluster address
+   *  (http://<release>-keycloak:8080 in the chart, http://keycloak:8080/auth in Compose) and its bootstrap admin. Unset =
+   *  users come only from the identity provider (create / reset / invite links are unavailable, the rest works). */
+  KEYCLOAK_ADMIN_URL: z.preprocess(emptyToUndefined, z.string().url().optional()),
+  KC_BOOTSTRAP_ADMIN_USERNAME: z.preprocess(emptyToUndefined, z.string().optional()),
+  KC_BOOTSTRAP_ADMIN_PASSWORD: z.preprocess(emptyToUndefined, z.string().optional()),
+  /** Longest life of a service-account token, in days (GitLab: access tokens max 365). */
+  SERVICE_ACCOUNT_TOKEN_MAX_DAYS: z.preprocess(emptyToUndefined, z.coerce.number().int().min(1).max(3650).default(365)),
+  /** Comma-separated capability names to turn off (features/features.ts); also read directly by featureEnabled(). */
+  MATELOT_FEATURES_DISABLED: z.preprocess(emptyToUndefined, z.string().optional()),
   GITHUB_API_URL: z.string().url().default('https://api.github.com'),
   GITHUB_URL: z.string().url().default('https://github.com'),
 });

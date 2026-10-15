@@ -284,9 +284,17 @@ export const users = pgTable(
     /** Blocked users keep their memberships but cannot sign in until re-enabled. */
     disabledAt: timestamp('disabled_at', { withTimezone: true }),
     lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
+    /** human = a person (Keycloak login); service_account = a bot owned by a scope: no password, no browser login,
+     *  authenticates only with its personal access tokens (source 'service_account'). */
+    kind: text('kind').notNull().default('human'),
+    /** Service accounts: the scope that owns them; they can hold memberships only there and below. */
+    ownerScopeType: scopeTypeEnum('owner_scope_type'),
+    ownerScopeId: uuid('owner_scope_id'),
+    description: text('description'),
+    createdById: uuid('created_by_id').references((): AnyPgColumn => users.id, { onDelete: 'set null' }),
     ...timestamps,
   },
-  (t) => [uniqueIndex('users_email_key').on(t.email), uniqueIndex('users_external_id_key').on(t.externalId)],
+  (t) => [uniqueIndex('users_email_key').on(t.email), uniqueIndex('users_external_id_key').on(t.externalId), index('users_owner_scope_idx').on(t.ownerScopeType, t.ownerScopeId)],
 );
 
 /**
@@ -305,12 +313,35 @@ export const memberships = pgTable(
     scopeId: uuid('scope_id').notNull(),
     role: roleEnum('role').notNull(),
     grantedById: uuid('granted_by_id').references(() => users.id, { onDelete: 'set null' }),
+    /** Optional end of the membership (GitLab "access expiration date"): ignored by authorization from then on. */
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    updatedAt: timestamp('updated_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     uniqueIndex('memberships_user_scope_role_key').on(t.userId, t.scopeType, t.scopeId, t.role),
     index('memberships_scope_idx').on(t.scopeType, t.scopeId),
   ],
+);
+
+/**
+ * One-time links that let a person set their password (invites without SMTP, password resets): the API keeps only the
+ * SHA-256 of the token; using it sets the Keycloak password and marks the row used. Expire after 7 days by default.
+ */
+export const userInvites = pgTable(
+  'user_invites',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    /** invite | reset */
+    purpose: text('purpose').notNull(),
+    tokenHash: text('token_hash').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    usedAt: timestamp('used_at', { withTimezone: true }),
+    createdById: uuid('created_by_id').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('user_invites_token_hash_key').on(t.tokenHash), index('user_invites_user_idx').on(t.userId)],
 );
 
 // ---------------------------------------------------------------------------

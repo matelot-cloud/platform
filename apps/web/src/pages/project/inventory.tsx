@@ -102,9 +102,8 @@ function Releases({ service, projectId }: { service: Service; projectId: string 
         </div>
       )}
       {dialog && (
-        <Modal isOpen onClose={() => setDialog(false)} className="max-w-150 p-6 lg:p-10">
+        <Modal isOpen title={<>Record a release of {service.name}</>} onClose={() => setDialog(false)} className="max-w-150 p-6 lg:p-10">
           <form onSubmit={submit} className="space-y-5">
-            <h4 className="text-lg font-semibold text-gray-800 dark:text-white/90">Record a release of {service.name}</h4>
             <div><Label htmlFor="rel-v">Version</Label><input id="rel-v" required autoFocus className={inputClass} placeholder="4.3.0" value={version} onChange={(e) => setVersion(e.target.value)} /></div>
             <div><Label htmlFor="rel-n">Notes</Label><input id="rel-n" className={inputClass} value={notes} onChange={(e) => setNotes(e.target.value)} /></div>
             <div className="flex justify-end gap-3"><button type="button" className={outlineButton} onClick={() => setDialog(false)}>Cancel</button><button type="submit" className={primaryButton} disabled={create.isPending}>{create.isPending ? "Recording…" : "Record release"}</button></div>
@@ -220,9 +219,8 @@ function Images({ service, projectId }: { service: Service; projectId: string })
         </div>
       )}
       {dialog && (
-        <Modal isOpen onClose={() => setDialog(false)} className="max-w-150 p-6 lg:p-10">
+        <Modal isOpen title="Add a container image" onClose={() => setDialog(false)} className="max-w-150 p-6 lg:p-10">
           <form onSubmit={submit} className="space-y-5">
-            <h4 className="text-lg font-semibold text-gray-800 dark:text-white/90">Add a container image</h4>
             <div><Label htmlFor="img-n">Image name (without tag)</Label><input id="img-n" required autoFocus className={inputClass} placeholder="ghcr.io/acme/payment-api" value={name} onChange={(e) => setName(e.target.value)} /></div>
             <div><Label>Registry connection</Label><SelectField value={registry} onChange={setRegistry} options={[{ value: "", label: "Public image (no credentials)" }, ...registries.map((r) => ({ value: r.id, label: `${r.name}${r.inherited ? ` (${r.scope.type.toLowerCase()})` : ""}` }))]} /></div>
             {add.error ? <ErrorNotice error={add.error} /> : null}

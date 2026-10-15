@@ -158,12 +158,16 @@ export function ConnectWizard({ organizationId, scopeType, scopeId, scopeName, p
   const link = useLinkInstallation(organizationId);
 
   return (
-    <Modal isOpen onClose={onClose} className="max-w-190 p-6 lg:p-10">
-      <h4 className="mb-1 text-lg font-semibold text-gray-800 dark:text-white/90">Connect a source</h4>
-      <p className={`mb-6 text-sm ${muted}`}>
+    <Modal
+      isOpen
+      onClose={onClose}
+      className="max-w-190 p-6 lg:p-10"
+      title="Connect a source"
+      description={<>
         For the {LEVEL_LABEL[scopeType]} <strong className="text-gray-800 dark:text-white/90">{scopeName}</strong>{scopeType !== "PROJECT" ? " and everything below it" : ""}. Credentials are stored encrypted; code stays where it is.
         {scopeType === "PROJECT" && <> If your organization already connected GitHub, you don't need this — attach repositories from a service instead.</>}
-      </p>
+      </>}
+    >
 
       {step === "choose" && (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

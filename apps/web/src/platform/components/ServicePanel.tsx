@@ -29,9 +29,8 @@ export function EnvironmentDialog({ kinds, pending, error, onSubmit, onClose }: 
     onSubmit({ slug, name, kind, internetFacing });
   };
   return (
-    <Modal isOpen onClose={onClose} className="max-w-150 p-6 lg:p-10">
+    <Modal isOpen title="New environment" onClose={onClose} className="max-w-150 p-6 lg:p-10">
       <form onSubmit={submit}>
-        <h4 className="mb-6 text-lg font-semibold text-gray-800 dark:text-white/90">New environment</h4>
         <div className="space-y-5">
           <div>
             <Label htmlFor="env-name">Name</Label>
@@ -158,9 +157,7 @@ export function ServicePanel({ organization, project, service, environmentKinds 
         <EnvironmentDialog kinds={environmentKinds} pending={createEnv.isPending} error={createEnv.error} onClose={() => setEnvDialog(false)} onSubmit={(d) => createEnv.mutate(d, { onSuccess: () => setEnvDialog(false) })} />
       )}
       {picker && (
-        <Modal isOpen onClose={() => setPicker(false)} className="max-w-150 p-6 lg:p-10">
-          <h4 className="mb-2 text-lg font-semibold text-gray-800 dark:text-white/90">Attach a repository to {service.name}</h4>
-          <p className={`mb-6 text-sm ${muted}`}>Project {project.name} · repositories from this project's connections and the inherited ones.</p>
+        <Modal isOpen title={<>Attach a repository to {service.name}</>} description={<>Project {project.name} · repositories from this project's connections and the inherited ones.</>} onClose={() => setPicker(false)} className="max-w-150 p-6 lg:p-10">
           {candidates.length === 0 ? (
             <EmptyState title="Nothing left to attach">Every synced repository is already attached, or none is synced yet.</EmptyState>
           ) : (

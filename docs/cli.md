@@ -328,23 +328,68 @@ Form: `matelot <resource> <verb> [flags]`.
 | `matelot coverage [--project ID] [--uncovered] [--gap CHECK] [--days N]` | `GET /organizations/:org/coverage`, `GET /projects/:project/coverage` | Service coverage, per service: repository · security pipeline in the last N days (default 30) · SBOM · a policy applies · a deployment recorded. `--uncovered` prints only the gaps with the commands that close them ([coverage.md](coverage.md)) |
 | `matelot connection disconnect` | `POST /integrations/:id/disconnect` | Disconnect: keep the connection, forget the credentials |
 
+### members
+
+| Command | API | Does |
+|---|---|---|
+| `matelot members list` | `GET /members` | Members of a scope, direct and inherited (--scope organizations/ID \| workspaces/ID \| teams/ID \| projects/ID) |
+| `matelot members roles` | `GET /members/roles` | Roles offered at a scope, with the GitLab equivalent and whether you may grant each (--scope projects/ID) |
+| `matelot members candidates` | `GET /members/candidates` | People (and this scope's service accounts) you can add (--scope projects/ID --q jane) |
+| `matelot members add` | `POST /members` | Add or invite people (--scope projects/ID --role DEVELOPER --email a@x,b@x \| --users ID,ID [--expires 2027-03-31] [--reason …]); unknown e-mails are invited (setup link printed when there is no SMTP) |
+| `matelot members update` | `PATCH /members/:id` | Change a direct membership (--id MEMBERSHIP [--role TEAM_LEAD] [--expires 2027-03-31 \| none]) |
+| `matelot members remove` | `DELETE /members/:id` | Remove a direct membership (--id MEMBERSHIP [--reason …]) |
+
 ### users
 
 | Command | API | Does |
 |---|---|---|
-| `matelot users list` | `GET /admin/users` | Users (platform admin) |
+| `matelot users list` | `GET /admin/users` | Users of the cell (cell admins and root-organization admins; --kind human\|service_account) |
+| `matelot users capabilities` | `GET /admin/users/capabilities` | What user administration can do on this cell (Keycloak admin API, e-mail) |
+| `matelot users show` | `GET /admin/users/:id` | A user's roles across scopes and tokens (--id USER) |
+| `matelot users create` | `POST /admin/users` | Create a user (--email [--first-name --last-name] [--temporary-password …]); without a password a one-time setup link is issued (e-mailed, or printed when there is no SMTP) |
+| `matelot users disable` | `PATCH /admin/users/:id` | Disable a user: roles kept, sign-in and tokens refused, sessions ended (--id USER) |
+| `matelot users enable` | `PATCH /admin/users/:id` | Enable a user again (--id USER) |
+| `matelot users reset-password` | `POST /admin/users/:id/reset-password` | Reset a password (--id USER [--temporary-password …]); without one a one-time reset link is issued |
+| `matelot users delete` | `DELETE /admin/users/:id` | Delete a user with their roles and tokens (--id USER [--reason …]); a sole organization admin is refused |
+
+### service-accounts
+
+| Command | API | Does |
+|---|---|---|
+| `matelot service-accounts list` | `GET /service-accounts` | Service accounts owned by a scope (--scope projects/ID) |
+| `matelot service-accounts create` | `POST /service-accounts` | Create a bot owned by a scope (--scope projects/ID --name "Jira sync" [--role DEVELOPER] [--description …]) |
+| `matelot service-accounts disable` | `PATCH /service-accounts/:id` | Disable a service account (its tokens stop working) |
+| `matelot service-accounts enable` | `PATCH /service-accounts/:id` | Enable a service account |
+| `matelot service-accounts delete` | `DELETE /service-accounts/:id` | Delete a service account with its roles and tokens (--id SA) |
+| `matelot service-accounts tokens` | `GET /service-accounts/:id/tokens` | Tokens of a service account (--id SA) |
+| `matelot service-accounts token-create` | `POST /service-accounts/:id/tokens` | New token for a service account (--id SA --name ci --token-scope read\|write --days 90); printed once |
+| `matelot service-accounts token-rotate` | `POST /service-accounts/:id/tokens/:tokenId/rotate` | Rotate a token: a new one with the same name, scope and lifetime; the old one stops now (--id SA --token-id T) |
+| `matelot service-accounts token-revoke` | `DELETE /service-accounts/:id/tokens/:tokenId` | Revoke a service-account token (--id SA --token-id T) |
+
+### access-token
+
+| Command | API | Does |
+|---|---|---|
+| `matelot access-token create` | `POST /scope-access-tokens` | Scope access token (GitLab "project access token"): a bot member + its token in one step (--scope projects/ID --name Renovate --role DEVELOPER --token-scope read\|write --days 90) |
+
+### invite
+
+| Command | API | Does |
+|---|---|---|
+| `matelot invite show` | `GET /invites/:inviteToken` | What a one-time setup link is for (--link https://…/invite/TOKEN) |
+| `matelot invite accept` | `POST /invites/:inviteToken` | Set the password through a one-time setup link (--link … --password …) — no sign-in needed |
 
 ### memberships
 
 | Command | API | Does |
 |---|---|---|
-| `matelot memberships list` | `GET /memberships` | Memberships of a scope (--scope-type PROJECT --scope-id ID) |
+| `matelot memberships list` | `GET /memberships` | Direct memberships of a scope (--scope-type PROJECT --scope-id ID); `matelot members list` also shows the inherited ones |
 
 ### membership
 
 | Command | API | Does |
 |---|---|---|
-| `matelot membership grant` | `POST /memberships` | Grant a role (--email --role DEVELOPER --scope-type PROJECT --scope-id ID) |
+| `matelot membership grant` | `POST /memberships` | Grant a role (--email --role DEVELOPER --scope-type PROJECT --scope-id ID [--expires 2027-03-31]); same rules as `matelot members add` |
 
 ### meta
 

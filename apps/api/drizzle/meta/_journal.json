@@ -337,6 +337,13 @@
       "when": 1791473118071,
       "tag": "0047_onboarding_completed",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1792047482445,
+      "tag": "0048_members_service_accounts",
+      "breakpoints": true
     }
   ]
 }

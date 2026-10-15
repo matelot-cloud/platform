@@ -20,10 +20,8 @@ export function ExceptionDialog({ scope, initial, onClose }: { scope: { type: "o
   const [ticketUrl, setTicketUrl] = useState("");
   const [expiresAt, setExpiresAt] = useState(inDays(30));
   return (
-    <Modal isOpen onClose={onClose} className="max-w-160 p-6 pe-20 lg:p-8 lg:pe-24">
+    <Modal isOpen title={<>New exception · {scope.name}</>} description="Time-boxed acceptance. Matching open findings in this scope take the chosen status until the date; then they reopen automatically. The gate and the risk score honour it, and the audit log records who, why and until when." onClose={onClose} className="max-w-160 p-6 lg:p-8">
       <form onSubmit={(e) => { e.preventDefault(); create.mutate({ scope: { type: scope.type, id: scope.id }, kind, matchId, matchComponent: matchComponent || undefined, status: status as "accepted", reason, ticketUrl: ticketUrl || undefined, expiresAt: new Date(`${expiresAt}T23:59:59Z`).toISOString() }, { onSuccess: onClose }); }} className="space-y-4">
-        <h4 className="text-lg font-semibold text-gray-800 dark:text-white/90">New exception · {scope.name}</h4>
-        <p className={`text-sm ${muted}`}>Time-boxed acceptance. Matching open findings in this scope take the chosen status until the date; then they reopen automatically. The gate and the risk score honour it, and the audit log records who, why and until when.</p>
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div><Label>What</Label><SelectField value={kind} onChange={(v) => setKind(v as "vulnerability" | "code")} options={[{ value: "vulnerability", label: "Vulnerability (CVE / GHSA)" }, { value: "code", label: "Code rule (secret / IaC)" }]} /></div>
           <div><Label htmlFor="ex-id">{kind === "vulnerability" ? "Advisory id" : "Rule id"}</Label><input id="ex-id" required className={inputClass} placeholder={kind === "vulnerability" ? "CVE-2024-12345" : "DS-0026"} value={matchId} onChange={(e) => setMatchId(e.target.value)} /></div>

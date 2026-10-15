@@ -110,15 +110,10 @@ export function EnvironmentManager({ project, service, environment, current, pro
   ];
 
   return (
-    <Modal isOpen onClose={onClose} className="max-w-240 p-0">
+    <Modal isOpen onClose={onClose} className="max-w-240 p-0" title={<>{environment.name} <Badge size="sm" color={ENV_COLOR[environment.kind] ?? "light"}>{environment.kind}</Badge></>} description={`Environment of ${service.name}`}>
       <div className="flex min-h-130 flex-col md:flex-row">
         <aside className="shrink-0 border-b border-gray-100 md:w-56 md:border-r md:border-b-0 dark:border-gray-800">
-          <div className="px-5 pt-5 pb-3">
-            <p className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Environment</p>
-            <p className="mt-1 flex items-center gap-2 text-base font-semibold text-gray-800 dark:text-white/90">{environment.name} <Badge size="sm" color={ENV_COLOR[environment.kind] ?? "light"}>{environment.kind}</Badge></p>
-            <p className={`text-xs ${muted}`}>{service.name}</p>
-          </div>
-          <nav className="flex gap-1 overflow-x-auto px-3 pb-3 md:flex-col md:overflow-visible">
+          <nav className="flex gap-1 overflow-x-auto px-3 py-3 md:flex-col md:overflow-visible">
             {nav.map((n) => (
               <button key={n.key} type="button" onClick={() => setSection(n.key)} className={cn("flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm whitespace-nowrap", section === n.key ? "bg-brand-50 font-medium text-brand-600 dark:bg-brand-500/10 dark:text-brand-400" : "text-gray-700 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-white/5")}>
                 {n.icon}{n.label}
@@ -127,7 +122,7 @@ export function EnvironmentManager({ project, service, environment, current, pro
           </nav>
         </aside>
 
-        <div className="min-w-0 flex-1 p-6 pe-20 sm:pe-24">
+        <div className="min-w-0 flex-1 p-6">
           {section === "details" && (
             <div className="space-y-4">
               <h4 className="text-base font-semibold text-gray-800 dark:text-white/90">Identifiers and paths</h4>

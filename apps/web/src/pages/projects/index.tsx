@@ -125,6 +125,7 @@ export function ProjectsExplorer({ organization, workspaceId }: { organization: 
           </div>
           <div className="flex items-center gap-3 sm:shrink-0">
             <input className={`${inputClass} w-full sm:w-56`} placeholder="Filter projects" value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Filter projects" />
+            {selectedTeam && <Link className={outlineButton} to={`/workspaces/${selectedTeam.workspaceId}/teams/${selectedTeam.id}/members`}>Team members</Link>}
             {selectedTeam ? (
               <button type="button" className={primaryButton} onClick={() => setDialog({ kind: "project", team: selectedTeam })}><PlusIcon className="size-5" /> New project</button>
             ) : selectedWorkspace ? (

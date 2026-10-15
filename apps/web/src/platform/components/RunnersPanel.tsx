@@ -28,9 +28,7 @@ function RegisterDialog({ pool, onClose }: { pool: RunnerPool; onClose: () => vo
   const [env, setEnv] = useState<(typeof ENVIRONMENTS)[number]["key"]>(window.location.hostname === "localhost" ? "local" : "docker");
   if (!data && !token.isPending && !token.error && !token.isSuccess) token.mutate(pool.id, { onSuccess: setData });
   return (
-    <Modal isOpen onClose={onClose} className="max-w-190 p-6 lg:p-10">
-      <h4 className="mb-1 text-lg font-semibold text-gray-800 dark:text-white/90">Register a runner</h4>
-      <p className={`mb-5 text-sm ${muted}`}>Pool <strong className="text-gray-800 dark:text-white/90">{pool.name}</strong> ({LEVEL[pool.scope.type]} {pool.scope.name}). The runner only makes outbound HTTPS connections to the platform — no inbound port, no public IP, works behind NAT and proxies. Put it where your code, registry and clusters are reachable.</p>
+    <Modal isOpen title="Register a runner" description={<>Pool <strong className="text-gray-800 dark:text-white/90">{pool.name}</strong> ({LEVEL[pool.scope.type]} {pool.scope.name}). The runner only makes outbound HTTPS connections to the platform — no inbound port, no public IP, works behind NAT and proxies. Put it where your code, registry and clusters are reachable.</>} onClose={onClose} className="max-w-190 p-6 lg:p-10">
       {token.error ? <ErrorNotice error={token.error} /> : null}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
         {ENVIRONMENTS.map((e) => (
@@ -63,10 +61,8 @@ function NewPoolDialog({ level, pending, error, onSubmit, onClose }: { level: st
   const [description, setDescription] = useState("");
   const submit = (e: FormEvent) => { e.preventDefault(); onSubmit({ slug, name, description: description || undefined, tags: tags.split(",").map((t) => t.trim()).filter(Boolean) }); };
   return (
-    <Modal isOpen onClose={onClose} className="max-w-150 p-6 lg:p-10">
+    <Modal isOpen title="New runner pool" description={<>A pool groups runners with the same purpose or location. This one belongs to the {level} and serves every project below it.</>} onClose={onClose} className="max-w-150 p-6 lg:p-10">
       <form onSubmit={submit} className="space-y-5">
-        <h4 className="text-lg font-semibold text-gray-800 dark:text-white/90">New runner pool</h4>
-        <p className={`text-sm ${muted}`}>A pool groups runners with the same purpose or location. This one belongs to the {level} and serves every project below it.</p>
         <div><Label htmlFor="p-name">Name</Label><input id="p-name" autoFocus required className={inputClass} placeholder="Build servers Frankfurt" value={name} onChange={(e) => { setName(e.target.value); setSlug(slugify(e.target.value)); }} /></div>
         <div><Label htmlFor="p-slug">Slug</Label><input id="p-slug" required pattern={SLUG_PATTERN} className={inputClass} value={slug} onChange={(e) => setSlug(e.target.value)} /></div>
         <div><Label htmlFor="p-tags">Tags</Label><input id="p-tags" className={inputClass} placeholder="linux, docker, internal" value={tags} onChange={(e) => setTags(e.target.value)} /><p className={`mt-1.5 text-xs ${muted}`}>Every runner in the pool advertises these. Jobs can require tags to land on specific runners (e.g. <code>internal</code> for private networks).</p></div>
@@ -81,8 +77,7 @@ function NewPoolDialog({ level, pending, error, onSubmit, onClose }: { level: st
 function RunnerDrawer({ runner, pool, onClose }: { runner: Runner; pool: RunnerPool; onClose: () => void }) {
   const m = runner.metadata;
   return (
-    <Modal isOpen onClose={onClose} className="max-w-150 p-6 lg:p-8">
-      <h4 className="flex items-center gap-3 text-lg font-semibold text-gray-800 dark:text-white/90">{runner.name} <Badge size="sm" color={STATUS_COLOR[runner.status]}>{runner.status}</Badge></h4>
+    <Modal isOpen title={<>{runner.name} <Badge size="sm" color={STATUS_COLOR[runner.status]}>{runner.status}</Badge></>} onClose={onClose} className="max-w-150 p-6 lg:p-8">
       <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
         <div><dt className={`text-xs ${muted}`}>Pool</dt><dd className="text-gray-800 dark:text-white/90">{pool.name} · {LEVEL[pool.scope.type]} {pool.scope.name}</dd></div>
         <div><dt className={`text-xs ${muted}`}>Tags</dt><dd>{[...pool.tags, ...runner.tags].map((t) => <Badge key={t} size="sm" color="light">{t}</Badge>)}</dd></div>

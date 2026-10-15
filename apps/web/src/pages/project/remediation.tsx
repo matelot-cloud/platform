@@ -18,10 +18,8 @@ function TrackDialog({ item, onClose }: { item: QueueItem; onClose: () => void }
   const [dueAt, setDueAt] = useState(item.dueAt.slice(0, 10));
   const [notes, setNotes] = useState("");
   return (
-    <Modal isOpen onClose={onClose} className="max-w-140 p-6 pe-20 lg:p-8 lg:pe-24">
+    <Modal isOpen title="Track as work" description={<>{item.matchId}{item.componentName ? ` · ${item.componentName}` : ""} in {item.serviceName} — {item.findingIds.length} finding{item.findingIds.length === 1 ? "" : "s"}. Closes itself when they are all fixed.</>} onClose={onClose} className="max-w-140 p-6 lg:p-8">
       <form onSubmit={(e) => { e.preventDefault(); create.mutate({ serviceId: item.serviceId, kind: item.kind, matchId: item.matchId, componentName: item.kind === "code" ? undefined : item.componentName, ownerEmail: ownerEmail || undefined, dueAt: dueAt ? `${dueAt}T23:59:59Z` : undefined, notes: notes || undefined }, { onSuccess: onClose }); }} className="space-y-4">
-        <h4 className="text-lg font-semibold text-gray-800 dark:text-white/90">Track as work</h4>
-        <p className={`text-sm ${muted}`}>{item.matchId}{item.componentName ? ` · ${item.componentName}` : ""} in {item.serviceName} — {item.findingIds.length} finding{item.findingIds.length === 1 ? "" : "s"}. Closes itself when they are all fixed.</p>
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div><Label htmlFor="rem-owner">Owner (e-mail)</Label><input id="rem-owner" type="email" className={inputClass} placeholder="dev@company.com" value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)} /></div>
           <div><Label htmlFor="rem-due">Due</Label><input id="rem-due" type="date" className={inputClass} value={dueAt} onChange={(e) => setDueAt(e.target.value)} /><p className={`mt-1 text-xs ${muted}`}>SLA suggests {item.dueAt.slice(0, 10)}</p></div>

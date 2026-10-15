@@ -11,7 +11,85 @@ export interface Meta {
   criticalities: Criticality[];
   permissions: string[];
   rolePermissions: Record<string, string[]>;
+  /** Roles in display order: label, one-line description, closest GitLab role, scopes where they are offered. */
+  roleCatalog?: RoleInfo[];
+  /** Named capabilities (on/off); M13 licensing maps them to tiers. */
+  features?: Partial<Record<FeatureName, boolean>>;
 }
+
+export type FeatureName = "inherited_members" | "member_expiry" | "bulk_invite" | "invite_links" | "user_admin" | "service_accounts" | "scope_access_tokens" | "custom_roles";
+export type MemberScopeType = "ORGANIZATION" | "WORKSPACE" | "TEAM" | "PROJECT";
+export interface MemberScopeRef { type: MemberScopeType; id: string; name: string }
+
+export interface RoleInfo {
+  role: string;
+  label: string;
+  description: string;
+  gitlab: "Guest" | "Reporter" | "Developer" | "Maintainer" | "Owner";
+  scopes: MemberScopeType[];
+  /** Only from GET /members/roles: the caller may grant it at that scope. */
+  grantable?: boolean;
+}
+
+export interface MemberScopeSummary { type: MemberScopeType; id: string; slug: string; name: string }
+
+export interface MemberRow {
+  membershipId: string;
+  user: { id: string; email: string; displayName: string | null; kind: "human" | "service_account" | string; lastLoginAt: string | null; disabled: boolean };
+  role: string;
+  roleLabel: string;
+  source: "direct" | "inherited";
+  inheritedFrom: MemberScopeSummary | null;
+  grantedBy: { id: string; email: string } | null;
+  grantedAt: string;
+  expiresAt: string | null;
+  expired: boolean;
+  canEdit: boolean;
+}
+export interface MembersResponse { scope: MemberScopeSummary; canManage: boolean; members: MemberRow[] }
+export interface MemberCandidate { id: string; email: string; displayName: string | null; kind: string }
+export interface AddMembersResult {
+  added: { membershipId: string; email: string; role: string; updated: boolean }[];
+  skipped: { email: string; reason: string }[];
+  invited: { email: string; setupLink: string | null; emailed: boolean; viaIdentityProvider: boolean }[];
+}
+
+export interface ServiceAccount {
+  id: string;
+  name: string | null;
+  username: string;
+  description: string | null;
+  ownerScopeType: MemberScopeType;
+  ownerScopeId: string;
+  disabled: boolean;
+  createdAt: string;
+  activeTokens?: number;
+  memberships?: { role: string; scopeType: MemberScopeType; scopeId: string; expiresAt: string | null }[];
+  membershipId?: string | null;
+}
+export interface TokenRow {
+  id: string;
+  name: string;
+  scope: "read" | "write" | "sudo";
+  prefix: string;
+  expiresAt: string;
+  expired: boolean;
+  lastUsedAt: string | null;
+  lastUsedIp: string | null;
+  revokedAt: string | null;
+  source: string;
+  createdAt: string;
+}
+export interface CreatedToken extends TokenRow { token: string }
+
+export interface AdminCapabilities { keycloak: boolean; email: boolean; canChangeCellRole: boolean }
+export interface IssuedLink { setupLink: string | null; emailed: boolean; expiresAt?: string; temporaryPassword: boolean }
+export interface AdminUserDetail {
+  user: AdminUser & { ownerScopeType: MemberScopeType | null; ownerScopeId: string | null; description: string | null };
+  memberships: { id: string; role: string; scopeType: MemberScopeType; scopeId: string; scope: MemberScopeSummary | null; expiresAt: string | null; expired: boolean; grantedAt: string }[];
+  tokens: TokenRow[];
+}
+export interface InviteInfo { email: string; purpose: "invite" | "reset"; expiresAt: string; minLength: number }
 
 export interface Organization {
   id: string;
@@ -88,6 +166,8 @@ export interface AdminUser {
   id: string;
   email: string;
   displayName: string | null;
+  kind?: "human" | "service_account" | string;
+  signInReady?: boolean;
   platformRole: PlatformRole;
   disabledAt: string | null;
   lastLoginAt: string | null;

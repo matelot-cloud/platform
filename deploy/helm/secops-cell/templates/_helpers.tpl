@@ -118,6 +118,10 @@ checksums agree, and an install renders exactly what the next upgrade renders (n
 {{- index $cache .name -}}
 {{- end -}}
 
+{{- define "cell.seedAdminPassword" -}}
+{{- include "cell.generated" (dict "ctx" . "name" "seedAdminPassword" "value" .Values.keycloak.seedAdminPassword "secret" "keycloak" "key" "SEED_ADMIN_PASSWORD" "gen" (randAlphaNum 16)) -}}
+{{- end -}}
+
 {{- define "cell.encryptionKey" -}}
 {{- include "cell.generated" (dict "ctx" . "name" "encryptionKey" "value" .Values.encryptionKey "secret" "cell-key" "key" "CELL_ENCRYPTION_KEY" "gen" (randAlphaNum 64 | lower | regexFind "[0-9a-f]{64}" | default (printf "%s%s" (randNumeric 32) (randNumeric 32)))) -}}
 {{- end -}}

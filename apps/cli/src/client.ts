@@ -9,6 +9,8 @@ export interface Config {
   token?: string;
   /** token came from ~/.config/matelot/credentials.json (refreshable) */
   fromLogin?: boolean;
+  /** no credentials at all: public endpoints only (`matelot invite …`, the link is the credential) */
+  anonymous?: boolean;
 }
 
 export function configFromEnv(env = process.env): Config {
@@ -68,7 +70,7 @@ async function requestOnce<T = unknown>(config: Config, method: string, path: st
     try {
       response = await fetch(`${config.url}${path}`, {
         method,
-        headers: { Authorization: config.token ? `Bearer ${config.token}` : signatureHeader(config.keyId, config.secret, method, path, raw), 'Content-Type': 'application/json', 'User-Agent': `secops-cli/${VERSION}` },
+        headers: { ...(config.anonymous ? {} : { Authorization: config.token ? `Bearer ${config.token}` : signatureHeader(config.keyId, config.secret, method, path, raw) }), 'Content-Type': 'application/json', 'User-Agent': `secops-cli/${VERSION}` },
         body: raw.length ? raw : undefined,
         signal: controller.signal,
       });
@@ -97,4 +99,4 @@ async function requestOnce<T = unknown>(config: Config, method: string, path: st
   }
 }
 
-export const VERSION = '2.22.4';
+export const VERSION = '2.23.0';

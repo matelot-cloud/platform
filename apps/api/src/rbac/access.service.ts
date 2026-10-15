@@ -1,6 +1,6 @@
 import { currentRequestContext } from '../common/request-context';
 import { Inject, Injectable } from '@nestjs/common';
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, gt, inArray, isNull, or, sql } from 'drizzle-orm';
 import { DATABASE, Database } from '../database/database.module';
 import { apiTokens, environments, Membership, memberships, projects, Role, ScopeType, services, teams, users, workspaces } from '../database/schema';
 import { ScopeRef } from './scope.types';
@@ -71,7 +71,8 @@ export class AccessService {
       return this.forToken({ id: row.id, scopeType: row.scopeType, scopeId: row.scopeId, permissions: row.permissions });
     }
     const [rows, [user]] = await Promise.all([
-      this.db.select().from(memberships).where(eq(memberships.userId, userId)),
+      // an expired membership (members API "expires at") no longer grants anything
+      this.db.select().from(memberships).where(and(eq(memberships.userId, userId), or(isNull(memberships.expiresAt), gt(memberships.expiresAt, sql`now()`)))),
       this.db.select({ platformRole: users.platformRole }).from(users).where(eq(users.id, userId)).limit(1),
     ]);
     // Personal / OAuth token: the user keeps their own memberships and visibility (and admin mode); the token's scope is

@@ -27,10 +27,8 @@ function CreateDialog({ canSudo, onClose }: { canSudo: boolean; onClose: () => v
   if (create.data) {
     const t = create.data.token;
     return (
-      <Modal isOpen onClose={onClose} className="max-w-160 p-6 pe-20 lg:p-8 lg:pe-24">
+      <Modal isOpen title="Token created" description={<span className="text-warning-600">Copy it now — it is shown only once. It acts as you ({create.data.scope}), until {formatDate(create.data.expiresAt)}.</span>} onClose={onClose} className="max-w-160 p-6 lg:p-8">
         <div className="space-y-4">
-          <h4 className="text-lg font-semibold text-gray-800 dark:text-white/90">Token created</h4>
-          <p className="text-sm text-warning-600">Copy it now — it is shown only once. It acts as you ({create.data.scope}), until {formatDate(create.data.expiresAt)}.</p>
           <CodeBlock code={t} wrap lines={false} />
           <button type="button" className={primaryButton} onClick={() => { void navigator.clipboard?.writeText(t); setCopied(true); }}>{copied ? "Copied" : "Copy token"}</button>
           <div>
@@ -43,9 +41,8 @@ function CreateDialog({ canSudo, onClose }: { canSudo: boolean; onClose: () => v
     );
   }
   return (
-    <Modal isOpen onClose={onClose} className="max-w-160 p-6 pe-20 lg:p-8 lg:pe-24">
+    <Modal isOpen title="New personal access token" onClose={onClose} className="max-w-160 p-6 lg:p-8">
       <form onSubmit={(e) => { e.preventDefault(); create.mutate({ name, scope, expiresInDays: Number(days) }); }} className="space-y-5">
-        <h4 className="text-lg font-semibold text-gray-800 dark:text-white/90">New personal access token</h4>
         <div><Label htmlFor="pat-name">Name</Label><input id="pat-name" required autoFocus className={inputClass} placeholder="laptop · scripts · Jira sync" value={name} onChange={(e) => setName(e.target.value)} /></div>
         <div>
           <Label>Scope</Label>

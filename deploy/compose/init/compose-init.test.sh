@@ -24,6 +24,7 @@ check_env "$M/env/api.env" MATELOT_LICENSE 'lic$#'
 check_env "$M/env/api.env" APP_VERSION 1.2.3
 check_env "$M/env/api.env" API_PUBLIC_URL "http://localhost"
 check_env "$M/env/api.env" REGISTRY_INTERNAL_URL "http://registry:5000"
+check_env "$M/env/api.env" KEYCLOAK_ADMIN_URL "http://keycloak:8080/auth"
 check_env "$M/env/cell.env" ADMIN_EMAIL "$EMAIL"
 check_env "$M/keycloak/keycloak.env" KC_DB_PASSWORD "$(cat "$M/secrets/postgres/POSTGRES_PASSWORD")"
 check_env "$M/keycloak/keycloak.env" KC_HOSTNAME "http://localhost/auth"

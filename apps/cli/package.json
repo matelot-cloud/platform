@@ -1,6 +1,6 @@
 {
   "name": "matelot-cli",
-  "version": "2.22.4",
+  "version": "2.23.0",
   "description": "Matelot CLI \u2014 deploy, promote, gate, and query the Matelot product-security platform",
   "license": "Apache-2.0",
   "type": "commonjs",

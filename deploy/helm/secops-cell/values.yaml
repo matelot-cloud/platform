@@ -135,6 +135,12 @@ keycloak:
   adminPassword: change-me-please
   allowPasswordGrant: true   # direct-access grants on platform-web; handy for CLI/dev, disable in prod
   extraRedirectUris: ["http://localhost:5173/*"]
+  # The first administrators: every tenant.adminEmails address without a user in the realm is created by the realm-sync
+  # hook (install and every upgrade) with this password, marked temporary — the first login asks for a new one. Empty =
+  # generated once and kept in the Secret <release>-keycloak as SEED_ADMIN_PASSWORD (NOTES print how to read it).
+  # Existing users are never modified. seedAdmins: false = the operator creates users (or the IdP does on first login).
+  seedAdmins: true
+  seedAdminPassword: ""
   seedUsers:                 # dev convenience; leave empty in production (users come via SSO / SCIM)
     - username: admin
       email: admin@acme.local

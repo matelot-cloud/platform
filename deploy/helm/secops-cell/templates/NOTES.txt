@@ -4,6 +4,13 @@ Tenant cell "{{ .Values.tenant.slug }}" ({{ .Values.tenant.name }}) deployed to 
   API:       {{ include "cell.scheme" . }}://{{ include "cell.apiHost" . }}/api/v1   (docs: /api/docs)
   Keycloak:  {{ include "cell.scheme" . }}://{{ include "cell.authHost" . }}   (admin: {{ .Values.keycloak.adminUser }})
   Root org:  {{ .Values.tenant.slug }}  admins: {{ join ", " .Values.tenant.adminEmails }}
+{{- if .Values.keycloak.seedAdmins }}
+  Sign in:   the administrators above exist in Keycloak after the realm-sync hook (temporary password, changed at first login):
+             kubectl -n {{ .Release.Namespace }} get secret {{ .Release.Name }}-keycloak -o jsonpath='{.data.SEED_ADMIN_PASSWORD}' | base64 -d; echo
+             What the hook did:  kubectl -n {{ .Release.Namespace }} logs job/{{ .Release.Name }}-realm-sync
+{{- else }}
+  Sign in:   keycloak.seedAdmins is false — create the administrators in Keycloak (or let the identity provider create them at first login)
+{{- end }}
 
 Watch it come up:
   kubectl -n {{ .Release.Namespace }} get pods -w

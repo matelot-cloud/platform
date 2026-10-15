@@ -83,6 +83,28 @@ export class PersonalTokensService {
     return { revoked: true };
   }
 
+  // ---- tokens of another identity (service accounts): authorised and audited by the caller --------------------------
+  /** A token for `userId` (a service account): same table, hashing and authentication as a personal token, source
+   *  'service_account', never sudo. Returns the secret once. */
+  async issueFor(userId: string, input: { name: string; scope: 'read' | 'write'; expiresAt: Date }) {
+    const secret = `${TOKEN_PREFIX}${randomBytes(30).toString('base64url')}`;
+    const [row] = await this.db.insert(personalAccessTokens).values({ userId, name: input.name.trim().slice(0, 100), scope: input.scope, tokenHash: hash(secret), prefix: secret.slice(0, 10), expiresAt: input.expiresAt, source: 'service_account' }).returning();
+    const { tokenHash: _h, ...rest } = row!;
+    return { ...rest, token: secret };
+  }
+
+  async listFor(userId: string) {
+    const rows = await this.db.select().from(personalAccessTokens).where(eq(personalAccessTokens.userId, userId)).orderBy(desc(personalAccessTokens.createdAt));
+    return rows.map(({ tokenHash: _h, ...r }) => ({ ...r, expired: r.expiresAt.getTime() < Date.now() }));
+  }
+
+  async revokeFor(userId: string, tokenId: string) {
+    const [row] = await this.db.update(personalAccessTokens).set({ revokedAt: new Date() }).where(and(eq(personalAccessTokens.id, tokenId), eq(personalAccessTokens.userId, userId), isNull(personalAccessTokens.revokedAt))).returning();
+    if (!row) return null;
+    const { tokenHash: _h, ...rest } = row;
+    return rest;
+  }
+
   /** Resolves a presented secret to its user; null when unknown, revoked, expired or the user is disabled. */
   async authenticate(secret: string, ip?: string): Promise<{ user: AuthenticatedUser; tokenId: string; scope: PersonalTokenScope } | null> {
     const [row] = await this.db.select({ t: personalAccessTokens, u: users }).from(personalAccessTokens).innerJoin(users, eq(personalAccessTokens.userId, users.id)).where(eq(personalAccessTokens.tokenHash, hash(secret))).limit(1);

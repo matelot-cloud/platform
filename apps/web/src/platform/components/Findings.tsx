@@ -66,12 +66,11 @@ export function FindingDialog({ findingId, onClose }: { findingId: string; onClo
   const [exception, setException] = useState(false);
   const f = finding.data;
   return (
-    <Modal isOpen onClose={onClose} className="max-w-240 p-6 pe-20 lg:p-8 lg:pe-24">
+    <Modal isOpen onClose={onClose} className="max-w-240 p-6 lg:p-8" title={f ? <span className="font-mono">{f.advisory.id}</span> : "Finding"} description={f && f.advisory.aliases.length ? f.advisory.aliases.join(" · ") : undefined}>
       {finding.error ? <ErrorNotice error={finding.error} /> : !f ? <p className={`text-sm ${muted}`}>Loading…</p> : (
         <div className="space-y-5">
           <div>
             <div className="flex flex-wrap items-center gap-2"><SeverityBadge severity={f.severity} score={f.severitySource === "distro" ? null : f.advisory.cvssScore} />{f.severitySource && <span className={`text-xs ${muted}`}>{f.severitySource === "distro" ? `${f.severityNote ?? "distribution rating"}${f.advisory.cvssScore ? ` (CVSS ${f.advisory.cvssScore.toFixed(1)})` : ""}` : f.severitySource === "cvss" ? "from CVSS" : f.severitySource === "database" ? "from the advisory rating" : f.severitySource === "alias" ? "from the CVE / GHSA alias CVSS" : "not rated"}{f.severitySource !== "distro" && f.severityNote ? ` · ${f.severityNote}` : ""}</span>}{f.advisory.kev && <Badge size="sm" color="error">Known exploited{f.advisory.kevDueDate ? ` · due ${formatDate(f.advisory.kevDueDate)}` : ""}</Badge>}<Badge size="sm" color={f.status === "open" ? "warning" : f.status === "fixed" ? "success" : "light"}>{STATUS_LABEL[f.status]}</Badge></div>
-            <h4 className="mt-2 font-mono text-lg font-semibold text-gray-800 dark:text-white/90">{f.advisory.id}{f.advisory.aliases.length ? <span className={`ms-2 text-sm font-normal ${muted}`}>{f.advisory.aliases.join(" · ")}</span> : null}</h4>
             <p className="mt-1 text-sm text-gray-700 dark:text-gray-300">{f.advisory.summary}</p>
           </div>
           <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">

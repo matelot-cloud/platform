@@ -153,27 +153,24 @@ export function IntegrationManager({ integration: i, organizationId, repoCount, 
   ];
 
   return (
-    <Modal isOpen onClose={onClose} className="max-w-240 p-0">
+    <Modal
+      isOpen
+      onClose={onClose}
+      className="max-w-240 p-0"
+      title={<span className="flex min-w-0 items-center gap-3"><BrandIcon name={brand} className="size-8 shrink-0" /><span className="truncate">{i.name}</span></span>}
+      description={describe(i)}
+      headerExtra={<span className="flex shrink-0 items-center gap-1 pt-1.5"><Badge size="sm" color={i.status === "connected" ? "success" : i.status === "error" ? "error" : i.status === "pending" ? "warning" : "light"}>{i.status}</Badge>{i.inherited && <Badge size="sm" color="light">inherited</Badge>}</span>}
+    >
       <div className="flex min-h-120 flex-col md:flex-row">
         <aside className="shrink-0 border-b border-gray-100 md:w-60 md:border-r md:border-b-0 dark:border-gray-800">
-          <div className="px-5 pt-5 pb-3">
-            <div className="flex items-center gap-3">
-              <BrandIcon name={brand} className="size-9" />
-              <div className="min-w-0">
-                <p className="truncate text-base font-semibold text-gray-800 dark:text-white/90">{i.name}</p>
-                <p className={`truncate text-xs ${muted}`}>{describe(i)}</p>
-              </div>
-            </div>
-            <p className="mt-2"><Badge size="sm" color={i.status === "connected" ? "success" : i.status === "error" ? "error" : i.status === "pending" ? "warning" : "light"}>{i.status}</Badge>{i.inherited && <Badge size="sm" color="light">inherited</Badge>}</p>
-          </div>
-          <nav className="flex gap-1 overflow-x-auto px-3 pb-3 md:flex-col md:overflow-visible">
+          <nav className="flex gap-1 overflow-x-auto px-3 py-3 md:flex-col md:overflow-visible">
             {nav.map((n) => (
               <button key={n.key} type="button" onClick={() => setSection(n.key)} className={cn("flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm whitespace-nowrap", section === n.key ? "bg-brand-50 font-medium text-brand-600 dark:bg-brand-500/10 dark:text-brand-400" : "text-gray-700 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-white/5")}>{n.icon}{n.label}</button>
             ))}
           </nav>
         </aside>
 
-        <div className="min-w-0 flex-1 p-6 pe-20 sm:pe-24">
+        <div className="min-w-0 flex-1 p-6">
           {section === "details" && (
             <div className="space-y-4">
               <h4 className="text-base font-semibold text-gray-800 dark:text-white/90">Details</h4>

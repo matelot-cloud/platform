@@ -11,6 +11,10 @@ stringData:
   KC_BOOTSTRAP_ADMIN_PASSWORD: {{ .Values.keycloak.adminPassword | quote }}
   KC_DB_USERNAME: {{ .Values.postgres.username | quote }}
   KC_DB_PASSWORD: {{ .Values.postgres.password | quote }}
+  {{- if .Values.keycloak.seedAdmins }}
+  # initial (temporary) password of the seeded administrators: kubectl -n {{ .Release.Namespace }} get secret {{ .Release.Name }}-keycloak -o jsonpath='{.data.SEED_ADMIN_PASSWORD}' | base64 -d
+  SEED_ADMIN_PASSWORD: {{ include "cell.seedAdminPassword" . | quote }}
+  {{- end }}
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -26,8 +30,10 @@ data:
 ---
 # `start --import-realm` imports once (IGNORE_EXISTING): after a scheme or hostname change the clients' redirect URIs in
 # the database stay old ("Invalid parameter: redirect_uri"). This hook applies the rendered realm's URL-shaped settings
-# (sslRequired, redirectUris, webOrigins, rootUrl…) through the admin API after every install and upgrade — users,
+# (sslRequired, redirectUris, webOrigins, rootUrl…) through the admin API after every install and upgrade, and seeds the
+# first administrators (tenant.adminEmails, SEED_ADMIN_PASSWORD, temporary) when they do not exist — existing users,
 # roles and anything created by hand are not touched (files/realm-sync.js; the Compose stack runs the same script).
+# The last run's Job is kept (deleted only before the next run): `kubectl logs job/<release>-realm-sync` shows what it did.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -38,7 +44,7 @@ metadata:
   annotations:
     helm.sh/hook: post-install,post-upgrade
     helm.sh/hook-weight: "5"
-    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    helm.sh/hook-delete-policy: before-hook-creation
 spec:
   backoffLimit: 2
   activeDeadlineSeconds: 600
@@ -66,6 +72,13 @@ spec:
           env:
             - name: REALM_SYNC_TIMEOUT
               value: "540"
+            {{- if .Values.keycloak.seedAdmins }}
+            - name: SEED_USERS
+              value: {{ join "," .Values.tenant.adminEmails | quote }}
+            - name: SEED_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ .Release.Name }}-keycloak, key: SEED_ADMIN_PASSWORD }
+            {{- end }}
           envFrom:
             - secretRef:
                 name: {{ .Release.Name }}-keycloak

@@ -4,14 +4,44 @@
 // URL-shaped settings through the admin API and nothing else: realm sslRequired, and per client (matched by clientId)
 // redirectUris, webOrigins, rootUrl, baseUrl, adminUrl, the post-logout redirect attribute. Users, groups, roles,
 // credentials and anything created by hand stay untouched; clients missing in the realm are reported, not created.
+// It also seeds the first administrators: every e-mail in SEED_USERS that has no user in the realm gets one (username =
+// e-mail, enabled, verified) with SEED_PASSWORD as a TEMPORARY password — the first login forces a change. Users that
+// exist are never modified (not their password, not their flags), so the operator's or the IdP's users are safe.
 // Runs as the chart's post-install/post-upgrade hook Job and as `compose-init.sh realm-update`.
 //   node realm-sync.js <keycloak base URL, e.g. http://acme-keycloak:8080 or http://keycloak:8080/auth> <realm.json>
 //   env: KC_BOOTSTRAP_ADMIN_USERNAME, KC_BOOTSTRAP_ADMIN_PASSWORD (the bootstrap admin of the master realm)
+//        SEED_USERS (comma-separated e-mails, optional), SEED_PASSWORD (their initial temporary password)
 //        REALM_SYNC_TIMEOUT (seconds to wait for Keycloak, default 300)
 'use strict';
 const fs = require('node:fs');
 
 const CLIENT_FIELDS = ['redirectUris', 'webOrigins', 'rootUrl', 'baseUrl', 'adminUrl'];
+
+/** First / last name from an e-mail's local part when it has two parts ("jane.doe", "jane_doe"), else none — never a
+ *  placeholder: with no name, the platform shows the e-mail and derives initials from it. */
+function namesFromEmail(email) {
+  const parts = email.split('@')[0].split(/[._-]+/).filter(Boolean);
+  if (parts.length < 2) return {};
+  const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+  return { firstName: cap(parts[0]), lastName: parts.slice(1).map(cap).join(' ') };
+}
+
+/** Keycloak 24+ ships a user profile in which firstName and lastName are REQUIRED: a user created without them (seeded
+ *  admins, invited users, service-account owners) is stopped at first login by an "update your profile" form and
+ *  types whatever gets them through ("test test"). Names are optional here; e-mail stays required. */
+async function relaxUserProfile(admin, h) {
+  const r = await fetch(`${admin}/users/profile`, { headers: h });
+  if (!r.ok) return null;   // older Keycloak without the declarative user profile: nothing to relax
+  const profile = await r.json();
+  let changed = false;
+  for (const a of profile.attributes ?? []) {
+    if ((a.name === 'firstName' || a.name === 'lastName') && a.required) { delete a.required; changed = true; }
+  }
+  if (!changed) return null;
+  const u = await fetch(`${admin}/users/profile`, { method: 'PUT', headers: h, body: JSON.stringify(profile) });
+  if (!u.ok) throw new Error(`user profile update: HTTP ${u.status}`);
+  return 'user profile: first and last name optional';
+}
 const ATTRIBUTES = ['post.logout.redirect.uris'];
 
 async function waitForKeycloak(base, timeoutSeconds, log) {
@@ -51,7 +81,7 @@ function clientPatch(current, rendered) {
   return Object.keys(patch).length ? patch : null;
 }
 
-async function sync(base, realmFile, { username, password, timeoutSeconds = 300, log = console.log } = {}) {
+async function sync(base, realmFile, { username, password, timeoutSeconds = 300, log = console.log, seedUsers = [], seedPassword = '' } = {}) {
   const rendered = JSON.parse(fs.readFileSync(realmFile, 'utf8'));
   const realm = rendered.realm;
   await waitForKeycloak(base, timeoutSeconds, log);
@@ -72,6 +102,8 @@ async function sync(base, realmFile, { username, password, timeoutSeconds = 300,
     if (!r.ok) throw new Error(`realm update: HTTP ${r.status}`);
     changes.push(`realm sslRequired ${current.sslRequired} → ${rendered.sslRequired}`);
   }
+  const profileChange = await relaxUserProfile(admin, h);
+  if (profileChange) changes.push(profileChange);
   for (const want of rendered.clients ?? []) {
     const [have] = await (await fetch(`${admin}/clients?clientId=${encodeURIComponent(want.clientId)}`, { headers: h })).json();
     if (!have) { log(`client ${want.clientId}: not in the realm (created by hand? import skipped?) — not created`); continue; }
@@ -81,15 +113,23 @@ async function sync(base, realmFile, { username, password, timeoutSeconds = 300,
     if (!r.ok) throw new Error(`client ${want.clientId} update: HTTP ${r.status}`);
     changes.push(`client ${want.clientId}: ${Object.keys(patch).join(', ')}${patch.redirectUris ? ` → ${patch.redirectUris.join(' ')}` : ''}`);
   }
+  for (const email of seedUsers.map((e) => e.trim().toLowerCase()).filter(Boolean)) {
+    const found = await (await fetch(`${admin}/users?email=${encodeURIComponent(email)}&exact=true`, { headers: h })).json();
+    if (Array.isArray(found) && found.length) continue;   // exists: never touched
+    if (!seedPassword) { log(`user ${email}: missing and no SEED_PASSWORD — not created`); continue; }
+    const r = await fetch(`${admin}/users`, { method: 'POST', headers: h, body: JSON.stringify({ username: email, email, enabled: true, emailVerified: true, ...namesFromEmail(email), credentials: [{ type: 'password', value: seedPassword, temporary: true }] }) });
+    if (!r.ok && r.status !== 409) throw new Error(`user ${email} create: HTTP ${r.status} ${await r.text().catch(() => '')}`.trim());
+    if (r.ok) changes.push(`user ${email} created (temporary password: the first login asks for a new one)`);
+  }
   log(changes.length ? `realm ${realm} synced: ${changes.join('; ')}` : `realm ${realm}: already in sync`);
   return changes;
 }
 
-module.exports = { sync, clientPatch };
+module.exports = { sync, clientPatch, namesFromEmail };
 if (require.main === module) {
   const [base, file] = process.argv.slice(2);
   if (!base || !file) { console.error('usage: node realm-sync.js <keycloak base URL> <realm.json>'); process.exit(2); }
-  const { KC_BOOTSTRAP_ADMIN_USERNAME: username, KC_BOOTSTRAP_ADMIN_PASSWORD: password, REALM_SYNC_TIMEOUT } = process.env;
+  const { KC_BOOTSTRAP_ADMIN_USERNAME: username, KC_BOOTSTRAP_ADMIN_PASSWORD: password, REALM_SYNC_TIMEOUT, SEED_USERS, SEED_PASSWORD } = process.env;
   if (!username || !password) { console.error('KC_BOOTSTRAP_ADMIN_USERNAME / KC_BOOTSTRAP_ADMIN_PASSWORD are required'); process.exit(2); }
-  sync(base.replace(/\/+$/, ''), file, { username, password, timeoutSeconds: Number(REALM_SYNC_TIMEOUT ?? 300) }).catch((e) => { console.error(e.message); process.exit(1); });
+  sync(base.replace(/\/+$/, ''), file, { username, password, timeoutSeconds: Number(REALM_SYNC_TIMEOUT ?? 300), seedUsers: (SEED_USERS ?? '').split(','), seedPassword: SEED_PASSWORD ?? '' }).catch((e) => { console.error(e.message); process.exit(1); });
 }

@@ -106,12 +106,14 @@ for k in ("StatefulSet/acme-postgres", "Deployment/acme-keycloak", "Deployment/a
     assert k in pa and pa[k] == pb[k], f"{k} pod template differs across tags"
 print("   an image tag change rolls only", ", ".join(changed))
 # a TLS switch or a domain change rolls what carries the URLs (api/worker via their ConfigMap checksum, Keycloak via its
-# realm checksum, web config) — never the database, Redis, the runners or the backup job
+# realm checksum, web config, the registry whose token realm URL carries the scheme) — never the database, Redis, the
+# runners or the backup job. (Deployment/acme-registry was once on the must-not-roll list below and CI `chart` failed
+# on it twice when a drop re-added it: keep it off.)
 http_a = render(pinned + ["--set", "ingress.tls=false"])
 https_b = render(pinned + ["--set", "ingress.tls=true"])
 qa, qb = pod_templates(http_a), pod_templates(https_b)
 rolled = sorted(k for k in qa if qa[k] != qb[k])
-for k in ("StatefulSet/acme-postgres", "Deployment/acme-redis", "StatefulSet/acme-runner", "CronJob/acme-backup", "Deployment/acme-registry"):
+for k in ("StatefulSet/acme-postgres", "Deployment/acme-redis", "StatefulSet/acme-runner", "CronJob/acme-backup"):
     assert k in qa and qa[k] == qb[k], f"{k} pod template changes on a TLS switch (it must not restart): rolled={rolled}"
 print("   a TLS switch rolls only", ", ".join(rolled))
 dom_b = render(pinned + ["--set", "tenant.domain=other.example.com"])

@@ -1,6 +1,7 @@
 # shellcheck shell=bash
 # Progress-printing waits for the cell scripts. Source it; needs python3 and kubectl.
-#   wait_cell <namespace> <release> <timeout-seconds>     until every Deployment / StatefulSet of the release is ready
+#   wait_cell <namespace> <release> <timeout-seconds>     until every Deployment / StatefulSet of the release is rolled out
+#                                                         (kubectl rollout status semantics: generation observed, all replicas updated AND ready, no old one left)
 #   wait_job  <namespace> <job> <timeout-seconds>         until the Job completes (fails when the Job fails)
 #   wait_pvs  <timeout-seconds> <pv> [<pv> …]             until the PersistentVolumes are gone
 # A line every WAIT_INTERVAL seconds (default 15) says what is still not ready; anything that will not fix itself

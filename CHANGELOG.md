@@ -4,6 +4,21 @@
 
 Images `ghcr.io/matelot-cloud/{api,web,worker,runner}` and the chart `oci://ghcr.io/matelot-cloud/charts/secops-cell`, signed, with SBOM attestations; install guide at https://matelot-cloud.github.io/website/docs/latest/install.html. The sections below are the drops that make up the release, newest first.
 
+### Fix: cell-provision `apply` waited for "N pods ready", not for the rollout
+
+- One second after `helm upgrade` returned the wait printed "all workloads ready (pods 7/8 ready) · waiting:
+  globex-api-… (Running 0/1)" and `checks` ran against the old API pod. `cellwait.py` tested `readyReplicas ≥ n` and
+  `updatedReplicas ≥ n` separately: during a rolling update the **old** pod is the ready one and the **new** pod the
+  updated one, so both passed — a broken new image would have passed the checks. "Done" is now what
+  `kubectl rollout status` means, per Deployment / StatefulSet: `observedGeneration ≥ generation`, `updatedReplicas`,
+  `readyReplicas` and `availableReplicas` all ≥ spec, `unavailableReplicas == 0`, and no surplus replica
+  (`status.replicas ≤ updated` — the old pod is gone); StatefulSets also need `currentRevision == updateRevision`.
+  Terminating pods (deletionTimestamp) no longer count. The summary reads "N/M workloads rolled out, pods a/b ready",
+  and a workload whose pods all look fine but is not rolled out says why ("controller has not observed the new
+  generation yet", "1 old replica(s) still terminating", "revision … rolling out").
+- Tests (`cellwait_test.py`): mid-rollout (replicas 2 / updated 1 / ready 1 → not done), generation not observed
+  yet → not done, new pod ready but old one terminating → not done, StatefulSet update revision not current → not done.
+
 ### Header pickers are our own popover, not native selects; Team level in the switcher
 
 - The Workspace / Team / Project / Service pills (and Organization, Refresh) open a TailAdmin-style panel under the

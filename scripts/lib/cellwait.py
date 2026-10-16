@@ -8,7 +8,8 @@
 Prints one JSON object: {"done": bool, "failed": bool, "summary": str, "waiting": [str], "stuck": [str], "info": [str]}.
 `waiting` is what is not ready yet, `stuck` ({key, text}) what will not become ready by itself (image pull failures, crash loops, Pending for minutes with no
 progress event, a failed Job; one key per pod and condition so the caller warns once), `info` things that are not ready
-but do not block (a WaitForFirstConsumer PVC). Only pods of the current revision of each workload count.
+but do not block (a WaitForFirstConsumer PVC). Only pods of the current revision of each workload count, and "done" is
+what `kubectl rollout status` means: observedGeneration caught up, every replica updated AND ready, no old replica left.
 Reads kubectl; with CELLWAIT_FIXTURE_DIR set it reads <dir>/<kind>.json instead (tests).
 """
 import json, os, subprocess, sys
@@ -105,6 +106,32 @@ def pod_state(pod):
     return ready, label, stuck
 
 
+def rollout_reason(w):
+    """None when the workload is rolled out in the `kubectl rollout status` sense — the controller has seen this
+    generation and every replica is of the new revision AND ready, with no old replica left — else a short reason.
+    Never "N ready and N updated" checked separately: during a rolling update the old pod is the ready one and the
+    new pod the updated one, and a broken new image would pass."""
+    spec_n = w["spec"].get("replicas", 1)
+    st = w.get("status", {})
+    if st.get("observedGeneration", 0) < w["metadata"].get("generation", 0):
+        return "controller has not observed the new generation yet"
+    updated, ready, total = st.get("updatedReplicas", 0), st.get("readyReplicas", 0), st.get("replicas", 0)
+    if w["kind"] == "StatefulSet":
+        if st.get("currentRevision") and st.get("updateRevision") and st["currentRevision"] != st["updateRevision"]:
+            return f"revision {st['updateRevision']} rolling out ({updated}/{spec_n} updated, {ready}/{spec_n} ready)"
+        if updated < spec_n or ready < spec_n:
+            return f"{updated}/{spec_n} updated, {ready}/{spec_n} ready"
+        return None if total <= spec_n else f"{total - spec_n} old replica(s) still terminating"
+    available, unavailable = st.get("availableReplicas", 0), st.get("unavailableReplicas", 0)
+    if updated < spec_n or ready < spec_n or available < spec_n or unavailable:
+        return f"{updated}/{spec_n} updated, {ready}/{spec_n} ready, {available}/{spec_n} available"
+    return None if total <= updated else f"{total - updated} old replica(s) still terminating"
+
+
+def rollout_complete(w):
+    return rollout_reason(w) is None
+
+
 def current_pods(namespace, release, deploys, stss, pods):
     """Pods that belong to the current revision of their Deployment / StatefulSet: the old ReplicaSet's pods being
     replaced, and anything Failed or Succeeded, are history and must not keep a wait going or trigger a warning."""
@@ -119,7 +146,7 @@ def current_pods(namespace, release, deploys, stss, pods):
     sts_revision = {s["metadata"]["name"]: s.get("status", {}).get("updateRevision") for s in stss}
     out = []
     for p in pods:
-        if p.get("status", {}).get("phase") in ("Failed", "Succeeded"):
+        if p.get("status", {}).get("phase") in ("Failed", "Succeeded") or p["metadata"].get("deletionTimestamp"):
             continue
         owners = p["metadata"].get("ownerReferences", [])
         kinds = {o["kind"]: o["name"] for o in owners}
@@ -142,12 +169,13 @@ def snapshot_cell(namespace, release):
     pods = current_pods(namespace, release, deploys, stss, pods)
     pvcs = kget(namespace, "persistentvolumeclaims")["items"]
     waiting, stuck, info = [], [], []
+    rolled_out, reasons = 0, {}
     for w in deploys + stss:
-        spec_n = w["spec"].get("replicas", 1)
-        st = w.get("status", {})
-        ok = st.get("observedGeneration", 0) >= w["metadata"].get("generation", 0) and st.get("readyReplicas", 0) >= spec_n and st.get("updatedReplicas", 0) >= spec_n
-        if not ok:
-            waiting.append(w["metadata"]["name"])
+        why = rollout_reason(w)
+        if why is None:
+            rolled_out += 1
+        else:
+            waiting.append(w["metadata"]["name"]); reasons[w["metadata"]["name"]] = why
     pod_lines, ready_pods = [], 0
     for p in pods:
         ready, label, stuck_reason = pod_state(p)
@@ -167,11 +195,12 @@ def snapshot_cell(namespace, release):
             # a WaitForFirstConsumer claim binds when something mounts it (the backups PVC: on the first backup) — not blocking
             (info if "WaitForFirstConsumer" in msg or "waiting for first consumer" in msg else waiting).append(line)
     done = not waiting
-    summary = f"pods {ready_pods}/{len(pods)} ready"
+    summary = f"{rolled_out}/{len(deploys) + len(stss)} workloads rolled out, pods {ready_pods}/{len(pods)} ready"
     if done:
-        summary = f"all workloads ready ({summary})"
-    # a workload is listed by its pods; only a workload without any pod yet is named itself
-    workloads = [f"{w} (no pod yet)" for w in waiting if not w.startswith("pvc ") and not any(l.startswith(w + "-") for l in pod_lines)]
+        summary = f"all workloads rolled out ({summary})"
+    # a workload is listed by its not-ready pods; one whose pods all look fine (or has none yet) is named itself, with
+    # the rollout reason: controller lagging, old replica still terminating, new revision not current
+    workloads = [f"{w} ({reasons[w]})" for w in waiting if not w.startswith("pvc ") and not any(l.startswith(w + "-") for l in pod_lines)]
     return {"done": done, "failed": False, "summary": summary, "waiting": workloads + pod_lines + [w for w in waiting if w.startswith("pvc ")], "stuck": stuck, "info": info}
 
 

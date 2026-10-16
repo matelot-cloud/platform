@@ -45,7 +45,8 @@ gives https://acme.platform.local with a certificate from the local CA. Then, on
   matelot-dev-ca.crt` (PowerShell), from WSL `/mnt/c/Windows/System32/certutil.exe -addstore -user Root "$(wslpath -w
   ~/matelot-dev-ca.crt)"`;
 - the CLI: Node does not read the OS trust store — `NODE_EXTRA_CA_CERTS=~/matelot-dev-ca.crt matelot login --url
-  https://acme.platform.local` (export it in your shell profile for every `matelot` command); `docker login
+  https://acme.platform.local` (export it in your shell profile for every `matelot` command — a shell that lost it shows
+  `matelot doctor` failing at the api check with the TLS error and this hint, the version line reads *skipped*); `docker login
   registry-acme.platform.local` needs the CA in Docker's trust (`/etc/docker/certs.d/registry-acme.platform.local/ca.crt`).
 
 `make deploy TENANT=acme` (the chart with the images from this checkout) uses the same issuer. Switching an installed

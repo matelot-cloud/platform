@@ -1,4 +1,3 @@
-import PageBreadcrumb from "@/components/common/PageBreadCrumb";
 import PageMeta from "@/components/common/PageMeta";
 import { useTeams } from "@/platform/api/hooks";
 import type { Organization } from "@/platform/api/types";
@@ -16,7 +15,6 @@ export default function MembersPage() {
   return (
     <>
       <PageMeta title={`Members · ${productName}`} description="Who has which role" />
-      <PageBreadcrumb pageTitle="Members" />
       <OrganizationGate>{(organization) => <OrganizationMembers key={organization.id} organization={organization} />}</OrganizationGate>
     </>
   );

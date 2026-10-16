@@ -1,4 +1,3 @@
-import PageBreadcrumb from "@/components/common/PageBreadCrumb";
 import PageMeta from "@/components/common/PageMeta";
 import { isForbidden } from "@/platform/api/client";
 import { useFindingEnvironments, useFindingSummary, useFindingTrend, useOrganizationFindings, useRecorrelate, useSnapshotNow, type FindingQuery } from "@/platform/api/hooks";
@@ -59,7 +58,6 @@ export default function VulnerabilitiesPage() {
   return (
     <>
       <PageMeta title={`Vulnerabilities · ${productName}`} description="Findings across the organization" />
-      <PageBreadcrumb pageTitle="Vulnerabilities" />
       <OrganizationGate>{(organization) => <Vulnerabilities key={organization.id} organization={organization} />}</OrganizationGate>
     </>
   );

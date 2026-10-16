@@ -1,5 +1,4 @@
 import { CodeBlock } from "@/platform/components/CodeBlock";
-import PageBreadcrumb from "@/components/common/PageBreadCrumb";
 import PageMeta from "@/components/common/PageMeta";
 import Badge from "@/components/ui/badge/Badge";
 import { isForbidden } from "@/platform/api/client";
@@ -134,7 +133,6 @@ export default function AuditPage() {
   return (
     <>
       <PageMeta title={`Audit trail · ${productName}`} description="Every recorded action" />
-      <PageBreadcrumb pageTitle="Audit trail" />
       <OrganizationGate>{(organization) => <Audit key={organization.id} organization={organization} />}</OrganizationGate>
     </>
   );

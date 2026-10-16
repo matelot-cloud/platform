@@ -494,6 +494,24 @@ export function useArchiveWorkspace(organizationId: string) {
   });
 }
 
+export function useUpdateTeam(organizationId: string) {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ teamId, ...input }: { teamId: string; name?: string; description?: string }) => api<TeamRow>(`/teams/${teamId}`, { method: 'PATCH', json: input }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['organizations', organizationId] }),
+  });
+}
+
+export function useArchiveTeam(organizationId: string) {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (teamId: string) => api<TeamRow>(`/teams/${teamId}`, { method: 'DELETE' }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['organizations', organizationId] }),
+  });
+}
+
 export function useUpdateProject(organizationId: string) {
   const api = useApi();
   const queryClient = useQueryClient();

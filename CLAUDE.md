@@ -118,8 +118,12 @@ mirror this layout exactly — nothing at the root that is not in the repository
 - Org-wide list endpoints filter per row with `authz.can(...)` (see `ProjectsService.listForOrganization`).
 - Frontend: GitLab-style context navigation — `/workspaces/:id/*` and `/projects/:id/*` layouts
   (`src/pages/workspace/layout.tsx`, `src/pages/project/layout.tsx`) provide the context via
-  Outlet; the sidebar (`src/layout/AppSidebar.tsx`) picks its menu from the route; the navbar
-  switcher is `src/platform/header/ContextSwitcher.tsx`. New section = page under the right layout
+  Outlet; teams live under their workspace (`/workspaces/:id/teams/:teamId/*`, `src/pages/team`). Where you are is
+  computed once in `src/platform/navigation/scope.tsx` (`useScopeLocation`: level, menu, page label, breadcrumb, tab
+  title) and rendered by the app layout — breadcrumb + "Page — name (kind)" heading (`ScopeHeader`), sidebar scope card
+  with "← Back to <parent>" (`AppSidebar`), tab title "Page · scope · Org", and the header location pills
+  (`src/platform/header/ContextSwitcher.tsx`, which navigate, never filter). Pages never render their own title or
+  breadcrumb; a new menu entry goes into `scope.tsx` and its label becomes the page title. New section = page under the right layout
   + hooks in `src/platform/api/hooks.ts`; respect 403 with an explanatory empty state.
 - Keep the Helm chart deployable with defaults on kind; anything production-only is a values switch. The Compose
   stack (`deploy/compose`) mirrors the chart: same env names, same generated-secret layout (`secrets/<name>/<KEY>`),

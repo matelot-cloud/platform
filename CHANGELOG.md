@@ -4,6 +4,47 @@
 
 Images `ghcr.io/matelot-cloud/{api,web,worker,runner}` and the chart `oci://ghcr.io/matelot-cloud/charts/secops-cell`, signed, with SBOM attestations; install guide at https://matelot-cloud.github.io/website/docs/latest/install.html. The sections below are the drops that make up the release, newest first.
 
+### Navigation: you always know where you are (breadcrumb, scope card, titles, location switcher, team pages)
+
+- **Breadcrumb on every page**, full path and clickable: Organization › Workspace › Team › Project › (Service) ›
+  Page, e.g. "Globex › Platform › Payments team › checkout-api › Members"; each segment opens that scope's overview,
+  detail pages add their list ("… › Pipelines › Pipeline"). Middle segments end in an ellipsis with the full name on
+  hover; on a phone the trail wraps.
+- **Headings and tab titles name the scope:** "Members — checkout-api (project)" and "Members · checkout-api · Globex".
+  The old per-page headings and the workspace / project header blocks are gone (one source: `useScopeLocation` in
+  `platform/navigation/scope.tsx`).
+- **Sidebar scope card** (initial, name, "Organization" / "Workspace" / "Team" / "Project", criticality on projects)
+  with "← Back to <parent>" above it; the menu below is that scope's menu.
+- **Header location switcher** shows where you are — "Workspace: Platform ▾ › Team: Payments team ▾ › Project: … ▾",
+  inside a project "Workspace ▾ › Project ▾ › Service ▾" — as pills that navigate (the URL changes); "All workspaces /
+  All projects" only on organization-wide pages. Visibly different from the filter dropdowns on list pages.
+- **Teams are a level of their own:** Workspace → Teams (list, New team), team pages Overview (its projects, New
+  project), Members and Settings (rename, archive) under `/workspaces/:id/teams/:teamId`, in the breadcrumb and the
+  switcher. "Teams & projects" is now "Projects".
+- **First run:** creating a workspace lands inside it with "Next step: Create a team"; creating a team lands inside it
+  with "Next step: Create the first project of this team"; creating a project opens it.
+- **Long names:** the product name in the sidebar ("Globex Corporation Security Platform") ends in an ellipsis on
+  one line with the full name on hover (it ran off the sidebar edge); the same for the scope card, breadcrumb and
+  switcher. The header no longer pushes the page wider than the window at 1280 px (the e-mail next to the avatar and
+  the "Idle" label show from 2xl); members toolbar fields sit side by side on desktop and stack on phones.
+- Tests: the render test checks breadcrumb (labels, links, current page), sidebar card and back link, heading, tab
+  title and header pills on organization, workspace, team, project and service/detail pages, that the switcher
+  navigates, and the product-name ellipsis; the members flow test covers workspace → team → project creation landing
+  inside each new scope. Also checked in Chromium at 375, 1280, 1440 and 1650 px with long names.
+- **cell-provision `checks`:** restarts of pods that are terminating or belong to a ReplicaSet the rollout scaled to 0
+  (the old api pod after an upgrade) are no longer listed; the line says how many were skipped. Tested with sample
+  pod data in `cell-provision.test.sh`.
+- **CLI 2.23.2 — `doctor` always prints the version line.** The "`doctor | grep version` printed nothing" report was
+  a shell that had lost `NODE_EXTRA_CA_CERTS` (kind's local CA): the api check failed and the version line was never
+  reached. Now an unreachable API still prints `--  version  skipped: api unreachable (…)`, and a certificate Node
+  does not trust (`DEPTH_ZERO_SELF_SIGNED_CERT`, `SELF_SIGNED_CERT_IN_CHAIN`, `UNABLE_TO_VERIFY_LEAF_SIGNATURE`,
+  `ERR_TLS_*`, …) says so on both lines: "Node does not read the OS trust store: for a private CA set
+  NODE_EXTRA_CA_CERTS=/path/to/ca.crt (the kind recipe: ~/matelot-dev-ca.crt)". `matelot login` and every API call
+  give the same hint. Tested against an HTTPS stub signed by a throw-away CA (openssl): fails with the hint, green
+  with `NODE_EXTRA_CA_CERTS` pointing at that CA. Kept from 2.23.1: the CLI no longer calls `process.exit()` while
+  output may still be queued (stdout to a pipe is asynchronous on macOS and Windows) — gate / verify exit codes use
+  `process.exitCode` and the error path flushes first.
+
 ### Members at every level, service accounts, user administration; dialog headers and name fallbacks
 
 - **Members** (Organization, Workspace, Team — new *Team members* page —, Project): direct members plus, read-only,

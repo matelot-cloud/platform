@@ -70,7 +70,7 @@ export function ScopeMembers({ scope, workspaceOfTeam }: { scope: MemberScopeRef
           <Toolbar actions={<>
             <input className={`${inputClass} w-full sm:w-56`} placeholder="Filter members" aria-label="Filter members" value={filter} onChange={(e) => setFilter(e.target.value)} />
             {features.inherited_members !== false && (
-              <select aria-label="Source" className={`${inputClass} w-auto`} value={source} onChange={(e) => setSource(e.target.value as typeof source)}>
+              <select aria-label="Source" className={`${inputClass} sm:w-44`} value={source} onChange={(e) => setSource(e.target.value as typeof source)}>
                 <option value="all">All ({directCount + inheritedCount})</option>
                 <option value="direct">Direct ({directCount})</option>
                 <option value="inherited">Inherited ({inheritedCount})</option>

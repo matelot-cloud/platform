@@ -10,9 +10,10 @@ export function BrandMark({ className }: { className?: string }) {
 export function Brand({ compact = false }: { compact?: boolean }) {
   const { productName } = useRuntimeConfig();
   return (
-    <span className="flex items-center gap-2.5">
+    <span className="flex min-w-0 items-center gap-2.5">
       <BrandMark />
-      {!compact && <span className="text-lg font-semibold whitespace-nowrap text-gray-800 dark:text-white/90">{productName}</span>}
+      {/* long names ("Globex Corporation Security Platform") end in an ellipsis on one line; full name on hover */}
+      {!compact && <span className="min-w-0 truncate text-lg font-semibold text-gray-800 dark:text-white/90" title={productName}>{productName}</span>}
     </span>
   );
 }

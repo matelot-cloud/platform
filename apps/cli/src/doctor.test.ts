@@ -1,7 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer as createHttpsServer } from 'node:https';
+import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
 import { join } from 'node:path';
 
@@ -31,6 +34,24 @@ function serve(runnersOnline: boolean, discovery: 'ok' | 'html' | 'wrong-origin'
   return new Promise<{ port: number; close: () => void }>((done) => server.listen(0, () => done({ port: (server.address() as { port: number }).port, close: () => server.close() })));
 }
 
+/** An HTTPS stub signed by a throw-away CA (openssl), like a kind cell with cert-manager's self-signed issuer. */
+async function serveTls() {
+  const dir = mkdtempSync(join(tmpdir(), 'matelot-tls-'));
+  const sh = (args: string[]) => execFileSync('openssl', args, { cwd: dir, stdio: 'ignore' });
+  sh(['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', 'ca.key', '-out', 'ca.crt', '-days', '2', '-subj', '/CN=matelot test CA']);
+  sh(['req', '-newkey', 'rsa:2048', '-nodes', '-keyout', 'srv.key', '-out', 'srv.csr', '-subj', '/CN=localhost']);
+  writeFileSync(join(dir, 'ext.cnf'), 'subjectAltName=DNS:localhost,IP:127.0.0.1\n');
+  sh(['x509', '-req', '-in', 'srv.csr', '-CA', 'ca.crt', '-CAkey', 'ca.key', '-CAcreateserial', '-out', 'srv.crt', '-days', '2', '-extfile', 'ext.cnf']);
+  const server = createHttpsServer({ key: readFileSync(join(dir, 'srv.key')), cert: readFileSync(join(dir, 'srv.crt')) }, (req, res) => {
+    const json = (code: number, body: unknown) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
+    if (req.url === '/api/v1/health/ready') return json(200, { status: 'ok' });
+    if (req.url === '/api/v1/version') return json(200, { name: 'matelot', version: '0.1.0' });
+    if (req.url === '/.well-known/oauth-authorization-server') { const base = `https://${req.headers.host}`; return json(200, { issuer: base, authorization_endpoint: `${base}/api/v1/oauth/authorize`, token_endpoint: `${base}/api/v1/oauth/token` }); }
+    json(404, {});
+  });
+  return new Promise<{ port: number; caFile: string; close: () => void }>((done) => server.listen(0, '127.0.0.1', () => done({ port: (server.address() as { port: number }).port, caFile: join(dir, 'ca.crt'), close: () => { server.close(); rmSync(dir, { recursive: true, force: true }); } })));
+}
+
 test('matelot doctor: all checks pass, runner offline fails, no credentials skips the authenticated checks', async () => {
   const s = await serve(true);
   try {
@@ -46,6 +67,10 @@ test('matelot doctor: all checks pass, runner offline fails, no credentials skip
     assert.match(stdout, /all checks passed/);
     const j = JSON.parse((await run('node', [cli, 'doctor', '--json'], { env })).stdout);
     assert.equal(j.ok, true); assert.equal(j.checks.length, 7);
+    // every line goes to stdout, so `matelot doctor | grep version` finds it (nothing on stderr)
+    const piped = await run('sh', ['-c', `node "${cli}" doctor | grep version`], { env });
+    assert.match(piped.stdout, /^ {2}OK {2}version +API 0\.1\.0 · CLI \d+\.\d+\.\d+\n$/);
+    assert.equal((await run('node', [cli, 'doctor'], { env })).stderr, '');
 
     // without credentials: the three unauthenticated checks run, the rest is skipped (exit 0)
     const noCreds = { ...process.env, MATELOT_URL: `http://127.0.0.1:${s.port}`, MATELOT_TOKEN: '', MATELOT_KEY_ID: '', MATELOT_SECRET: '', SECOPS_TOKEN: '', MATELOT_CREDENTIALS: '/nonexistent' };
@@ -67,8 +92,24 @@ test('matelot doctor: all checks pass, runner offline fails, no credentials skip
     await assert.rejects(run('node', [cli, 'doctor'], { env }), (e: { code: number; stdout: string }) => { assert.equal(e.code, 1); assert.match(e.stdout, /FAIL {2}runners +no runner online/); assert.match(e.stdout, /1 check\(s\) failed/); return true; });
   } finally { off.close(); }
 
-  // unreachable
-  await assert.rejects(run('node', [cli, 'doctor', '--url', 'http://127.0.0.1:1'], { env: { ...process.env, MATELOT_CREDENTIALS: '/nonexistent' } }), (e: { code: number; stdout: string }) => { assert.equal(e.code, 1); assert.match(e.stdout, /FAIL {2}api +http:\/\/127\.0\.0\.1:1 unreachable/); return true; });
+  // unreachable: the version line is still printed, as skipped, so `doctor | grep version` always has a line
+  await assert.rejects(run('node', [cli, 'doctor', '--url', 'http://127.0.0.1:1'], { env: { ...process.env, MATELOT_CREDENTIALS: '/nonexistent' } }), (e: { code: number; stdout: string }) => { assert.equal(e.code, 1); assert.match(e.stdout, /FAIL {2}api +http:\/\/127\.0\.0\.1:1 unreachable/); assert.match(e.stdout, /--  version +skipped: api unreachable\n/); return true; });
+
+  // a cell behind a private CA Node does not trust (kind's local CA with NODE_EXTRA_CA_CERTS lost): the api line and the
+  // skipped version line both carry the TLS code and the NODE_EXTRA_CA_CERTS hint — with the CA trusted, doctor is green
+  const tls = await serveTls();
+  try {
+    const env = { ...process.env, MATELOT_URL: `https://localhost:${tls.port}`, MATELOT_TOKEN: '', MATELOT_KEY_ID: '', MATELOT_SECRET: '', MATELOT_CREDENTIALS: '/nonexistent', NODE_EXTRA_CA_CERTS: '' };
+    await assert.rejects(run('node', [cli, 'doctor'], { env }), (e: { code: number; stdout: string }) => {
+      assert.equal(e.code, 1);
+      assert.match(e.stdout, /FAIL {2}api +https:\/\/localhost:\d+ unreachable: (DEPTH_ZERO_SELF_SIGNED_CERT|SELF_SIGNED_CERT_IN_CHAIN|UNABLE_TO_VERIFY_LEAF_SIGNATURE) \(.*\) — Node does not read the OS trust store: for a private CA set NODE_EXTRA_CA_CERTS=\/path\/to\/ca\.crt/);
+      assert.match(e.stdout, /--  version +skipped: api unreachable \((DEPTH_ZERO_SELF_SIGNED_CERT|SELF_SIGNED_CERT_IN_CHAIN|UNABLE_TO_VERIFY_LEAF_SIGNATURE) .*NODE_EXTRA_CA_CERTS/);
+      return true;
+    });
+    const trusted = await run('node', [cli, 'doctor'], { env: { ...env, NODE_EXTRA_CA_CERTS: tls.caFile } });
+    assert.match(trusted.stdout, /OK {2}api +https:\/\/localhost:\d+ ready/);
+    assert.match(trusted.stdout, /OK {2}version +API 0\.1\.0 · CLI /);
+  } finally { tls.close(); }
 
   // unreachable in a Docker Compose folder: the failing container is named, with its exit code and the logs command
   const { mkdtempSync, writeFileSync, chmodSync } = await import('node:fs');

@@ -1,4 +1,3 @@
-import PageBreadcrumb from "@/components/common/PageBreadCrumb";
 import PageMeta from "@/components/common/PageMeta";
 import Badge from "@/components/ui/badge/Badge";
 import { isForbidden } from "@/platform/api/client";
@@ -42,7 +41,6 @@ export default function ComponentsPage() {
   return (
     <>
       <PageMeta title={`Components · ${productName}`} description="Search SBOM components across the organization" />
-      <PageBreadcrumb pageTitle="Components" />
       <OrganizationGate>{(organization) => <Components key={organization.id} organization={organization} />}</OrganizationGate>
     </>
   );

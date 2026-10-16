@@ -57,7 +57,7 @@ export function ActivityIndicator() {
     <div className="relative" ref={ref}>
       <button type="button" onClick={() => { setOpen((v) => !v); if (!open) setSeenAt(Date.now()); }} className={cn("relative flex h-11 items-center gap-2 rounded-full border px-3.5 text-sm font-medium transition", jobs.length ? "border-brand-200 bg-brand-50 text-brand-600 dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-400" : "border-gray-200 text-gray-500 hover:bg-gray-100 dark:border-gray-800 dark:text-gray-400 dark:hover:bg-white/5")} aria-label="Background activity">
         {jobs.length ? <Spinner /> : <span className="inline-block size-2 rounded-full bg-success-500" />}
-        <span className="hidden sm:inline">{jobs.length ? `${running} running${queued ? ` · ${queued} queued` : ""}` : "Idle"}</span>
+        <span className="hidden sm:inline xl:hidden 2xl:inline">{jobs.length ? `${running} running${queued ? ` · ${queued} queued` : ""}` : "Idle"}</span>
         {fresh > 0 && <span className="absolute -end-1 -top-1 flex size-5 items-center justify-center rounded-full bg-brand-500 text-[10px] font-semibold text-white"><span className="absolute inline-flex size-full animate-ping rounded-full bg-brand-400 opacity-60" />{fresh}</span>}
       </button>
       {open && (

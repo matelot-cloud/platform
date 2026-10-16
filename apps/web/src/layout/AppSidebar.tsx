@@ -1,119 +1,17 @@
 import { Brand } from "@/components/common/Brand";
 import { Mascot } from "@/components/common/Mascot";
 import { useSidebar } from "@/context/SidebarContext";
-import { BoltIcon, BoxCubeIcon, CheckCircleIcon, ChevronLeftIcon, DataBaseIcon, DocsIcon, FolderIcon, GridIcon, GroupIcon, HorizontaLDots, ListIcon, LockIcon, PieChartIcon, PlugInIcon, SettingsAltIcon, ShootingStarIcon, TaskIcon, UserCircleIcon } from "@/icons";
-import { useMe, useMeta } from "@/platform/api/hooks";
-import { docsUrl, useRuntimeConfig } from "@/platform/runtime-config";
+import { ChevronLeftIcon, HorizontaLDots } from "@/icons";
 import { CriticalityBadge } from "@/platform/components/ui";
-import { useRouteContext } from "@/platform/state/context";
-import { useCurrentOrganization } from "@/platform/state/useCurrentOrganization";
+import { isActive as itemActive, LEVEL_LABEL, useScopeLocation, type NavItem } from "@/platform/navigation/scope";
 import { cn } from "@/utils";
-import type { ReactNode } from "react";
 import { useEffect } from "react";
 import { Link, useLocation } from "react-router";
-
-type NavItem = { name: string; icon: ReactNode; path: string; soon?: boolean; exact?: boolean; external?: boolean };
-type NavGroup = { title: string; items: NavItem[] };
-
-
-function organizationGroups(isAdmin: boolean, docs: string): NavGroup[] {
-  return [
-    {
-      title: "Organization",
-      items: [
-        { name: "Overview", icon: <GridIcon fontSize={24} />, path: "/overview" },
-        { name: "Projects", icon: <FolderIcon fontSize={24} />, path: "/projects", exact: true },
-        { name: "Coverage", icon: <CheckCircleIcon fontSize={24} />, path: "/coverage" },
-        { name: "Repositories", icon: <DataBaseIcon fontSize={24} />, path: "/repositories" },
-        { name: "Connections", icon: <PlugInIcon fontSize={24} />, path: "/connections" },
-        { name: "Runners", icon: <BoltIcon fontSize={24} />, path: "/runners" },
-        { name: "Members", icon: <GroupIcon fontSize={24} />, path: "/members" },
-        { name: "Audit trail", icon: <DocsIcon fontSize={24} />, path: "/audit" },
-        { name: "Usage", icon: <PieChartIcon fontSize={24} />, path: "/usage" },
-        { name: "Documentation", icon: <DocsIcon fontSize={24} />, path: docs, external: true }, // the public site (config.json docsUrl)
-      ],
-    },
-    ...(isAdmin ? [{ title: "Administration", items: [{ name: "Users", icon: <UserCircleIcon fontSize={24} />, path: "/admin/users" }] }] : []),
-  ];
-}
-
-function workspaceGroups(id: string): NavGroup[] {
-  const base = `/workspaces/${id}`;
-  return [
-    {
-      title: "Security",
-      items: [
-        { name: "Vulnerabilities", icon: <ShootingStarIcon fontSize={24} />, path: `${base}/vulnerabilities` },
-        { name: "Risk", icon: <PieChartIcon fontSize={24} />, path: `${base}/risk` },
-        { name: "Components", icon: <BoxCubeIcon fontSize={24} />, path: `${base}/components` },
-        { name: "Policies", icon: <LockIcon fontSize={24} />, path: `${base}/policies` },
-        { name: "Remediation", icon: <TaskIcon fontSize={24} />, path: `${base}/remediation` },
-        { name: "CRA evidence", icon: <DocsIcon fontSize={24} />, path: `${base}/cra` },
-        { name: "Notifications", icon: <BoltIcon fontSize={24} />, path: `${base}/notifications` },
-      ],
-    },
-    {
-      title: "Workspace",
-      items: [
-        { name: "Overview", icon: <GridIcon fontSize={24} />, path: base, exact: true },
-        { name: "Teams & projects", icon: <FolderIcon fontSize={24} />, path: `${base}/projects` },
-        { name: "Repositories", icon: <DataBaseIcon fontSize={24} />, path: `${base}/repositories` },
-        { name: "Integrations", icon: <PlugInIcon fontSize={24} />, path: `${base}/integrations` },
-        { name: "Issue tracking", icon: <TaskIcon fontSize={24} />, path: `${base}/issue-tracking` },
-        { name: "Runners", icon: <BoltIcon fontSize={24} />, path: `${base}/runners` },
-        { name: "Members", icon: <GroupIcon fontSize={24} />, path: `${base}/members` },
-        { name: "Settings", icon: <SettingsAltIcon fontSize={24} />, path: `${base}/settings` },
-      ],
-    },
-  ];
-}
-
-function projectGroups(id: string): NavGroup[] {
-  const base = `/projects/${id}`;
-  return [
-    { title: "Project", items: [{ name: "Overview", icon: <GridIcon fontSize={24} />, path: base, exact: true }] },
-    {
-      title: "Delivery",
-      items: [
-        { name: "Releases & images", icon: <BoxCubeIcon fontSize={24} />, path: `${base}/inventory` },
-        { name: "Environments", icon: <TaskIcon fontSize={24} />, path: `${base}/environments` },
-        { name: "Pipelines", icon: <ListIcon fontSize={24} />, path: `${base}/pipelines` },
-        { name: "Jobs", icon: <TaskIcon fontSize={24} />, path: `${base}/jobs` },
-      ],
-    },
-    {
-      title: "Security",
-      items: [
-        { name: "Vulnerabilities", icon: <ShootingStarIcon fontSize={24} />, path: `${base}/vulnerabilities` },
-        { name: "Security graph", icon: <PieChartIcon fontSize={24} />, path: `${base}/graph` },
-        { name: "Policies", icon: <LockIcon fontSize={24} />, path: `${base}/policies` },
-        { name: "Remediation", icon: <TaskIcon fontSize={24} />, path: `${base}/remediation` },
-        { name: "Coverage", icon: <CheckCircleIcon fontSize={24} />, path: `${base}/coverage` },
-        { name: "CRA evidence", icon: <DocsIcon fontSize={24} />, path: `${base}/cra` },
-        { name: "Notifications", icon: <BoltIcon fontSize={24} />, path: `${base}/notifications` },
-      ],
-    },
-    {
-      title: "Setup",
-      items: [
-        { name: "Services", icon: <BoxCubeIcon fontSize={24} />, path: `${base}/services` },
-        { name: "Repositories", icon: <DataBaseIcon fontSize={24} />, path: `${base}/repositories` },
-        { name: "Integrations", icon: <PlugInIcon fontSize={24} />, path: `${base}/integrations` },
-        { name: "Issue tracking", icon: <TaskIcon fontSize={24} />, path: `${base}/issue-tracking` },
-        { name: "Runners", icon: <BoltIcon fontSize={24} />, path: `${base}/runners` },
-        { name: "Members", icon: <GroupIcon fontSize={24} />, path: `${base}/members` },
-        { name: "Settings", icon: <SettingsAltIcon fontSize={24} />, path: `${base}/settings` },
-      ],
-    },
-  ];
-}
 
 const AppSidebar: React.FC = () => {
   const { isExpanded, isMobileOpen, isHovered, setIsHovered, setIsMobileOpen } = useSidebar();
   const location = useLocation();
-  const me = useMe();
-  const { organization } = useCurrentOrganization();
-  const ctx = useRouteContext(organization?.id);
+  const loc = useScopeLocation();
   const showText = isExpanded || isHovered || isMobileOpen;
 
   useEffect(() => {
@@ -121,34 +19,13 @@ const AppSidebar: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.pathname]);
 
-  const config = useRuntimeConfig();
-  const meta = useMeta();
-  // Administration → Users: cell administrators and the admins of the root organization (the API enforces the same)
-  const rootSlug = meta.data?.rootOrganizationSlug;
-  const isAdmin = me.data?.user.platformRole === "admin" || (me.data?.memberships ?? []).some((m) => m.role === "ORG_ADMIN" && m.scopeType === "ORGANIZATION" && !!rootSlug && m.scope?.slug === rootSlug);
-  const groups = ctx.projectId ? projectGroups(ctx.projectId) : ctx.workspaceId ? workspaceGroups(ctx.workspaceId) : organizationGroups(isAdmin, docsUrl(config));
-  const isActive = (item: NavItem) => (item.exact ? location.pathname === item.path : location.pathname === item.path || location.pathname.startsWith(`${item.path}/`));
-
-  const contextCard = ctx.projectId ? (
-    <div className="mb-4 rounded-xl border border-gray-200 p-3 dark:border-gray-800">
-      <p className="text-xs text-gray-500 dark:text-gray-400">Project · {ctx.project?.workspaceName} / {ctx.project?.teamName}</p>
-      <div className="mt-1 flex items-center justify-between gap-2">
-        <span className="truncate text-sm font-semibold text-gray-800 dark:text-white/90">{ctx.project?.name ?? "…"}</span>
-        {ctx.project && <CriticalityBadge value={ctx.project.criticality} />}
-      </div>
-      <Link to={ctx.workspaceId ? `/workspaces/${ctx.workspaceId}` : "/projects"} className="mt-2 inline-flex items-center gap-1 text-xs text-brand-500 hover:underline">
-        <ChevronLeftIcon className="size-3" /> {ctx.workspace?.name ?? "Workspace"}
-      </Link>
-    </div>
-  ) : ctx.workspaceId ? (
-    <div className="mb-4 rounded-xl border border-gray-200 p-3 dark:border-gray-800">
-      <p className="text-xs text-gray-500 dark:text-gray-400">Workspace</p>
-      <span className="mt-1 block truncate text-sm font-semibold text-gray-800 dark:text-white/90">{ctx.workspace?.name ?? "…"}</span>
-      <Link to="/overview" className="mt-2 inline-flex items-center gap-1 text-xs text-brand-500 hover:underline">
-        <ChevronLeftIcon className="size-3" /> {organization?.name ?? "Organization"}
-      </Link>
-    </div>
-  ) : null;
+  const groups = loc.groups;
+  const isActive = (item: NavItem) => itemActive(item, location.pathname);
+  const card =
+    loc.level === "project" ? { kind: "project" as const, name: loc.project?.name, to: `/projects/${loc.projectId}`, extra: loc.project ? <CriticalityBadge value={loc.project.criticality} /> : null }
+    : loc.level === "team" ? { kind: "team" as const, name: loc.team?.name, to: loc.crumbs.find((c) => c.kind === "Team")?.to ?? "/projects", extra: null }
+    : loc.level === "workspace" ? { kind: "workspace" as const, name: loc.workspace?.name, to: `/workspaces/${loc.workspaceId}`, extra: null }
+    : { kind: "organization" as const, name: loc.organization?.name, to: "/overview", extra: null };
 
   return (
     <aside
@@ -162,12 +39,12 @@ const AppSidebar: React.FC = () => {
       onMouseLeave={() => setIsHovered(false)}
     >
       <div className={cn("flex py-8", !isExpanded && !isHovered ? "xl:justify-center" : "justify-start")}>
-        <Link to="/overview" aria-label="Go to overview">
+        <Link to="/overview" aria-label="Go to overview" className="min-w-0">
           <Brand compact={!showText} />
         </Link>
       </div>
       <div className="no-scrollbar flex flex-col overflow-y-auto duration-300 ease-linear">
-        {showText && contextCard}
+        <ScopeCard kind={card.kind} name={card.name} to={card.to} extra={card.extra} parent={loc.parent} compact={!showText} />
         <nav className="mb-6">
           <div className="flex flex-col gap-4">
             {groups.map((group) => (
@@ -212,5 +89,34 @@ const AppSidebar: React.FC = () => {
     </aside>
   );
 };
+
+/**
+ * "You are here": the current scope as a card at the top of the sidebar (initial + name + type), with
+ * "← Back to <parent>" above it. Long names are cut with an ellipsis; the full name is on hover.
+ */
+function ScopeCard({ kind, name, to, extra, parent, compact }: { kind: "organization" | "workspace" | "team" | "project"; name: string | undefined; to: string; extra: React.ReactNode; parent: { label: string; to: string } | null; compact: boolean }) {
+  const label = LEVEL_LABEL[kind];
+  const initial = (name ?? "?").trim().charAt(0).toUpperCase() || "?";
+  const tone = kind === "project" ? "bg-brand-50 text-brand-600 dark:bg-brand-500/15 dark:text-brand-400" : kind === "team" ? "bg-success-50 text-success-600 dark:bg-success-500/15 dark:text-success-500" : kind === "workspace" ? "bg-warning-50 text-warning-600 dark:bg-warning-500/15 dark:text-orange-400" : "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300";
+  const avatar = <span aria-hidden="true" className={cn("flex size-9 shrink-0 items-center justify-center rounded-lg text-sm font-semibold", tone)}>{initial}</span>;
+  if (compact) return <Link to={to} title={`${label}: ${name ?? ""}`} className="mb-4 flex justify-center xl:justify-center">{avatar}</Link>;
+  return (
+    <div className="mb-5" data-testid="scope-card">
+      {parent && (
+        <Link to={parent.to} title={parent.label} className="mb-2 flex min-w-0 items-center gap-1 text-xs text-gray-500 hover:text-brand-500 dark:text-gray-400">
+          <ChevronLeftIcon className="size-3 shrink-0" /> <span className="truncate">Back to {parent.label}</span>
+        </Link>
+      )}
+      <Link to={to} className="flex min-w-0 items-center gap-3 rounded-xl border border-gray-200 p-3 hover:border-brand-300 dark:border-gray-800 dark:hover:border-brand-500/60">
+        {avatar}
+        <span className="min-w-0 flex-1">
+          <span className="block text-xs text-gray-500 dark:text-gray-400">{label}</span>
+          <span className="block truncate text-sm font-semibold text-gray-800 dark:text-white/90" title={name}>{name ?? "…"}</span>
+        </span>
+        {extra}
+      </Link>
+    </div>
+  );
+}
 
 export default AppSidebar;

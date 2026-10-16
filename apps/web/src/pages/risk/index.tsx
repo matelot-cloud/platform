@@ -1,4 +1,3 @@
-import PageBreadcrumb from "@/components/common/PageBreadCrumb";
 import PageMeta from "@/components/common/PageMeta";
 import Badge from "@/components/ui/badge/Badge";
 import { isForbidden } from "@/platform/api/client";
@@ -58,7 +57,6 @@ export default function RiskIndexPage() {
   return (
     <>
       <PageMeta title={`Risk · ${productName}`} description="Risk across services" />
-      <PageBreadcrumb pageTitle="Risk" />
       <OrganizationGate>{(organization) => <RiskPage key={organization.id} organization={organization} />}</OrganizationGate>
     </>
   );

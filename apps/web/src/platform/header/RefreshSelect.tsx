@@ -12,5 +12,5 @@ const OPTIONS = [
 /** How often every section refreshes its data. */
 export function RefreshSelect() {
   const { refreshSeconds, setRefreshSeconds } = useDashboard();
-  return <SelectField ariaLabel="Refresh interval" value={String(refreshSeconds)} onChange={(v) => setRefreshSeconds(Number(v))} options={OPTIONS} className="w-40" />;
+  return <SelectField ariaLabel="Refresh interval" value={String(refreshSeconds)} onChange={(v) => setRefreshSeconds(Number(v))} options={OPTIONS} className="w-36" />;
 }

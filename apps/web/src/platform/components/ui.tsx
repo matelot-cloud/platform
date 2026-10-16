@@ -29,7 +29,7 @@ export function Card({
             {title && <h3 className="text-base font-medium leading-6 text-gray-800 dark:text-white/90">{title}</h3>}
             {description && <p className="mt-0.5 text-sm leading-5 text-gray-500 dark:text-gray-400">{description}</p>}
           </div>
-          {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
+          {actions && <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:shrink-0">{actions}</div>}
         </div>
       )}
       <div className={cn(title || actions ? "border-t border-gray-100 dark:border-gray-800" : "", flush ? "" : "p-4 sm:p-6")}>{children}</div>
@@ -178,7 +178,7 @@ export function Toolbar({ children, actions }: { children?: ReactNode; actions?:
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-3">
       <div className="min-w-0 text-sm text-gray-500 dark:text-gray-400">{children}</div>
-      {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
+      {actions && <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:shrink-0">{actions}</div>}
     </div>
   );
 }

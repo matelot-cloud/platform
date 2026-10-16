@@ -1,5 +1,4 @@
 import { CodeBlock } from "@/platform/components/CodeBlock";
-import PageBreadcrumb from "@/components/common/PageBreadCrumb";
 import PageMeta from "@/components/common/PageMeta";
 import Label from "@/components/form/Label";
 import Badge from "@/components/ui/badge/Badge";
@@ -76,7 +75,6 @@ export default function AccessTokensPage() {
   return (
     <>
       <PageMeta title={`Access tokens · ${productName}`} description="Personal access tokens" />
-      <PageBreadcrumb pageTitle="Access tokens" />
       <div className="space-y-6">
         <Card title="Personal access tokens" description="Tokens that act as you for the API and the matelot CLI. Read and write tokens reach only the projects, teams and workspaces you are a member of; sudo tokens (administrators) carry your full rights. For pipelines, prefer project CI tokens (project → Settings → CI tokens)." flush actions={<button type="button" className={primaryButton} onClick={() => setDialog(true)}>New token</button>}>
           {tokens.error ? <div className="p-4"><ErrorNotice error={tokens.error} /></div> : list.length === 0 ? <EmptyState title="No tokens yet">Create one to use the API or the CLI as yourself.</EmptyState> : (

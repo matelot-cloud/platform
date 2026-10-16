@@ -201,6 +201,18 @@ cmd_apply() {
 }
 
 # ---- check + handover ---------------------------------------------------------------------------
+# restart_report <old-replicasets,comma-separated> < pods.tsv
+#   pods.tsv: name, restartCounts, last reason, last finishedAt, startTime, deletionTimestamp, owner kind, owner name.
+#   Prints one line per pod whose containers restarted, skipping terminating pods and pods of scaled-down ReplicaSets.
+restart_report() {
+  awk -F'\t' -v old=",$1" '
+    $6 != "" { skipped++; next }
+    $7 == "ReplicaSet" && index(old, "," $8 ",") { skipped++; next }
+    { n = 0; split($2, c, " "); for (i in c) if (c[i] + 0 > n) n = c[i] + 0
+      if (n > 0) printf "   restarts: %s %d (last: %s at %s; pod started %s)\n", $1, n, ($3 == "" ? "?" : $3), ($4 == "" ? "?" : $4), $5 }
+    END { if (skipped) printf "   (%d terminating or replaced pod%s not counted)\n", skipped, (skipped == 1 ? "" : "s") }'
+}
+
 cmd_check() {
   require_cluster
   say "checks ($NAMESPACE)"
@@ -211,7 +223,10 @@ cmd_check() {
   "${K[@]}" rollout status "deployment/$RELEASE-keycloak" --timeout=300s > /dev/null 2>&1 || true
   # container restarts with when and why: restartCount is the container's crash/probe counter inside the SAME pod (a
   # rollout makes a new pod at 0), so a count carried over from the first start is not caused by this upgrade
-  local restarts; restarts="$("${K[@]}" get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.containerStatuses[*].restartCount}{"\t"}{.status.containerStatuses[*].lastState.terminated.reason}{"\t"}{.status.containerStatuses[*].lastState.terminated.finishedAt}{"\t"}{.status.startTime}{"\n"}{end}' 2>/dev/null | awk -F'\t' '{ n = 0; split($2, c, " "); for (i in c) if (c[i] + 0 > n) n = c[i] + 0; if (n > 0) printf "   restarts: %s %d (last: %s at %s; pod started %s)\n", $1, n, ($3 == "" ? "?" : $3), ($4 == "" ? "?" : $4), $5 }')"
+  # pods on their way out are skipped: terminating (deletionTimestamp set) or owned by a ReplicaSet the rollout has
+  # scaled to 0 — their counters belong to the previous release, not to this one
+  local old_rs; old_rs="$("${K[@]}" get replicasets -o jsonpath='{range .items[?(@.spec.replicas==0)]}{.metadata.name}{","}{end}' 2>/dev/null || true)"
+  local restarts; restarts="$("${K[@]}" get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.containerStatuses[*].restartCount}{"\t"}{.status.containerStatuses[*].lastState.terminated.reason}{"\t"}{.status.containerStatuses[*].lastState.terminated.finishedAt}{"\t"}{.status.startTime}{"\t"}{.metadata.deletionTimestamp}{"\t"}{.metadata.ownerReferences[0].kind}{"\t"}{.metadata.ownerReferences[0].name}{"\n"}{end}' 2>/dev/null | restart_report "$old_rs")"
   [ -n "$restarts" ] && echo "$restarts"
   # the API answers through its Service (no DNS needed yet); the port comes from the Service, never hard-coded
   local port; port="$("${K[@]}" get service "$RELEASE-api" -o jsonpath='{.spec.ports[?(@.name=="http")].port}' 2>/dev/null)"; port="${port:-80}"

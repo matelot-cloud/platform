@@ -6,6 +6,7 @@ import AppSidebar from "./AppSidebar";
 import Backdrop from "./Backdrop";
 import { useMeta } from "@/platform/api/hooks";
 import { useRuntimeConfig } from "@/platform/runtime-config";
+import { InAppLayout, ScopeDocumentTitle, ScopeHeader } from "@/platform/navigation/ScopeHeader";
 
 const Footer: React.FC = () => {
   const { productName } = useRuntimeConfig();
@@ -33,14 +34,16 @@ const LayoutContent: React.FC = () => {
 
       <div
         className={cn(
-          "flex-1 transition-[margin] duration-300 ease-in-out",
+          "min-w-0 flex-1 transition-[margin] duration-300 ease-in-out",
           isExpanded || isHovered ? "xl:ms-72.5" : "xl:ms-22.5",
           isMobileOpen ? "ms-0" : "",
         )}
       >
         <AppHeader />
         <main className="mx-auto max-w-(--breakpoint-2xl) p-4 md:p-6">
+          <ScopeHeader />
           <Outlet />
+          <ScopeDocumentTitle />
         </main>
         <Footer />
       </div>
@@ -50,9 +53,11 @@ const LayoutContent: React.FC = () => {
 
 const AppLayout: React.FC = () => {
   return (
-    <SidebarProvider>
-      <LayoutContent />
-    </SidebarProvider>
+    <InAppLayout.Provider value={true}>
+      <SidebarProvider>
+        <LayoutContent />
+      </SidebarProvider>
+    </InAppLayout.Provider>
   );
 };
 

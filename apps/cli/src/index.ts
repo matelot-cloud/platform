@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { CliError, configFromEnv, request, VERSION } from './client';
+import { CliError, configFromEnv, isTlsCode, request, unreachableDetail, VERSION } from './client';
 import type { Config } from './client';
 import { signatureHeader } from './signing';
 import { readZip } from './zip-read';
@@ -244,7 +244,7 @@ Check the handshake: matelot mcp --check`);
         const r = await request<{ signatureValid: boolean; files: { name: string; ok: boolean }[] }>(config, 'POST', '/api/v1/evidence/verify', { checksums: read('checksums.txt').toString('utf8'), signature: read('checksums.sig').toString('utf8'), fileHashes });
         for (const f of r.files) console.log(`  ${f.ok ? 'ok  ' : 'FAIL'} ${f.name}`);
         console.log(r.signatureValid ? 'signature: valid (produced by this cell)' : 'signature: INVALID');
-        if (!r.signatureValid || r.files.some((f) => !f.ok)) process.exit(2);
+        if (!r.signatureValid || r.files.some((f) => !f.ok)) process.exitCode = 2;
         return;
       }
       if (await runResource(command, positional, flags, config)) return;
@@ -276,8 +276,8 @@ Check the handshake: matelot mcp --check`);
         console.log(`gate: ${ev.result.toUpperCase()} — ${ev.policies.length} polic${ev.policies.length === 1 ? 'y' : 'ies'} applied (sbom ${ev.facts.sbomId ? 'yes' : 'no'} · critical ${ev.facts.findings?.critical ?? 0} · high ${ev.facts.findings?.high ?? 0} · kev ${ev.facts.kevOpen ?? 0} · secrets ${ev.facts.secretsOpen} · iac ${sum(ev.facts.iacOpen)} · sast ${sum(ev.facts.sastOpen)})${Date.now() - started > 1500 ? ` · waited ${Math.round((Date.now() - started) / 1000)}s for correlation` : ''}`);
         for (const v of ev.violations) console.log(`  ${v.action === 'block' ? '✗' : '!'} ${v.policyName}: ${v.message}`);
       }
-      if (ev.pending) process.exit(3);         // 3 = not evaluated (SBOM missing / correlation pending or failed) — distinct from 2 = policy violation
-      if (ev.result === 'fail') process.exit(2);
+      if (ev.pending) { process.exitCode = 3; return; } // 3 = not evaluated (SBOM missing / correlation pending or failed) — distinct from 2 = policy violation
+      if (ev.result === 'fail') process.exitCode = 2;
       return;
     }
     case 'deploy': {
@@ -552,7 +552,7 @@ async function runResource(resource: string, positional: string[], flags: Record
   if (summary !== null) { if (!flags.quiet) console.log(summary); return true; }
   if (flags.json || !Array.isArray(res) && !(res && typeof res === 'object' && Array.isArray((res as Record<string, unknown>).tokens))) console.log(JSON.stringify(res, null, 2));
   else table((Array.isArray(res) ? res : (res as { tokens: Record<string, unknown>[] }).tokens) as Record<string, unknown>[], cmd.columns);
-  if (cmd.failWhen && get(res, cmd.failWhen.field) === cmd.failWhen.equals) process.exit(2);
+  if (cmd.failWhen && get(res, cmd.failWhen.field) === cmd.failWhen.equals) { process.exitCode = 2; return true; }
   if (!flags.quiet) keylessHint(resource, verb, res);
   return true;
 }
@@ -592,10 +592,13 @@ async function defaultOrg(config: ReturnType<typeof configFromEnv>): Promise<str
 }
 
 // Exit codes: 1 error · 2 policy violation (gate/deploy rejected) · 3 not evaluated (no SBOM yet / correlation pending or failed) · 4 authentication (was 3 before 2.9.0)
+// Never process.exit() with output still queued: stdout to a pipe is asynchronous on macOS and Windows, so
+// `matelot … | grep …` could lose lines. Exit codes are set with process.exitCode; the error path flushes first.
 main().catch((error: unknown) => {
   console.error(`matelot: ${error instanceof Error ? error.message : String(error)}`);
-  if (error instanceof CliError && error.code === 'correlation_pending') process.exit(3);
-  process.exit(error instanceof CliError && error.status === 401 ? 4 : 1);
+  const code = error instanceof CliError && error.code === 'correlation_pending' ? 3 : error instanceof CliError && error.status === 401 ? 4 : 1;
+  process.exitCode = code;
+  process.stdout.write('', () => process.stderr.write('', () => process.exit(code)));
 });
 
 interface UsageMetrics { seats: { active: number | null; members: number }; projects: number; services: number; environments: number; pipelines: number; jobs: number; runnerMinutes: number; runnerMinutesByType: Record<string, number>; sboms: number }
@@ -675,8 +678,14 @@ async function doctor(urlFlag: string | undefined, json: boolean): Promise<void>
   try {
     const r = await get('/api/v1/health/ready');
     add('api', r.status === 200, r.status === 200 ? `${url} ready` : `${url}/api/v1/health/ready → HTTP ${r.status}`);
-    if (r.status !== 200) { composeDiagnosis(); return finish(); }
-  } catch (e) { add('api', false, `${url} unreachable: ${(e as Error).message}`); composeDiagnosis(); return finish(); }
+    if (r.status !== 200) { add('version', null, `skipped: api not ready (HTTP ${r.status})`); composeDiagnosis(); return finish(); }
+  } catch (e) {
+    const detail = unreachableDetail(e);
+    add('api', false, `${url} unreachable: ${detail}`);
+    // the version line is still printed (scripts grep for it) and says why there is none
+    add('version', null, `skipped: api unreachable${isTlsCode((e as { cause?: { code?: string } }).cause?.code) ? ` (${detail})` : ''}`);
+    composeDiagnosis(); return finish();
+  }
   // 2. version
   let version = '?';
   try { const r = await get('/api/v1/version'); const b = r.body as { version?: string } | undefined; version = b?.version ?? '?'; add('version', r.status === 200 && !!b?.version, r.status === 200 ? `API ${version} · CLI ${VERSION}` : `${url}/api/v1/version → HTTP ${r.status} (API older than 0.1.0?)`); }

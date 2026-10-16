@@ -4,7 +4,7 @@ import type { Organization, Workspace } from "@/platform/api/types";
 import { OrganizationGate } from "@/platform/components/OrganizationGate";
 import { Card, EmptyState, muted } from "@/platform/components/ui";
 import { useRuntimeConfig } from "@/platform/runtime-config";
-import { Link, Outlet, useOutletContext, useParams } from "react-router";
+import { Outlet, useOutletContext, useParams } from "react-router";
 
 export interface WorkspaceContext {
   organization: Organization;
@@ -21,14 +21,8 @@ function Shell({ organization, workspaceId }: { organization: Organization; work
   if (workspaces.isLoading) return <p className={`text-sm ${muted}`}>Loading…</p>;
   if (!workspace) return <Card flush><EmptyState title="Workspace not found">It may be archived or outside your access.</EmptyState></Card>;
   return (
-    <div className="space-y-6">
-      <div>
-        <p className={`text-sm ${muted}`}><Link to="/overview" className="hover:text-brand-500">{organization.name}</Link> / workspace</p>
-        <h2 className="mt-1 text-xl font-semibold text-gray-800 dark:text-white/90">{workspace.name}</h2>
-        {workspace.description && <p className={`mt-1 text-sm ${muted}`}>{workspace.description}</p>}
-      </div>
-      <Outlet context={{ organization, workspace } satisfies WorkspaceContext} />
-    </div>
+    // the breadcrumb, heading and sidebar card come from the app layout (platform/navigation)
+    <Outlet context={{ organization, workspace } satisfies WorkspaceContext} />
   );
 }
 

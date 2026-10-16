@@ -1,4 +1,5 @@
-import { normalizeCellUrl, readCredentials, resolveCellUrl } from './login';
+import { isTlsCode, normalizeCellUrl, readCredentials, resolveCellUrl, unreachableDetail } from './login';
+export { isTlsCode, unreachableDetail } from './login';
 import { signatureHeader } from './signing';
 
 export interface Config {
@@ -75,9 +76,7 @@ async function requestOnce<T = unknown>(config: Config, method: string, path: st
         signal: controller.signal,
       });
     } catch (error) {
-      const cause = (error as { cause?: { code?: string; message?: string } }).cause;
-      const detail = cause?.code ? `${cause.code}${cause.message ? ` (${cause.message})` : ''}` : (error as Error).message;
-      throw new CliError(`cannot reach ${config.url}: ${detail}. Is MATELOT_URL correct and the platform running / reachable from this runner?`);
+      throw new CliError(`cannot reach ${config.url}: ${unreachableDetail(error)}. Is MATELOT_URL correct and the platform running / reachable from this runner?`);
     }
     const text = await response.text();
     let parsed: unknown = text;
@@ -99,4 +98,4 @@ async function requestOnce<T = unknown>(config: Config, method: string, path: st
   }
 }
 
-export const VERSION = '2.23.0';
+export const VERSION = '2.23.2';

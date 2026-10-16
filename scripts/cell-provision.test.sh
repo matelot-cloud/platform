@@ -38,4 +38,22 @@ check() { # check <label>
 python3 -c 'import yaml' 2>/dev/null && check "pyyaml" || echo "(PyYAML not installed: only the fallback parser is tested)"
 mkdir -p "$T/noyaml"; printf 'raise ImportError("hidden for the test")\n' > "$T/noyaml/yaml.py"
 PYTHONPATH="$T/noyaml" check "fallback"
-echo "cell-provision ok (new picks the issuer per context; values_get reads the generated file with PyYAML and without)"
+
+# 3. checks: restarts of terminating pods and of pods of a scaled-down ReplicaSet (the old api pod after an upgrade)
+#    are not reported; a restarting pod of the current ReplicaSet is
+sed -n '/^restart_report()/,/^}/p' scripts/cell-provision.sh > "$T/restart_report.sh"
+# shellcheck disable=SC1091
+source "$T/restart_report.sh"
+tab=$'\t'
+report="$(printf '%s\n' \
+  "acme-api-old-x1${tab}3${tab}Error${tab}2026-10-15T09:00:00Z${tab}2026-10-14T08:00:00Z${tab}2026-10-15T10:00:00Z${tab}ReplicaSet${tab}acme-api-6d9f" \
+  "acme-api-old-x2${tab}2${tab}OOMKilled${tab}2026-10-15T09:10:00Z${tab}2026-10-14T08:00:00Z${tab}${tab}ReplicaSet${tab}acme-api-6d9f" \
+  "acme-api-new-y1${tab}1${tab}Error${tab}2026-10-15T10:05:00Z${tab}2026-10-15T10:01:00Z${tab}${tab}ReplicaSet${tab}acme-api-7b2c" \
+  "acme-postgres-0${tab}0${tab}${tab}${tab}2026-10-14T08:00:00Z${tab}${tab}StatefulSet${tab}acme-postgres" \
+  | restart_report "acme-api-6d9f,acme-worker-55aa,")"
+grep -q "restarts: acme-api-new-y1 1 (last: Error" <<< "$report" || { echo "FAIL: the current pod's restart is missing: $report" >&2; exit 1; }
+grep -q "acme-api-old" <<< "$report" && { echo "FAIL: terminating / replaced pods reported: $report" >&2; exit 1; }
+grep -q "(2 terminating or replaced pods not counted)" <<< "$report" || { echo "FAIL: skipped pods not mentioned: $report" >&2; exit 1; }
+grep -q "postgres" <<< "$report" && { echo "FAIL: a pod without restarts reported" >&2; exit 1; }
+
+echo "cell-provision ok (new picks the issuer per context; values_get reads the generated file with PyYAML and without; checks skip terminating and replaced pods)"

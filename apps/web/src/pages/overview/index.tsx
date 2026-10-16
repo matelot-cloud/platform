@@ -1,4 +1,3 @@
-import PageBreadcrumb from "@/components/common/PageBreadCrumb";
 import PageMeta from "@/components/common/PageMeta";
 import Badge from "@/components/ui/badge/Badge";
 import { isForbidden } from "@/platform/api/client";
@@ -121,7 +120,6 @@ export default function OverviewPage() {
   return (
     <>
       <PageMeta title={`Overview · ${productName}`} description="Organization overview" />
-      <PageBreadcrumb pageTitle="Overview" />
       <OrganizationGate>{(organization) => <Overview organization={organization} />}</OrganizationGate>
     </>
   );

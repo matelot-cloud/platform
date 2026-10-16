@@ -1,4 +1,3 @@
-import PageBreadcrumb from "@/components/common/PageBreadCrumb";
 import PageMeta from "@/components/common/PageMeta";
 import Badge from "@/components/ui/badge/Badge";
 import { ChevronDownIcon, FolderIcon, PlusIcon } from "@/icons";
@@ -11,7 +10,8 @@ import { humanize, relativeTime } from "@/platform/format";
 import { useRuntimeConfig } from "@/platform/runtime-config";
 import { cn } from "@/utils";
 import { useMemo, useState } from "react";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
+import { teamPath } from "@/platform/navigation/scope";
 
 type Dialog = { kind: "workspace" } | { kind: "team"; workspace: Workspace } | { kind: "project"; team: TeamRow } | null;
 type Selection = { type: "all" } | { type: "workspace"; id: string } | { type: "team"; id: string };
@@ -22,6 +22,7 @@ export function ProjectsExplorer({ organization, workspaceId }: { organization: 
   const teams = useTeams(organization.id);
   const projects = useProjects(organization.id);
   const meta = useMeta();
+  const navigate = useNavigate();
   const [dialog, setDialog] = useState<Dialog>(null);
   const [selection, setSelection] = useState<Selection>(workspaceId ? { type: "workspace", id: workspaceId } : { type: "all" });
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -125,7 +126,7 @@ export function ProjectsExplorer({ organization, workspaceId }: { organization: 
           </div>
           <div className="flex items-center gap-3 sm:shrink-0">
             <input className={`${inputClass} w-full sm:w-56`} placeholder="Filter projects" value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Filter projects" />
-            {selectedTeam && <Link className={outlineButton} to={`/workspaces/${selectedTeam.workspaceId}/teams/${selectedTeam.id}/members`}>Team members</Link>}
+            {selectedTeam && <Link className={outlineButton} to={teamPath(selectedTeam)}>Open team</Link>}
             {selectedTeam ? (
               <button type="button" className={primaryButton} onClick={() => setDialog({ kind: "project", team: selectedTeam })}><PlusIcon className="size-5" /> New project</button>
             ) : selectedWorkspace ? (
@@ -169,15 +170,15 @@ export function ProjectsExplorer({ organization, workspaceId }: { organization: 
 
       {dialog?.kind === "workspace" && (
         <NodeDialog title="New workspace" submitLabel="Create workspace" criticalities={criticalities} pending={createWorkspace.isPending} error={createWorkspace.error} onClose={close}
-          onSubmit={(d) => createWorkspace.mutate({ slug: d.slug, name: d.name, description: d.description || undefined }, { onSuccess: (ws) => { close(); setSelection({ type: "workspace", id: ws.id }); } })} />
+          onSubmit={(d) => createWorkspace.mutate({ slug: d.slug, name: d.name, description: d.description || undefined }, { onSuccess: (ws) => { close(); void navigate(`/workspaces/${ws.id}`); } })} />
       )}
       {dialog?.kind === "team" && (
         <NodeDialog title={`New team in ${dialog.workspace.name}`} submitLabel="Create team" criticalities={criticalities} pending={createTeam.isPending} error={createTeam.error} onClose={close}
-          onSubmit={(d) => createTeam.mutate({ workspaceId: dialog.workspace.id, slug: d.slug, name: d.name, description: d.description || undefined }, { onSuccess: (t) => { close(); setSelection({ type: "team", id: t.id }); } })} />
+          onSubmit={(d) => createTeam.mutate({ workspaceId: dialog.workspace.id, slug: d.slug, name: d.name, description: d.description || undefined }, { onSuccess: (t) => { close(); void navigate(teamPath(t)); } })} />
       )}
       {dialog?.kind === "project" && (
         <NodeDialog title={`New project in ${dialog.team.name}`} submitLabel="Create project" withCriticality criticalities={criticalities} pending={createProject.isPending} error={createProject.error} onClose={close}
-          onSubmit={(d) => createProject.mutate({ teamId: dialog.team.id, slug: d.slug, name: d.name, description: d.description || undefined, criticality: d.criticality }, { onSuccess: close })} />
+          onSubmit={(d) => createProject.mutate({ teamId: dialog.team.id, slug: d.slug, name: d.name, description: d.description || undefined, criticality: d.criticality }, { onSuccess: (p) => { close(); void navigate(`/projects/${p.id}`); } })} />
       )}
     </div>
   );
@@ -188,7 +189,6 @@ export default function ProjectsPage() {
   return (
     <>
       <PageMeta title={`Projects · ${productName}`} description="Workspaces, teams and projects" />
-      <PageBreadcrumb pageTitle="Projects" />
       <OrganizationGate>{(organization) => <ProjectsExplorer key={organization.id} organization={organization} />}</OrganizationGate>
     </>
   );

@@ -33,8 +33,8 @@ const AppHeader: React.FC = () => {
 
   return (
     <header className="sticky top-0 z-99999 flex w-full border-gray-200 bg-white xl:border-b dark:border-gray-800 dark:bg-gray-900">
-      <div className="flex grow flex-col items-center justify-between xl:flex-row xl:px-6">
-        <div className="flex w-full items-center justify-between gap-2 border-b border-gray-200 px-3 py-3 sm:gap-4 xl:justify-normal xl:border-b-0 xl:px-0 xl:py-4 dark:border-gray-800">
+      <div className="flex min-w-0 grow flex-col items-center justify-between xl:flex-row xl:px-6">
+        <div className="flex w-full min-w-0 items-center justify-between gap-2 border-b border-gray-200 px-3 py-3 sm:gap-4 xl:justify-normal xl:border-b-0 xl:px-0 xl:py-4 dark:border-gray-800">
           <button
             className={`z-99999 flex h-10 w-10 items-center justify-center rounded-lg border-gray-200 text-gray-500 lg:h-11 lg:w-11 lg:bg-transparent xl:border dark:border-gray-800 dark:text-gray-400 dark:lg:bg-transparent ${
               isMobileOpen ? "bg-gray-100 dark:bg-white/3" : ""
@@ -77,7 +77,7 @@ const AppHeader: React.FC = () => {
             {/* Cross Icon */}
           </button>
 
-          <Link to="/overview" className="xl:hidden">
+          <Link to="/overview" className="min-w-0 xl:hidden">
             <Brand />
           </Link>
 
@@ -101,19 +101,19 @@ const AppHeader: React.FC = () => {
             </svg>
           </button>
 
-          <div className="hidden items-center gap-3 xl:flex">
+          <div className="hidden min-w-0 items-center gap-3 xl:flex">
             <OrganizationSelect />
             <ContextSwitcher />
           </div>
         </div>
         <div
           className={cn(
-            "flex w-full items-center justify-between gap-4 px-5 py-4 shadow-theme-md xl:flex xl:justify-end xl:px-0 xl:shadow-none",
+            "flex w-full items-center justify-between gap-4 px-5 py-4 shadow-theme-md xl:flex xl:w-auto xl:shrink-0 xl:justify-end xl:px-0 xl:shadow-none",
             isApplicationMenuOpen ? "flex" : "hidden",
           )}
         >
-          <div className="flex items-center gap-2 2xsm:gap-3">
-            <div className="flex items-center gap-2 xl:hidden">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 2xsm:gap-3 xl:flex-nowrap">
+            <div className="flex min-w-0 flex-wrap items-center gap-2 xl:hidden">
               <OrganizationSelect />
               <ContextSwitcher />
             </div>

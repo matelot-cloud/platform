@@ -1,4 +1,3 @@
-import PageBreadcrumb from "@/components/common/PageBreadCrumb";
 import PageMeta from "@/components/common/PageMeta";
 import { useOrganizationCoverage } from "@/platform/api/hooks";
 import type { CoverageCheckId, Organization } from "@/platform/api/types";
@@ -47,7 +46,6 @@ export default function CoverageIndexPage() {
   return (
     <>
       <PageMeta title={`Coverage · ${productName}`} description="Service coverage across the organization" />
-      <PageBreadcrumb pageTitle="Coverage" />
       <OrganizationGate>{(organization) => <CoveragePage key={organization.id} organization={organization} />}</OrganizationGate>
     </>
   );

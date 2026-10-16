@@ -4,7 +4,7 @@
 
 A membership gives a person (or a service account) a role on an organization, workspace, team or project; roles
 inherit downward, like GitLab group → subgroup → project memberships. Every level has a **Members** page (Organization
-→ Members, Workspace → Members, team → *Team members* on the workspace's Teams & projects page, Project → Members)
+→ Members, Workspace → Members, Team → Members (Workspace → Teams → the team), Project → Members)
 listing the direct members and, read-only, everyone who inherits a role from above — with where it is granted (a
 link), who granted it, when, and the optional expiry date.
 

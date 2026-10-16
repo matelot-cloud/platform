@@ -157,7 +157,7 @@ const pages = {
   '/audit': ['project.created', 'admin@acme.local', 'Audit trail'],
   '/usage': ['Documentation', 'Usage · October 2026', 'live', 'Active seats', 'of 9 members used the platform', 'Runner minutes', '153.5', '236 jobs finished · 100 on managed runners', 'Runner minutes by job type', 'sbom', '120.5', 'History', 'September 2026', '412', 'Download CSV'],
   '/admin/users': ['Users of this cell', 'dev@acme.local', 'Administration', 'active', 'New user', 'People', 'Manage'],
-  [`/projects/${PROJECT}`]: ['Payment API', 'Running now', 'Production', '4.2.0', 'Pipeline success', 'Overview', 'Settings', 'Project · Payments / Backend'],
+  [`/projects/${PROJECT}`]: ['Payment API', 'Running now', 'Production', '4.2.0', 'Pipeline success', 'Overview', 'Settings', 'Project: Payment API'],
   [`/projects/${PROJECT}/services`]: ['Payment Service', 'Production', 'internet-facing', 'acme-org/payment-api', 'protected', 'New service', 'Run pipeline', 'Recent pipelines'],
   [`/projects/${PROJECT}/integrations`]: ['Connected sources for this project', 'inherited', 'Add connection'],
   [`/projects/${PROJECT}/settings`]: ['Business criticality', 'Archive project', 'CI tokens', 'github-actions deploy', 'sk_abc123', 'New token', 'Automation', 'Run the security pipeline on push'],
@@ -183,7 +183,10 @@ const pages = {
   [`/projects/${PROJECT}/jobs/job1`]: ['checkout', 'Passed', 'cloning acme-org/payment-api over ssh', 'Result', 'Retry'],
   [`/projects/${PROJECT}/runners`]: ['wsl-runner', 'online', 'New pool', 'Runners available', 'Default pool', 'acme-runner-0'],
   '/runners': ['wsl-runner', 'Register runner', 'devbox', 'Pools at this level', 'acme-runner-0', '(managed)'],
-  [`/workspaces/${WS}`]: ['Payments', 'Teams', 'Projects', 'Payment API', 'Teams & projects', 'Workspace'],
+  [`/workspaces/${WS}`]: ['Payments', 'Teams', 'Projects', 'Payment API', 'Teams', 'Workspace: Payments'],
+  [`/workspaces/${WS}/teams`]: ['Backend', 'New team', 'Payment API'],
+  [`/workspaces/${WS}/teams/${TEAM}`]: ['Projects of Backend in Payments', 'Payment API', 'New project', 'High / critical'],
+  [`/workspaces/${WS}/teams/${TEAM}/settings`]: ['Archive team', 'Slug'],
   [`/workspaces/${WS}/integrations`]: ['Connected sources for this workspace', 'GitHub · acme-org', 'inherited'],
   '/connections': ['Connections', 'Source code', 'Container registries', 'Issue tracking', 'Jira Cloud', 'Slack', 'GitHub · acme-org', 'Manage', 'Connect at', 'Notification channels'],
   '/integrations': ['GitHub · acme-org', 'Connect at', 'Container registries'],
@@ -224,6 +227,64 @@ try {
     console.log(`${missing.length ? 'FAIL' : 'ok  '} ${target}${missing.length ? ` — missing: ${missing.join(', ')}` : ''}`);
     if (missing.length) failed = true;
   }
+  // ---- navigation context: breadcrumb, sidebar card, heading, tab title and header location at every level ----
+  const go = async (target, wait = 1200) => { window.history.pushState({}, '', target); window.dispatchEvent(new window.PopStateEvent('popstate')); await new Promise((r) => setTimeout(r, wait)); };
+  const flat = (el) => (el?.textContent ?? '').replace(/\s+/g, ' ').trim();
+  const navChecks = [
+    { target: '/overview', crumbs: ['ACME Corp', 'Overview'], links: ['/overview'], h1: 'Overview — ACME Corp (organization)', card: ['Organization', 'ACME Corp'], back: null, title: 'Overview · ACME Corp', pills: ['Workspace: All workspaces', 'Project: All projects'] },
+    { target: '/members', crumbs: ['ACME Corp', 'Members'], links: ['/overview'], h1: 'Members — ACME Corp (organization)', card: ['Organization', 'ACME Corp'], back: null, title: 'Members · ACME Corp', pills: ['Workspace: All workspaces'] },
+    { target: `/workspaces/${WS}/members`, crumbs: ['ACME Corp', 'Payments', 'Members'], links: ['/overview', `/workspaces/${WS}`], h1: 'Members — Payments (workspace)', card: ['Workspace', 'Payments'], back: 'Back to ACME Corp', title: 'Members · Payments · ACME Corp', pills: ['Workspace: Payments', 'Team: Select…', 'Project: Select…'] },
+    { target: `/workspaces/${WS}/teams/${TEAM}`, crumbs: ['ACME Corp', 'Payments', 'Backend', 'Overview'], links: ['/overview', `/workspaces/${WS}`, `/workspaces/${WS}/teams/${TEAM}`], h1: 'Overview — Backend (team)', card: ['Team', 'Backend'], back: 'Back to Payments', title: 'Overview · Backend · ACME Corp', pills: ['Workspace: Payments', 'Team: Backend'], menu: ['Overview', 'Members', 'Settings'] },
+    { target: `/workspaces/${WS}/teams/${TEAM}/members`, crumbs: ['ACME Corp', 'Payments', 'Backend', 'Members'], links: ['/overview', `/workspaces/${WS}`, `/workspaces/${WS}/teams/${TEAM}`], h1: 'Members — Backend (team)', card: ['Team', 'Backend'], back: 'Back to Payments', title: 'Members · Backend · ACME Corp', pills: ['Team: Backend'] },
+    { target: `/projects/${PROJECT}/members`, crumbs: ['ACME Corp', 'Payments', 'Backend', 'Payment API', 'Members'], links: ['/overview', `/workspaces/${WS}`, `/workspaces/${WS}/teams/${TEAM}`, `/projects/${PROJECT}`], h1: 'Members — Payment API (project)', card: ['Project', 'Payment API'], back: 'Back to Backend', title: 'Members · Payment API · ACME Corp', pills: ['Workspace: Payments', 'Project: Payment API', 'Service: All'], noPills: ['Team'] },
+    { target: `/projects/${PROJECT}/pipelines/pipe1`, service: true, crumbs: ['ACME Corp', 'Payments', 'Backend', 'Payment API', 'Payment Service', 'Pipelines', 'Pipeline'], links: ['/overview', `/workspaces/${WS}`, `/workspaces/${WS}/teams/${TEAM}`, `/projects/${PROJECT}`, `/projects/${PROJECT}/services?service=${SERVICE}`, `/projects/${PROJECT}/pipelines`], h1: 'Pipeline — Payment API (project)', card: ['Project', 'Payment API'], back: 'Back to Backend', title: 'Pipeline · Payment API · ACME Corp', pills: ['Service: Payment Service'] },
+    { target: '/account/tokens', crumbs: ['Your account', 'Access tokens'], links: [], h1: 'Access tokens — your account', card: ['Organization', 'ACME Corp'], back: 'Back to ACME Corp', title: 'Access tokens · ACME Corp', pills: [] },
+  ];
+  for (const c of navChecks) {
+    await go(c.target);
+    if (c.service) {
+      const sel = window.document.querySelector('select[aria-label="Service"]');
+      if (sel) { sel.value = SERVICE; sel.dispatchEvent(new window.Event('change', { bubbles: true })); }
+      await new Promise((r) => setTimeout(r, 600));
+    }
+    const doc = window.document;
+    const problems = [];
+    const nav = doc.querySelector('nav[aria-label="Breadcrumb"]');
+    const crumbs = [...(nav?.querySelectorAll('li') ?? [])].map((li) => flat(li).replace(/^› ?/, ''));
+    if (JSON.stringify(crumbs) !== JSON.stringify(c.crumbs)) problems.push(`breadcrumb ${JSON.stringify(crumbs)}`);
+    const hrefs = [...(nav?.querySelectorAll('a') ?? [])].map((a) => a.getAttribute('href'));
+    if (JSON.stringify(hrefs) !== JSON.stringify(c.links)) problems.push(`breadcrumb links ${JSON.stringify(hrefs)}`);
+    if (nav && nav.querySelector('[aria-current="page"]')?.textContent !== c.crumbs.at(-1)) problems.push('last crumb is not the current page');
+    const h1 = flat(doc.querySelector('main h1'));
+    if (h1 !== c.h1) problems.push(`heading "${h1}"`);
+    const card = doc.querySelector('[data-testid="scope-card"]');
+    if (!card || !c.card.every((t) => flat(card).includes(t))) problems.push(`sidebar card "${flat(card)}"`);
+    if (c.back ? !flat(card).includes(c.back) : flat(card).includes('Back to')) problems.push(`back link (want ${c.back ?? 'none'})`);
+    if (c.menu) { const items = [...doc.querySelectorAll('aside nav li')].map(flat); if (JSON.stringify(items) !== JSON.stringify(c.menu)) problems.push(`menu ${JSON.stringify(items)}`); }
+    await new Promise((r) => setTimeout(r, 300));
+    if (doc.title !== c.title) problems.push(`document title "${doc.title}"`);
+    const pills = [...doc.querySelectorAll('[data-location]')].map((el) => { const c = el.cloneNode(true); c.querySelector('select')?.remove(); return flat(c); });
+    for (const p of c.pills) if (!pills.includes(p)) problems.push(`header location "${p}" not in ${JSON.stringify(pills)}`);
+    for (const k of c.noPills ?? []) if (doc.querySelector(`[data-location="${k}"]`)) problems.push(`header shows ${k} inside a project`);
+    console.log(`${problems.length ? 'FAIL' : 'ok  '} navigation context ${c.target}${problems.length ? ` — ${problems.join('; ')}` : ''}`);
+    if (problems.length) failed = true;
+  }
+  // the header location switcher navigates (URL changes); it is not a filter
+  await go('/overview');
+  const wsSelect = window.document.querySelector('select[aria-label="Workspace"]');
+  wsSelect.value = WS; wsSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 800));
+  const teamSelect = window.document.querySelector('select[aria-label="Team"]');
+  const switched = window.location.pathname === `/workspaces/${WS}` && !!teamSelect;
+  if (teamSelect) { teamSelect.value = TEAM; teamSelect.dispatchEvent(new window.Event('change', { bubbles: true })); await new Promise((r) => setTimeout(r, 800)); }
+  const intoTeam = window.location.pathname === `/workspaces/${WS}/teams/${TEAM}`;
+  console.log(`${switched && intoTeam ? 'ok  ' : 'FAIL'} header location switcher navigates into the workspace, then the team (${window.location.pathname})`);
+  if (!(switched && intoTeam)) failed = true;
+  // long names: the sidebar product name ends in an ellipsis on one line, with the full name on hover
+  const brandName = [...window.document.querySelectorAll('aside span[title]')].find((el) => el.className.includes('truncate') && el.className.includes('text-lg'));
+  console.log(`${brandName ? 'ok  ' : 'FAIL'} sidebar product name truncates with a title`);
+  if (!brandName) failed = true;
+
   // the sidebar's Documentation link opens the public site from config.json in a new tab
   window.history.pushState({}, '', '/overview'); window.dispatchEvent(new window.PopStateEvent('popstate'));
   await new Promise((resolve) => setTimeout(resolve, 800));

@@ -1,5 +1,4 @@
 import Label from "@/components/form/Label";
-import PageBreadcrumb from "@/components/common/PageBreadCrumb";
 import PageMeta from "@/components/common/PageMeta";
 import Badge from "@/components/ui/badge/Badge";
 import { Modal } from "@/components/ui/modal";
@@ -47,7 +46,6 @@ export default function AdminUsersPage() {
   return (
     <>
       <PageMeta title={`Users · ${productName}`} description="Cell administration: users" />
-      <PageBreadcrumb pageTitle="Users" />
       <Card
         title="Users of this cell"
         description="Everyone who can sign in or has been invited, and the service accounts. Administrators see and can do everything; users only where they hold a role."

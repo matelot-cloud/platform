@@ -26,6 +26,9 @@ const ORG = '11111111-1111-4111-8111-111111111111';
 const WS = '22222222-2222-4222-8222-222222222222';
 const TEAM = '33333333-3333-4333-8333-333333333333';
 const PROJECT = '44444444-4444-4444-8444-444444444444';
+const NEW_WS = '88888888-8888-4888-8888-888888888881';
+const NEW_TEAM = '88888888-8888-4888-8888-888888888882';
+const NEW_PROJECT = '88888888-8888-4888-8888-888888888883';
 const now = new Date().toISOString();
 // the seeded admin of the review: no first / last name in Keycloak
 const me = { id: 'u1', email: 'ciso@globex.test', displayName: null, lastLoginAt: now, platformRole: 'admin' };
@@ -69,6 +72,10 @@ globalThis.fetch = window.fetch = async (input, init) => {
     if (key === '/api/v1/members') return json({ added: body.emails.map((e) => ({ membershipId: 'n', email: e, role: body.role, updated: false })), skipped: [], invited: [{ email: 'new@globex.test', setupLink: 'http://localhost:5173/invite/tok123', emailed: false, viaIdentityProvider: false }] });
     if (key === '/api/v1/scope-access-tokens') { serviceAccounts = [{ id: 'sa1', name: body.name, username: 'bot-ci@x.invalid', description: null, ownerScopeType: 'PROJECT', ownerScopeId: PROJECT, disabled: false, createdAt: now, activeTokens: 1, memberships: [{ role: body.role, scopeType: 'PROJECT', scopeId: PROJECT, expiresAt: null }] }]; return json({ serviceAccount: serviceAccounts[0], token: { id: 't1', name: body.name, scope: body.scope, prefix: 'spt_abcd', expiresAt: '2027-01-01T00:00:00Z', expired: false, lastUsedAt: null, lastUsedIp: null, revokedAt: null, source: 'service_account', createdAt: now, token: 'spt_SECRET-shown-once' } }); }
     if (key === '/api/v1/invites/tok123') return json({ email: 'new@globex.test', signInUrl: 'http://localhost:5173/' });
+    // first-run structure: the created node is added to the lists the app reads
+    if (key === `/api/v1/organizations/${ORG}/workspaces`) { const ws = { id: NEW_WS, organizationId: ORG, slug: body.slug, name: body.name, description: null, createdAt: now, updatedAt: now }; routes[key] = [...routes[key], ws]; return json(ws); }
+    if (key === `/api/v1/workspaces/${NEW_WS}/teams`) { const t = { id: NEW_TEAM, slug: body.slug, name: body.name, description: null, createdAt: now, updatedAt: now, workspaceId: NEW_WS, workspaceSlug: 'mobile', workspaceName: 'Mobile' }; routes[`/api/v1/organizations/${ORG}/teams`] = [...routes[`/api/v1/organizations/${ORG}/teams`], t]; return json(t); }
+    if (key === `/api/v1/teams/${NEW_TEAM}/projects`) { const pr = { id: NEW_PROJECT, slug: body.slug, name: body.name, description: null, criticality: body.criticality, createdAt: now, updatedAt: now, teamId: NEW_TEAM, teamSlug: 'apps', teamName: 'Apps team', workspaceId: NEW_WS, workspaceSlug: 'mobile', workspaceName: 'Mobile' }; routes[`/api/v1/organizations/${ORG}/projects`] = [...routes[`/api/v1/organizations/${ORG}/projects`], pr]; return json(pr); }
     if (key === '/api/v1/admin/users/u7/reset-password') return json({ temporaryPassword: false, setupLink: 'http://localhost:5173/invite/reset456', emailed: false });
     return json({});
   }
@@ -163,13 +170,13 @@ try {
 
   // ---- team and workspace pages exist; read-only when the caller cannot manage
   await go(`/workspaces/${WS}/teams/${TEAM}/members`);
-  check(text().includes('team Backend') && text().includes('lead@globex.test') && !!button('Invite members'), 'team members page');
+  check(text().includes('Members — Backend (team)') && text().includes('lead@globex.test') && !!button('Invite members'), 'team members page');
   await go(`/workspaces/${WS}/members`);
   check(text().includes('Inherited from organization Globex') && !button('Invite members'), 'workspace page: inherited only, no invite without membership:write');
   await go(`/workspaces/${WS}/projects`);
   click(buttons().find((b) => text(b).trim().startsWith('Backend') && b.className.includes('ps-12')));
   await settle();
-  check([...window.document.querySelectorAll('a')].some((a) => a.getAttribute('href') === `/workspaces/${WS}/teams/${TEAM}/members` && a.textContent.includes('Team members')), 'selected team links to its members');
+  check([...window.document.querySelectorAll('a')].some((a) => a.getAttribute('href') === `/workspaces/${WS}/teams/${TEAM}` && a.textContent.includes('Open team')), 'selected team links to the team');
 
   // ---- Administration → Users: people / service accounts, manage dialog, reset link
   await go('/admin/users');
@@ -189,6 +196,23 @@ try {
   click(dialog().querySelector('button[aria-label="Close"]'));
   await settle();
   check(!dialog(), 'the header close button closes the dialog');
+
+  // ---- first run: creating a workspace lands inside it with the next step, then team → project
+  const createNode = async (name, label) => { type(window.document.querySelector('#node-name'), name); await settle(200); click(button(label, dialog())); await settle(1200); };
+  await go('/projects');
+  click(button('New workspace'));
+  await settle();
+  await createNode('Mobile', 'Create workspace');
+  const step = () => text(window.document.querySelector('[data-testid="next-step"]'));
+  check(window.location.pathname === `/workspaces/${NEW_WS}` && step().includes('Create a team') && text().includes('Overview — Mobile (workspace)'), 'new workspace: inside it, next step "Create a team"');
+  click(button('Create a team'));
+  await settle();
+  await createNode('Apps team', 'Create team');
+  check(window.location.pathname === `/workspaces/${NEW_WS}/teams/${NEW_TEAM}` && step().includes('Create the first project of this team') && text().includes('Overview — Apps team (team)'), 'new team: inside it, next step "Create the first project"');
+  click(button('New project'));
+  await settle();
+  await createNode('Mobile app', 'Create project');
+  check(window.location.pathname === `/projects/${NEW_PROJECT}` && text().includes('Overview — Mobile app (project)') && [...window.document.querySelectorAll('nav[aria-label="Breadcrumb"] li')].map((li) => li.textContent.replace('›', '').trim()).join(' › ') === 'Globex › Mobile › Apps team › Mobile app › Overview', 'new project: inside it, full breadcrumb');
 
   // ---- one-time setup page (no sign-in)
   await go('/invite/tok123');

@@ -27,7 +27,7 @@ export default function UserDropdown() {
     <div className="relative">
       <button onClick={() => setIsOpen((prev) => !prev)} className="dropdown-toggle flex items-center text-gray-700 dark:text-gray-400" aria-label="Account">
         <span className="me-3 flex h-11 w-11 items-center justify-center rounded-full bg-brand-500 text-sm font-semibold text-white">{personInitials(person)}</span>
-        <span className="me-1 hidden max-w-48 truncate text-theme-sm font-medium sm:block" title={displayName}>{displayName}</span>
+        <span className="me-1 hidden max-w-48 truncate text-theme-sm font-medium sm:block xl:hidden 2xl:block" title={displayName}>{displayName}</span>
         <svg className={`stroke-gray-500 transition-transform duration-200 dark:stroke-gray-400 ${isOpen ? "rotate-180" : ""}`} width="18" height="20" viewBox="0 0 18 20" fill="none">
           <path d="M4.3125 8.65625L9 13.3437L13.6875 8.65625" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>

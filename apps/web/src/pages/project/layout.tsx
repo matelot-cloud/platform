@@ -4,9 +4,9 @@ import { useProjects, useServices } from "@/platform/api/hooks";
 import { useEffect, useMemo } from "react";
 import { setSelectedServiceId, useSelectedServiceId } from "@/platform/state/service-selection";
 import { OrganizationGate } from "@/platform/components/OrganizationGate";
-import { Card, CriticalityBadge, EmptyState, muted } from "@/platform/components/ui";
+import { Card, EmptyState, muted } from "@/platform/components/ui";
 import { useRuntimeConfig } from "@/platform/runtime-config";
-import { Link, Outlet, useOutletContext, useParams, useSearchParams } from "react-router";
+import { Outlet, useOutletContext, useParams, useSearchParams } from "react-router";
 
 export interface ProjectContext {
   organization: Organization;
@@ -42,18 +42,6 @@ function Shell({ organization, projectId }: { organization: Organization; projec
   return (
     <div className="space-y-6">
       {params.get("connected") && <div className="rounded-xl border border-success-500/30 bg-success-50 px-4 py-3 text-sm text-success-600 dark:bg-success-500/15 dark:text-success-500">GitHub connected to this project. Repositories are being synced; attach them to a service.</div>}
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div className="min-w-0">
-          <p className={`text-sm ${muted}`}>
-            <Link to={`/workspaces/${project.workspaceId}`} className="hover:text-brand-500">{project.workspaceName}</Link> / {project.teamName}
-          </p>
-          <h2 className="mt-1 flex items-center gap-3 text-xl font-semibold text-gray-800 dark:text-white/90">
-            {project.name} <CriticalityBadge value={project.criticality} />
-          </h2>
-          {project.description && <p className={`mt-1 text-sm ${muted}`}>{project.description}</p>}
-        </div>
-        {service && <p className={`text-sm ${muted}`}>Service: <span className="font-medium text-gray-800 dark:text-white/90">{service.name}</span> <span className="text-xs">(change it in the navbar)</span></p>}
-      </div>
       <Outlet context={{ organization, project, services, service, focusService, setServiceId } satisfies ProjectContext} />
     </div>
   );

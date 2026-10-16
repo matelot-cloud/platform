@@ -1,4 +1,3 @@
-import PageBreadcrumb from "@/components/common/PageBreadCrumb";
 import PageMeta from "@/components/common/PageMeta";
 import Badge from "@/components/ui/badge/Badge";
 import { useIntegrations, useNotificationCapabilities, useNotificationChannels, useOrganizationRepositories, useProjects, useProviders, useTeams, useWorkspaces } from "@/platform/api/hooks";
@@ -150,7 +149,6 @@ export default function ConnectionsPage() {
   return (
     <>
       <PageMeta title={`Connections · ${productName}`} description="Code hosts, registries, issue trackers and notification channels" />
-      <PageBreadcrumb pageTitle="Connections" />
       <OrganizationGate>{(organization) => <Connections key={organization.id} organization={organization} />}</OrganizationGate>
     </>
   );

@@ -1,5 +1,4 @@
 import { CodeBlock } from "@/platform/components/CodeBlock";
-import PageBreadcrumb from "@/components/common/PageBreadCrumb";
 import PageMeta from "@/components/common/PageMeta";
 import Label from "@/components/form/Label";
 import Badge from "@/components/ui/badge/Badge";
@@ -213,7 +212,6 @@ export default function NotificationsPage() {
   return (
     <>
       <PageMeta title={`Notifications · ${productName}`} description="Notification channels" />
-      <PageBreadcrumb pageTitle="Notifications" />
       <OrganizationGate>{(organization) => <Channels key={organization.id} organization={organization} />}</OrganizationGate>
     </>
   );

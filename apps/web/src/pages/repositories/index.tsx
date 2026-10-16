@@ -1,4 +1,3 @@
-import PageBreadcrumb from "@/components/common/PageBreadCrumb";
 import PageMeta from "@/components/common/PageMeta";
 import Badge from "@/components/ui/badge/Badge";
 import { isForbidden } from "@/platform/api/client";
@@ -80,7 +79,6 @@ export default function RepositoriesPage() {
   return (
     <>
       <PageMeta title={`Repositories · ${productName}`} description="Repository inventory" />
-      <PageBreadcrumb pageTitle="Repositories" />
       <OrganizationGate>{(organization) => <Repositories key={organization.id} organization={organization} />}</OrganizationGate>
     </>
   );

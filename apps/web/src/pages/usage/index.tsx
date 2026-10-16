@@ -1,4 +1,3 @@
-import PageBreadcrumb from "@/components/common/PageBreadCrumb";
 import PageMeta from "@/components/common/PageMeta";
 import Badge from "@/components/ui/badge/Badge";
 import { isForbidden } from "@/platform/api/client";
@@ -94,7 +93,6 @@ export default function UsagePage() {
   return (
     <>
       <PageMeta title={`Usage · ${productName}`} description="Seats, runner minutes and activity per month" />
-      <PageBreadcrumb pageTitle="Usage" />
       <OrganizationGate>{(organization) => <Usage key={organization.id} organization={organization} />}</OrganizationGate>
     </>
   );

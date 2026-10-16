@@ -10,6 +10,22 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 
+const TLS_CODES = new Set(['DEPTH_ZERO_SELF_SIGNED_CERT', 'SELF_SIGNED_CERT_IN_CHAIN', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY', 'UNABLE_TO_GET_ISSUER_CERT', 'CERT_HAS_EXPIRED', 'ERR_TLS_CERT_ALTNAME_INVALID', 'CERT_NOT_YET_VALID']);
+
+/** Why a fetch failed, from Node's cause: "DEPTH_ZERO_SELF_SIGNED_CERT (self signed certificate)" plus, for a
+ * certificate the OS may trust but Node does not (Node reads no OS trust store), the NODE_EXTRA_CA_CERTS hint. */
+export function unreachableDetail(error: unknown): string {
+  const cause = (error as { cause?: { code?: string; message?: string } }).cause;
+  const code = cause?.code;
+  const detail = code ? `${code}${cause?.message ? ` (${cause.message})` : ''}` : (error as Error).message;
+  return isTlsCode(code) ? `${detail} — Node does not read the OS trust store: for a private CA set NODE_EXTRA_CA_CERTS=/path/to/ca.crt (the kind recipe: ~/matelot-dev-ca.crt)` : detail;
+}
+
+export function isTlsCode(code: string | undefined): boolean {
+  return !!code && (TLS_CODES.has(code) || code.startsWith('ERR_TLS_'));
+}
+
+
 export const CLI_CLIENT_ID = 'matelot-cli';
 export const credentialsPath = () => process.env.MATELOT_CREDENTIALS ?? join(process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config'), 'matelot', 'credentials.json');
 
@@ -138,7 +154,7 @@ export function retryingFetch(f: typeof fetch, sleep: (ms: number) => Promise<vo
 export async function discover(base: string, f: typeof fetch): Promise<{ authorization_endpoint: string; token_endpoint: string }> {
   const u = `${base}/.well-known/oauth-authorization-server`;
   let res: Response;
-  try { res = await f(u); } catch (e) { throw new Error(`cannot reach ${u}: ${(e as Error).message}`); }
+  try { res = await f(u); } catch (e) { throw new Error(`cannot reach ${u}: ${unreachableDetail(e)}`); }
   const text = await res.text();
   let meta: { authorization_endpoint?: string; token_endpoint?: string };
   try { meta = JSON.parse(text); } catch {

@@ -4,6 +4,25 @@
 
 Images `ghcr.io/matelot-cloud/{api,web,worker,runner}` and the chart `oci://ghcr.io/matelot-cloud/charts/secops-cell`, signed, with SBOM attestations; install guide at https://matelot-cloud.github.io/website/docs/latest/install.html. The sections below are the drops that make up the release, newest first.
 
+### Header pickers are our own popover, not native selects; Team level in the switcher
+
+- The Workspace / Team / Project / Service pills (and Organization, Refresh) open a TailAdmin-style panel under the
+  pill — same surface, border, radius and shadow as the user menu, dark-mode aware — instead of a native `<select>`,
+  which Chrome painted with the OS look (white list, blue highlight) over the dark theme. Items show the name
+  (ellipsis, full name on hover) and the slug underneath; the current one carries a check; "All workspaces / All
+  projects" (or "Whole workspace / Whole team" inside a scope) sits first above a divider; a type-to-filter field
+  appears from 7 items. Keyboard: arrows, Home / End, Enter / Space, Escape (focus returns to the pill), Tab; click
+  outside closes. ARIA: `combobox` + `aria-expanded` / `aria-activedescendant`, `listbox` / `option` /
+  `aria-selected`. One component, `LocationPicker` in `platform/header/ContextSwitcher.tsx`, for every header picker;
+  no native select is left in the header (the render test asserts it).
+- **Team in the switcher** at every level: Workspace › Team › Project (› Service inside a project), each list scoped
+  to its parent — teams of the workspace, projects of the team, or of the workspace when no team is chosen.
+- Native controls that remain on pages (list filters, date fields, scrollbars) follow the theme through
+  `color-scheme: dark` on the dark root, so they no longer render with the OS light look.
+- Tests: the render test opens the picker, checks roles, the divider, the check mark, Escape and focus return, a
+  keyboard pick (ArrowDown → End → Enter navigates), the team list scoped to the workspace, a mouse pick into the team,
+  and click-outside. Checked in Chromium in light and dark mode at 1280 / 1440 px with the filter field.
+
 ### Navigation: you always know where you are (breadcrumb, scope card, titles, location switcher, team pages)
 
 - **Breadcrumb on every page**, full path and clickable: Organization › Workspace › Team › Project › (Service) ›

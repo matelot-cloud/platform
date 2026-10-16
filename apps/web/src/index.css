@@ -292,6 +292,10 @@
   }
 }
 
+/* native controls that remain on pages (select lists, date pickers, scrollbars) follow the theme instead of the OS */
+:root { color-scheme: light; }
+.dark { color-scheme: dark; }
+
 .dark .custom-scrollbar::-webkit-scrollbar-thumb {
   background-color: #344054;
 }

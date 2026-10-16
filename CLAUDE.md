@@ -122,7 +122,7 @@ mirror this layout exactly — nothing at the root that is not in the repository
   computed once in `src/platform/navigation/scope.tsx` (`useScopeLocation`: level, menu, page label, breadcrumb, tab
   title) and rendered by the app layout — breadcrumb + "Page — name (kind)" heading (`ScopeHeader`), sidebar scope card
   with "← Back to <parent>" (`AppSidebar`), tab title "Page · scope · Org", and the header location pills
-  (`src/platform/header/ContextSwitcher.tsx`, which navigate, never filter). Pages never render their own title or
+  (`src/platform/header/ContextSwitcher.tsx`, which navigate, never filter; its `LocationPicker` popover is the one picker for the header — no native `<select>` there). Pages never render their own title or
   breadcrumb; a new menu entry goes into `scope.tsx` and its label becomes the page title. New section = page under the right layout
   + hooks in `src/platform/api/hooks.ts`; respect 403 with an explanatory empty state.
 - Keep the Helm chart deployable with defaults on kind; anything production-only is a values switch. The Compose

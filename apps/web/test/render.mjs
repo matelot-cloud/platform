@@ -234,17 +234,19 @@ try {
     { target: '/overview', crumbs: ['ACME Corp', 'Overview'], links: ['/overview'], h1: 'Overview — ACME Corp (organization)', card: ['Organization', 'ACME Corp'], back: null, title: 'Overview · ACME Corp', pills: ['Workspace: All workspaces', 'Project: All projects'] },
     { target: '/members', crumbs: ['ACME Corp', 'Members'], links: ['/overview'], h1: 'Members — ACME Corp (organization)', card: ['Organization', 'ACME Corp'], back: null, title: 'Members · ACME Corp', pills: ['Workspace: All workspaces'] },
     { target: `/workspaces/${WS}/members`, crumbs: ['ACME Corp', 'Payments', 'Members'], links: ['/overview', `/workspaces/${WS}`], h1: 'Members — Payments (workspace)', card: ['Workspace', 'Payments'], back: 'Back to ACME Corp', title: 'Members · Payments · ACME Corp', pills: ['Workspace: Payments', 'Team: Select…', 'Project: Select…'] },
-    { target: `/workspaces/${WS}/teams/${TEAM}`, crumbs: ['ACME Corp', 'Payments', 'Backend', 'Overview'], links: ['/overview', `/workspaces/${WS}`, `/workspaces/${WS}/teams/${TEAM}`], h1: 'Overview — Backend (team)', card: ['Team', 'Backend'], back: 'Back to Payments', title: 'Overview · Backend · ACME Corp', pills: ['Workspace: Payments', 'Team: Backend'], menu: ['Overview', 'Members', 'Settings'] },
+    { target: `/workspaces/${WS}/teams/${TEAM}`, crumbs: ['ACME Corp', 'Payments', 'Backend', 'Overview'], links: ['/overview', `/workspaces/${WS}`, `/workspaces/${WS}/teams/${TEAM}`], h1: 'Overview — Backend (team)', card: ['Team', 'Backend'], back: 'Back to Payments', title: 'Overview · Backend · ACME Corp', pills: ['Workspace: Payments', 'Team: Backend', 'Project: Select…'], menu: ['Overview', 'Members', 'Settings'] },
     { target: `/workspaces/${WS}/teams/${TEAM}/members`, crumbs: ['ACME Corp', 'Payments', 'Backend', 'Members'], links: ['/overview', `/workspaces/${WS}`, `/workspaces/${WS}/teams/${TEAM}`], h1: 'Members — Backend (team)', card: ['Team', 'Backend'], back: 'Back to Payments', title: 'Members · Backend · ACME Corp', pills: ['Team: Backend'] },
-    { target: `/projects/${PROJECT}/members`, crumbs: ['ACME Corp', 'Payments', 'Backend', 'Payment API', 'Members'], links: ['/overview', `/workspaces/${WS}`, `/workspaces/${WS}/teams/${TEAM}`, `/projects/${PROJECT}`], h1: 'Members — Payment API (project)', card: ['Project', 'Payment API'], back: 'Back to Backend', title: 'Members · Payment API · ACME Corp', pills: ['Workspace: Payments', 'Project: Payment API', 'Service: All'], noPills: ['Team'] },
+    { target: `/projects/${PROJECT}/members`, crumbs: ['ACME Corp', 'Payments', 'Backend', 'Payment API', 'Members'], links: ['/overview', `/workspaces/${WS}`, `/workspaces/${WS}/teams/${TEAM}`, `/projects/${PROJECT}`], h1: 'Members — Payment API (project)', card: ['Project', 'Payment API'], back: 'Back to Backend', title: 'Members · Payment API · ACME Corp', pills: ['Workspace: Payments', 'Team: Backend', 'Project: Payment API', 'Service: All'] },
     { target: `/projects/${PROJECT}/pipelines/pipe1`, service: true, crumbs: ['ACME Corp', 'Payments', 'Backend', 'Payment API', 'Payment Service', 'Pipelines', 'Pipeline'], links: ['/overview', `/workspaces/${WS}`, `/workspaces/${WS}/teams/${TEAM}`, `/projects/${PROJECT}`, `/projects/${PROJECT}/services?service=${SERVICE}`, `/projects/${PROJECT}/pipelines`], h1: 'Pipeline — Payment API (project)', card: ['Project', 'Payment API'], back: 'Back to Backend', title: 'Pipeline · Payment API · ACME Corp', pills: ['Service: Payment Service'] },
     { target: '/account/tokens', crumbs: ['Your account', 'Access tokens'], links: [], h1: 'Access tokens — your account', card: ['Organization', 'ACME Corp'], back: 'Back to ACME Corp', title: 'Access tokens · ACME Corp', pills: [] },
   ];
   for (const c of navChecks) {
     await go(c.target);
     if (c.service) {
-      const sel = window.document.querySelector('select[aria-label="Service"]');
-      if (sel) { sel.value = SERVICE; sel.dispatchEvent(new window.Event('change', { bubbles: true })); }
+      const svc = window.document.querySelector('[data-location="Service"] [role="combobox"]');
+      svc?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 300));
+      [...window.document.querySelectorAll('[data-location="Service"] [role="option"]')].find((o) => o.textContent.includes('Payment Service'))?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
       await new Promise((r) => setTimeout(r, 600));
     }
     const doc = window.document;
@@ -263,23 +265,51 @@ try {
     if (c.menu) { const items = [...doc.querySelectorAll('aside nav li')].map(flat); if (JSON.stringify(items) !== JSON.stringify(c.menu)) problems.push(`menu ${JSON.stringify(items)}`); }
     await new Promise((r) => setTimeout(r, 300));
     if (doc.title !== c.title) problems.push(`document title "${doc.title}"`);
-    const pills = [...doc.querySelectorAll('[data-location]')].map((el) => { const c = el.cloneNode(true); c.querySelector('select')?.remove(); return flat(c); });
+    const pills = [...doc.querySelectorAll('[data-location] [role="combobox"]')].map(flat);
+    if (doc.querySelector('header select')) problems.push('a native <select> is still in the header');
     for (const p of c.pills) if (!pills.includes(p)) problems.push(`header location "${p}" not in ${JSON.stringify(pills)}`);
     for (const k of c.noPills ?? []) if (doc.querySelector(`[data-location="${k}"]`)) problems.push(`header shows ${k} inside a project`);
     console.log(`${problems.length ? 'FAIL' : 'ok  '} navigation context ${c.target}${problems.length ? ` — ${problems.join('; ')}` : ''}`);
     if (problems.length) failed = true;
   }
-  // the header location switcher navigates (URL changes); it is not a filter
+  // the header location switcher navigates (URL changes); it is not a filter — and it is our popover, not a native
+  // <select>: combobox + listbox roles, the current item checked, slugs under the names, Escape closes, keyboard picks
   await go('/overview');
-  const wsSelect = window.document.querySelector('select[aria-label="Workspace"]');
-  wsSelect.value = WS; wsSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 800));
-  const teamSelect = window.document.querySelector('select[aria-label="Team"]');
-  const switched = window.location.pathname === `/workspaces/${WS}` && !!teamSelect;
-  if (teamSelect) { teamSelect.value = TEAM; teamSelect.dispatchEvent(new window.Event('change', { bubbles: true })); await new Promise((r) => setTimeout(r, 800)); }
-  const intoTeam = window.location.pathname === `/workspaces/${WS}/teams/${TEAM}`;
-  console.log(`${switched && intoTeam ? 'ok  ' : 'FAIL'} header location switcher navigates into the workspace, then the team (${window.location.pathname})`);
-  if (!(switched && intoTeam)) failed = true;
+  const pill = (kind) => window.document.querySelector(`[data-location="${kind}"] [role="combobox"]`);
+  const key = (el, k) => el.dispatchEvent(new window.KeyboardEvent('keydown', { key: k, bubbles: true }));
+  const pause = (ms = 300) => new Promise((r) => setTimeout(r, ms));
+  const popProblems = [];
+  pill('Workspace').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  await pause();
+  const listbox = window.document.querySelector('[data-location="Workspace"] [role="listbox"]');
+  if (!listbox) popProblems.push('no listbox after clicking the pill');
+  if (pill('Workspace').getAttribute('aria-expanded') !== 'true') popProblems.push('aria-expanded not true when open');
+  const opts = [...(listbox?.querySelectorAll('[role="option"]') ?? [])];
+  if (opts.map(flat).join('|') !== 'All workspaces|Paymentspayments') popProblems.push(`options ${JSON.stringify(opts.map(flat))}`);
+  if (!opts[0]?.closest('li')?.className.includes('border-b')) popProblems.push('no divider under "All workspaces"');
+  if (opts[0]?.getAttribute('aria-selected') !== 'true' || !opts[0].querySelector('svg')) popProblems.push('current item ("All") not checked');
+  key(listbox, 'Escape'); await pause();
+  if (window.document.querySelector('[data-location="Workspace"] [role="listbox"]')) popProblems.push('Escape did not close');
+  if (window.document.activeElement !== pill('Workspace')) popProblems.push('focus did not return to the pill');
+  // keyboard: ArrowDown opens, End goes to the last item, Enter navigates
+  key(pill('Workspace'), 'ArrowDown'); await pause();
+  key(window.document.querySelector('[data-location="Workspace"] [role="listbox"]'), 'End'); await pause(100);
+  key(window.document.querySelector('[data-location="Workspace"] [role="listbox"]'), 'Enter'); await pause(800);
+  const switched = window.location.pathname === `/workspaces/${WS}`;
+  if (!switched) popProblems.push(`keyboard pick did not navigate (${window.location.pathname})`);
+  // mouse: the Team pill is scoped to the workspace; clicking an option navigates into the team
+  pill('Team')?.dispatchEvent(new window.MouseEvent('click', { bubbles: true })); await pause();
+  const teamOpts = [...window.document.querySelectorAll('[data-location="Team"] [role="option"]')].map(flat);
+  if (teamOpts.join('|') !== 'Whole workspace|Backendbackend') popProblems.push(`team options ${JSON.stringify(teamOpts)}`);
+  [...window.document.querySelectorAll('[data-location="Team"] [role="option"]')].find((o) => o.textContent.includes('Backend'))?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  await pause(800);
+  if (window.location.pathname !== `/workspaces/${WS}/teams/${TEAM}`) popProblems.push(`team click did not navigate (${window.location.pathname})`);
+  // click outside closes
+  pill('Project').dispatchEvent(new window.MouseEvent('click', { bubbles: true })); await pause();
+  window.document.body.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true })); await pause();
+  if (window.document.querySelector('[data-location="Project"] [role="listbox"]')) popProblems.push('click outside did not close');
+  console.log(`${popProblems.length ? 'FAIL' : 'ok  '} header location picker: popover, roles, keyboard, scoped lists, navigation${popProblems.length ? ` — ${popProblems.join('; ')}` : ''}`);
+  if (popProblems.length) failed = true;
   // long names: the sidebar product name ends in an ellipsis on one line, with the full name on hover
   const brandName = [...window.document.querySelectorAll('aside span[title]')].find((el) => el.className.includes('truncate') && el.className.includes('text-lg'));
   console.log(`${brandName ? 'ok  ' : 'FAIL'} sidebar product name truncates with a title`);

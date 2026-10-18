@@ -95,10 +95,11 @@ different role (a fixed role for `write` was tried first and kept breaking first
 | `registry:pull`, `gate:evaluate` | ✅ | ✅ | ✅ | pulling images, evaluating a gate |
 | `workspace:write`, `team:write`, `project:write`, `service:write`, `environment:write` | ❌ | ✅ | ✅ | creating and editing the structure |
 | `job:create`, `job:cancel`, `registry:push`, `sbom:write`, `release:write`, `deployment:write` | ❌ | ✅ | ✅ | running pipelines, pushing, recording releases |
+| `integration:connect` | ❌ | ✅ | ✅ | connecting a git host or registry to a project, team or workspace (at organization level also `organization:write`: an owner) |
 | `vulnerability:write`, `exception:write`, `policy:exception_request`, `evidence:write`, `risk:write`, `incident:write` | ❌ | ✅ | ✅ | deciding on findings, remediations, requesting exceptions |
 | `organization:write`, `organization:create_child` | ❌ | ❌ | ✅ | organization settings, renames, subsidiaries |
 | `membership:write` | ❌ | ❌ | ✅ | members and roles |
-| `integration:write`, `integration:connect` | ❌ | ❌ | ✅ | connections hold credentials |
+| `integration:write` | ❌ | ❌ | ✅ | changing or rotating credentials, disconnecting, syncing on demand, deleting a connection |
 | `policy:write` | ❌ | ❌ | ✅ | policies, notification channels, SLA settings |
 | `exception:approve`, `policy:exception_approve`, `risk:accept` | ❌ | ❌ | ✅ | accepting risk |
 | `compliance:write` | ❌ | ❌ | ✅ | frameworks and controls |
@@ -121,9 +122,10 @@ removes, it never adds.
 | create a workspace / team / project / service / environment | ❌ | ✅ | ✅ |
 | run a pipeline, push to the registry, upload an SBOM, record a release / deployment | ❌ | ✅ | ✅ |
 | decide on a finding, create / update a remediation, open an issue, request an exception | ❌ | ✅ | ✅ |
+| connect a git host / registry to a project, team or workspace | ❌ | ✅ | ✅ |
 | approve an exception, accept a risk | ❌ | ❌ | ✅ |
 | create a policy / notification channel, change SLA settings | ❌ | ❌ | ✅ |
-| grant a membership, connect an integration, organization settings, manage runner pools | ❌ | ❌ | ✅ |
+| grant a membership, connect at organization level, disconnect / rotate credentials, organization settings, manage runner pools | ❌ | ❌ | ✅ |
 | archive or delete anything | ❌ | ❌ | ✅ |
 
 The OAuth consent page (`/oauth/consent`) and `matelot_start_here` describe exactly this table.

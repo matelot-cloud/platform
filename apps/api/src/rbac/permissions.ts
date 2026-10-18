@@ -68,15 +68,16 @@ export type Permission = (typeof PERMISSIONS)[number];
  * except the administrative permissions below; `sudo` keeps all of it. So an organization administrator with the
  * default `write` login creates workspaces, projects and services, runs pipelines, pushes images, records releases and
  * deployments, decides on findings — and needs `sudo` only for members, organization settings, policies, approvals,
- * runner pools and connections. Archiving (the `*:write` of structure) stays reversible, so it is not sudo-only.
+ * runner pools, organization-wide connections and credential changes. Archiving (the `*:write` of structure) stays reversible, so it is not sudo-only.
  */
 export type TokenScope = 'read' | 'write' | 'sudo';
 export const SUDO_ONLY: ReadonlySet<Permission> = new Set<Permission>([
   'organization:write',        // organization settings, renames, archiving an organization
   'organization:create_child', // subsidiaries
   'membership:write',          // members and roles
-  'integration:write',         // connections hold credentials
-  'integration:connect',
+  'integration:write',         // changing / rotating credentials, disconnecting, syncing on demand, deleting
+  // 'integration:connect' is day-to-day work (attach a git host or registry to a project / team / workspace) and stays
+  // in `write`; at ORGANIZATION level creating a connection additionally needs `organization:write` (an owner, sudo)
   'policy:write',              // organization-wide rules, notification channels, SLA settings
   'policy:exception_approve',
   'exception:approve',

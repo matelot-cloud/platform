@@ -34,20 +34,22 @@ export const ACTIONS: Record<string, Permission> = {
   'request an exception': 'exception:write',
   'upload an SBOM': 'sbom:write',
   'see runners (pools, managed runners online)': 'runner:read',
+  'connect a git host / registry to a project, team or workspace': 'integration:connect',
   // administrative: sudo only
   'approve an exception': 'exception:approve',
   'create a policy': 'policy:write',
   'create a notification channel': 'policy:write',
   'change SLA settings': 'policy:write',
   'grant a membership': 'membership:write',
-  'connect an integration (credentials)': 'integration:connect',
+  'connect an integration at organization level (inherited by every project)': 'organization:write',
+  'disconnect / rotate credentials / delete a connection': 'integration:write',
   'organization settings': 'organization:write',
   'manage runner pools': 'runner:write',
   'accept a risk': 'risk:accept',
 };
-const DAY_TO_DAY = ['create a workspace', 'create a team', 'create a project / service / environment', 'run a pipeline', 'push to the registry', 'evaluate a gate', 'record a release / deployment', 'decide on a finding', 'create / update a remediation, open an issue', 'request an exception', 'upload an SBOM'];
+const DAY_TO_DAY = ['create a workspace', 'create a team', 'create a project / service / environment', 'run a pipeline', 'push to the registry', 'evaluate a gate', 'record a release / deployment', 'decide on a finding', 'create / update a remediation, open an issue', 'request an exception', 'upload an SBOM', 'connect a git host / registry to a project, team or workspace'];
 const READS = ['read findings / gates / evidence', 'pull from the registry', 'evaluate a gate', 'see runners (pools, managed runners online)'];
-const ADMIN = ['approve an exception', 'create a policy', 'create a notification channel', 'change SLA settings', 'grant a membership', 'connect an integration (credentials)', 'organization settings', 'manage runner pools', 'accept a risk'];
+const ADMIN = ['approve an exception', 'create a policy', 'create a notification channel', 'change SLA settings', 'grant a membership', 'connect an integration at organization level (inherited by every project)', 'disconnect / rotate credentials / delete a connection', 'organization settings', 'manage runner pools', 'accept a risk'];
 const row = (allowed: string[]) => Object.fromEntries(Object.keys(ACTIONS).map((a) => [a, allowed.includes(a)]));
 /** read = reads only · write = everything but the administrative row · sudo = all. Mirrors the consent page and docs/roles.md. */
 export const EXPECTED: Record<'read' | 'write' | 'sudo', Record<string, boolean>> = {
@@ -68,7 +70,7 @@ describe('token scope × action matrix (expectations)', () => {
       if (p.endsWith(':write')) expect(scopeAllows('read', p)).toBe(false);
     }
     // the administrative set is exactly what the docs/roles.md table lists as sudo-only
-    expect([...SUDO_ONLY].sort()).toEqual(['compliance:write', 'exception:approve', 'integration:connect', 'integration:write', 'membership:write', 'organization:create_child', 'organization:write', 'policy:exception_approve', 'policy:write', 'risk:accept', 'runner:write']);
+    expect([...SUDO_ONLY].sort()).toEqual(['compliance:write', 'exception:approve', 'integration:write', 'membership:write', 'organization:create_child', 'organization:write', 'policy:exception_approve', 'policy:write', 'risk:accept', 'runner:write']);
   });
   it('the method half: read tokens are safe-method only, write tokens cannot DELETE (archive / remove), sudo can; MCP transport exempt', () => {
     expect(methodRefusedForScope('read', 'GET', false)).toBeNull();

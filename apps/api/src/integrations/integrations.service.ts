@@ -542,6 +542,9 @@ export class IntegrationsService {
     }
     const ctx = await this.access.forUser(user.id);
     this.authz.assert(ctx, 'integration:connect', chain);
+    // an organization-wide connection is inherited by every project: only an organization owner (ORG_ADMIN — sudo or
+    // the web session) creates one; below the organization a write token of a developer / team lead is enough
+    if (!scopeType || scopeType === 'ORGANIZATION') this.authz.assert(ctx, 'organization:write', orgChain);
     return chain;
   }
 
@@ -655,7 +658,7 @@ export class IntegrationsService {
   /** Keeps the row (and its repositories) but forgets the credentials; keyless parameters stay visible in settings. */
   async disconnect(user: AuthenticatedUser, integrationId: string) {
     const integration = await this.get(integrationId);
-    await this.assertOn(user, integration, 'integration:connect');
+    await this.assertOn(user, integration, 'integration:write');
     if (integration.status === 'disconnected') return publicView(integration);
     let params: Record<string, string> | null = null;
     try { params = keylessParams(this.sourceSync.credentialsOf(integration)); } catch { params = null; }

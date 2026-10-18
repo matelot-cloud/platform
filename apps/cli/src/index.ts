@@ -7,8 +7,9 @@ import { signatureHeader } from './signing';
 import { readZip } from './zip-read';
 import { registryInfoText, type RegistryInfo } from './registry-info';
 import { membersSummary } from './members-text';
+import { serviceText, type ServiceSummary } from './service-text';
 import { credentialsPath, discoveryMismatch, freshToken, listCells, login, logout, normalizeCellUrl, resolveCellUrl, setCurrentCell } from './login';
-import { FIELD_FLAGS, PARAM_FLAGS, policyRulesFromFlags, RESOURCES, RULE_FLAGS, SCOPE_SEGMENTS, slaDaysFromFlags } from './resources';
+import { FIELD_FLAGS, PARAM_FLAGS, policyRulesFromFlags, RESOURCES, RULE_FLAGS, RULE_NO_FLAGS, rulesSummary, SCOPE_SEGMENTS, slaDaysFromFlags } from './resources';
 
 const sum = (c?: Record<string, number> | null) => (c ? Object.values(c).reduce((a, b) => a + b, 0) : 0);
 interface GateResult { result: 'pass' | 'warn' | 'fail'; pending?: boolean; correlation?: { status: string; error: string | null; waitedMs: number } | null; violations: { policyName: string; action: string; message: string }[]; policies: { name: string }[]; facts: { sbomId: string | null; findings: Record<string, number> | null; kevOpen: number | null; secretsOpen: number; iacOpen?: Record<string, number> | null; sastOpen?: Record<string, number> | null } }
@@ -49,7 +50,7 @@ Commands
 
 Resource commands (matelot <resource> <verb> [--org|--workspace|--team|--project|--service|--env|--id …] [--json] [--body '{json}']):
 ${RESOURCES.map((r) => `  ${`${r.resource} ${r.verb}`.padEnd(26)} ${r.summary}`).join('\n')}
-  Policy rule flags: --max-severity high|none --block-kev --block-secrets --require-sbom --max-iac high --honour-decisions --environments production,staging --action block|warn --enforce
+  Policy rule flags: --max-severity high|none --block-kev --block-secrets --require-sbom --max-iac high --max-sast high --honour-decisions (each with a --no-… form; create sends every rule, block rules off unless given) --environments production,staging --action block|warn --enforce
 
 Options: --json (raw output), --quiet
 `;
@@ -518,7 +519,7 @@ async function runResource(resource: string, positional: string[], flags: Record
   }
   // fields from flags
   // Unknown flags are an error, not silently ignored (a typo like --enforced must not create a policy without enforcement)
-  const known = new Set<string>(['json', 'quiet', 'body', 'help', 'wait', 'timeout', 'force', 'limit', 'offset', 'q', ...Object.keys(PARAM_FLAGS), ...RULE_FLAGS, 'component', 'project', ...(cmd.fields ?? []), ...Object.entries(FIELD_FLAGS).filter(([, v]) => (cmd.fields ?? []).includes(v)).map(([k]) => k), ...(('query' in cmd ? (cmd as { query?: string[] }).query : undefined) ?? [])]);
+  const known = new Set<string>(['json', 'quiet', 'body', 'help', 'wait', 'timeout', 'force', 'limit', 'offset', 'q', ...Object.keys(PARAM_FLAGS), ...RULE_FLAGS, ...RULE_NO_FLAGS, 'component', 'project', ...(cmd.fields ?? []), ...Object.entries(FIELD_FLAGS).filter(([, v]) => (cmd.fields ?? []).includes(v)).map(([k]) => k), ...(('query' in cmd ? (cmd as { query?: string[] }).query : undefined) ?? [])]);
   if (cmd.fields?.includes('slaDays')) for (const k of ['critical', 'high', 'medium', 'low', 'unknown']) known.add(k);
   const unknown = Object.keys(flags).filter((k) => !known.has(k));
   if (unknown.length) throw new CliError(`unknown flag${unknown.length === 1 ? '' : 's'} for "matelot ${resource} ${verb}": ${unknown.map((k) => '--' + k).join(', ')} (run matelot ${resource} ${verb} --help)`);
@@ -535,7 +536,7 @@ async function runResource(resource: string, positional: string[], flags: Record
   // --body '{...}': raw JSON merged last — nested fields (auth, rules, settings) exactly as the web app sends them
   if (typeof flags.body === 'string') { try { Object.assign(payload, JSON.parse(flags.body)); } catch { throw new CliError('--body must be valid JSON'); } }
   for (const b of ['protected', 'internetFacing', 'enforceOnDeploy', 'enabled', 'scanOnPush', 'immutableTags']) if (typeof payload[b] === 'string') payload[b] = payload[b] === 'true';
-  if (cmd.fields?.includes('rules')) { const rules = policyRulesFromFlags(flags); if (rules) payload.rules = rules; }
+  if (cmd.fields?.includes('rules')) { const rules = policyRulesFromFlags(flags, cmd.method === 'POST' ? 'create' : 'update'); if (rules) payload.rules = rules; }
   if (cmd.fields?.includes('slaDays')) { const sla = slaDaysFromFlags(flags); if (sla) payload.slaDays = sla; }
   if (cmd.fields?.includes('dueAt') && typeof payload.dueAt === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(payload.dueAt)) payload.dueAt = `${payload.dueAt}T23:59:59Z`;
   let url = path;
@@ -546,12 +547,17 @@ async function runResource(resource: string, positional: string[], flags: Record
   if (typeof res === 'string' && !flags.json) { process.stdout.write(res.endsWith('\n') ? res : `${res}\n`); return true; } // CSV and other text
   if (resource === 'registry' && verb === 'info' && !flags.json && res && typeof res === 'object') { console.log(registryInfoText(res as RegistryInfo)); return true; }
   if (resource === 'usage' && !flags.json && res && typeof res === 'object') { console.log(usageText(res as UsageReport)); return true; }
+  if (resource === 'service' && verb === 'show' && !flags.json && res && typeof res === 'object') { console.log(serviceText(res as ServiceSummary)); return true; }
   if (resource === 'onboarding' && !flags.json && res && typeof res === 'object') { console.log(onboardingText(res as OnboardingReport, verb)); return true; }
   if (resource === 'coverage' && !flags.json && res && typeof res === 'object') { console.log(coverageText(res as CoverageReport, flags.uncovered === true || flags.uncovered === 'true')); return true; }
   const summary = flags.json ? null : connectionSummary(resource, verb, res) ?? membersSummary(resource, verb, res);
   if (summary !== null) { if (!flags.quiet) console.log(summary); return true; }
   if (flags.json || !Array.isArray(res) && !(res && typeof res === 'object' && Array.isArray((res as Record<string, unknown>).tokens))) console.log(JSON.stringify(res, null, 2));
-  else table((Array.isArray(res) ? res : (res as { tokens: Record<string, unknown>[] }).tokens) as Record<string, unknown>[], cmd.columns);
+  else {
+    let rows = (Array.isArray(res) ? res : (res as { tokens: Record<string, unknown>[] }).tokens) as Record<string, unknown>[];
+    if (resource === 'policies') rows = rows.map((r) => ({ ...r, rules: rulesSummary(r.rules as Record<string, unknown> | null) }));
+    table(rows, cmd.columns);
+  }
   if (cmd.failWhen && get(res, cmd.failWhen.field) === cmd.failWhen.equals) { process.exitCode = 2; return true; }
   if (!flags.quiet) keylessHint(resource, verb, res);
   return true;

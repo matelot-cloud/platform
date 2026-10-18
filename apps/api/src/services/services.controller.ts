@@ -38,6 +38,13 @@ export class ServicesController {
     return this.services.get(chain);
   }
 
+  /** The service with its latest pipeline, open finding counts and newest SBOM — one call instead of four. */
+  @Get('services/:serviceId/summary')
+  @RequirePermission('vulnerability:read')
+  summary(@Scope() chain: ScopeChain) {
+    return this.services.summary(chain);
+  }
+
   @Patch('services/:serviceId')
   @RequirePermission('service:write')
   update(@CurrentUser() user: AuthenticatedUser, @Scope() chain: ScopeChain, @Body() dto: UpdateServiceDto) {

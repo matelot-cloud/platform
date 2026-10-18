@@ -79,7 +79,7 @@ Form: `matelot <resource> <verb> [flags]`.
 
 | Command | API | Does |
 |---|---|---|
-| `matelot service show` | `GET /services/:service` | Service details |
+| `matelot service show` | `GET /services/:service/summary` | The service with its latest pipeline (jobs), open findings by severity (+ KEV), open code findings and newest SBOM — one call for CI scripts (`--json`) |
 
 ### envs
 
@@ -215,7 +215,7 @@ Form: `matelot <resource> <verb> [flags]`.
 
 | Command | API | Does |
 |---|---|---|
-| `matelot policy create` | `POST /organizations/:org/policies` | Create at the organization (--name --environments prod,staging --max-severity high --block-kev --block-secrets --require-sbom --max-iac high --action block|warn --enforce) |
+| `matelot policy create` | `POST /organizations/:org/policies` | Create at the organization (--name --environments prod,staging --max-severity high --block-kev --block-secrets --require-sbom --max-iac SEV --max-sast SEV --action block|warn --enforce; every rule is explicit: a block rule is off unless given, --no-block-secrets etc. turn one off) |
 | `matelot policy create-project` | `POST /projects/:project/policies` | Create at a project (same flags) |
 | `matelot policy update` | `PATCH /policies/:id` | Update (--enabled true|false, --action, --enforce, rule flags) |
 | `matelot policy delete` | `DELETE /policies/:id` | Delete a policy |
@@ -399,7 +399,7 @@ Form: `matelot <resource> <verb> [flags]`.
 
 ## Policy rule flags
 
-`--name`, `--description`, `--environments production,staging` (empty = all), `--max-severity critical|high|medium|low|none`, `--block-kev [false]`, `--block-secrets [false]`, `--require-sbom [false]`, `--max-iac critical|high|medium|low`, `--honour-decisions [false]`, `--action block|warn`, `--enforce [false]`.
+`--name`, `--description`, `--environments production,staging` (empty = all), `--max-severity critical|high|medium|low|none`, `--block-kev` / `--no-block-kev`, `--block-secrets` / `--no-block-secrets`, `--require-sbom` / `--no-require-sbom`, `--max-iac critical|high|medium|low|none`, `--max-sast …`, `--honour-decisions` / `--no-honour-decisions`, `--action block|warn`, `--enforce [false]`.
 
 ```bash
 matelot policy create --name "Production baseline" --environments production --max-severity high --block-kev --block-secrets --require-sbom --action block --enforce
@@ -407,6 +407,13 @@ matelot policy create-project --project $PROJ --name "Dev advisory" --environmen
 matelot policy update --id $POLICY --enabled false
 matelot policies in-force --project $PROJ
 ```
+
+**Every rule is explicit.** `policy create` sends all seven rules: a block rule you did not ask for is **off**
+(`--max-severity high --block-kev` blocks on severity and KEV, nothing else — no surprise `block_secrets` violation),
+decisions are honoured unless `--no-honour-decisions`. `policy update` sends only the flags you give; `--no-…` turns a
+rule off. `policies list` and `policies in-force` show the rules of each policy in one column
+(`max high · kev · secrets · sbom · iac medium`). The API behaves the same for a new policy: a boolean rule missing
+from `rules` is off; the web form shows every rule as a checkbox.
 
 ## Examples
 

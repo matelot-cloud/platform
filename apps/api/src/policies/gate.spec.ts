@@ -35,6 +35,9 @@ describe('partial rules objects', () => {
     const { evaluateGate, normalizeRules } = require('./gate') as typeof import('./gate');
     const zero = { critical: 0, high: 0, medium: 0, low: 0, unknown: 0 };
     expect(normalizeRules({ maxSastSeverity: 'low' } as never)).toEqual({ maxSeverity: null, blockKev: true, blockSecrets: true, maxIacSeverity: null, maxSastSeverity: 'low', requireSbom: true, honourDecisions: true });
+    // a NEW policy is explicit: block rules the caller did not ask for are off (the review's `--max-severity high --block-kev` must not block secrets)
+    const { CREATE_DEFAULTS } = require('./gate') as typeof import('./gate');
+    expect(normalizeRules({ maxSeverity: 'high', blockKev: true } as never, CREATE_DEFAULTS)).toEqual({ maxSeverity: 'high', blockKev: true, blockSecrets: false, maxIacSeverity: null, maxSastSeverity: null, requireSbom: false, honourDecisions: true });
     const pol = { id: 'p', name: 'Partial', action: 'block' as const, environmentKinds: [], rules: { maxSastSeverity: 'low' }, enforceOnDeploy: true };
     const ev = evaluateGate([pol as never], { environmentKind: 'production', hasSbom: true, findings: { ...zero, high: 76 }, kevOpen: 0, secretsOpen: 0, iacOpen: zero, sastOpen: { ...zero, low: 1 } });
     expect(ev.violations.map((v) => v.rule)).toEqual(['max_sast_severity']);   // 76 high are NOT a max_severity violation: no limit set

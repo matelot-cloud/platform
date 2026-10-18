@@ -4,6 +4,30 @@
 
 Images `ghcr.io/matelot-cloud/{api,web,worker,runner}` and the chart `oci://ghcr.io/matelot-cloud/charts/secops-cell`, signed, with SBOM attestations; install guide at https://matelot-cloud.github.io/website/docs/latest/install.html. The sections below are the drops that make up the release, newest first.
 
+### From the end-to-end pipeline test: connect with a write token, explicit policy rules, service summary, job names, secret detectors
+
+- **`integration:connect` is day-to-day work.** It left the sudo-only set: a developer's / team lead's `write` token
+  (or a service account) connects a git host or registry to a project, team or workspace. Creating an
+  **organization-wide** connection additionally needs `organization:write` — an owner, sudo or the web session.
+  Disconnecting (forgetting credentials), rotating credentials, on-demand sync and deletion stay `integration:write`
+  (sudo). The token-scope matrix spec, the consent page, the MCP guidance and docs/roles.md say so.
+- **Policy rules are explicit.** `matelot policy create` sends all seven rules: a block rule not asked for is off
+  (`--max-severity high --block-kev --action block --enforce` no longer produces a `block_secrets` violation),
+  `--honour-decisions` defaults to on; every boolean flag has a `--no-…` form; `policy update` sends only the flags
+  given. The API's create fills a missing boolean rule with **off** too (`CREATE_DEFAULTS`); rows stored before keep
+  reading missing rules as the old defaults so an existing policy blocks what it blocked. `policies list` /
+  `in-force` show the rules in one column ("max high · kev · secrets · sbom").
+- **`GET /services/:id/summary`** (`vulnerability:read`): the service with its latest pipeline and jobs, open
+  findings by severity (+ KEV, running ones), open code findings by kind and the newest SBOM — one call.
+  **CLI 2.24.0:** `matelot service show` reads it and prints five lines (pipeline #, status, ref, jobs with the error
+  of a failed one; open findings; code findings; latest SBOM); `--json` for scripts.
+- **docs/ci-integration.md:** the pipeline jobs table uses the names the API and CLI report (checkout, sbom,
+  dependencies, code, secrets, infrastructure, evaluate) with the job type beside them, and a new section lists what
+  the secrets job detects — checked with trivy 0.74.0 (the runner image's version) and the runner's exact command on
+  a planted repository: the AWS documentation example pair is on trivy's allow list, the AWS secret key fires only
+  with its keyword on the line, `ghp_` needs exactly 36 characters, and `test(s)/`, `example(s)/`, `vendor/`,
+  `node_modules/` and `*.md` are skipped. With random-looking values all three planted secrets are reported.
+
 ### Fix: cell-provision `apply` waited for "N pods ready", not for the rollout
 
 - One second after `helm upgrade` returned the wait printed "all workloads ready (pods 7/8 ready) · waiting:

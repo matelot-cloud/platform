@@ -82,7 +82,7 @@ export const RESOURCES: ResourceCommand[] = [
   { resource: 'project', verb: 'overview', method: 'GET', path: '/api/v1/projects/:project/overview', summary: 'Project overview' },
   { resource: 'services', verb: 'list', method: 'GET', path: '/api/v1/projects/:project/services', summary: 'Services of a project', columns: ['id', 'slug', 'name', 'criticality'] },
   { resource: 'services', verb: 'list-org', method: 'GET', path: '/api/v1/organizations/:org/services', summary: 'Services of the organization', columns: ['id', 'slug', 'name', 'projectId'] },
-  { resource: 'service', verb: 'show', method: 'GET', path: '/api/v1/services/:service', summary: 'Service details' },
+  { resource: 'service', verb: 'show', method: 'GET', path: '/api/v1/services/:service/summary', summary: 'The service with its latest pipeline (jobs), open findings by severity (+ KEV), open code findings and newest SBOM — one call for CI scripts (--json)' },
   { resource: 'envs', verb: 'list', method: 'GET', path: '/api/v1/services/:service/environments', summary: 'Environments of a service', columns: ['id', 'slug', 'name', 'kind', 'internetFacing'] },
   { resource: 'env', verb: 'show', method: 'GET', path: '/api/v1/environments/:env', summary: 'Environment details' },
   { resource: 'env', verb: 'registry', method: 'GET', path: '/api/v1/environments/:env/registry', summary: 'Environment repository in the built-in registry' },
@@ -120,9 +120,9 @@ export const RESOURCES: ResourceCommand[] = [
   { resource: 'risk', verb: 'recompute', method: 'POST', path: '/api/v1/organizations/:org/risk/recompute', summary: 'Recompute risk now' },
   { resource: 'graph', verb: 'show', method: 'GET', path: '/api/v1/projects/:project/graph', summary: 'Product map (nodes + edges)' },
   // ---- policies & gate
-  { resource: 'policies', verb: 'list', method: 'GET', path: '/api/v1/organizations/:org/policies', summary: 'Policies of the organization', columns: ['id', 'name', 'scopeType', 'environmentKinds', 'action', 'enforceOnDeploy', 'enabled'] },
-  { resource: 'policies', verb: 'in-force', method: 'GET', path: '/api/v1/projects/:project/policies', summary: 'Policies in force on a project (own + inherited)', columns: ['id', 'name', 'scopeType', 'action', 'inherited'] },
-  { resource: 'policy', verb: 'create', method: 'POST', path: '/api/v1/organizations/:org/policies', summary: 'Create at the organization (--name --environments prod,staging --max-severity high --block-kev --block-secrets --require-sbom --max-iac SEV --max-sast SEV high --action block|warn --enforce)', fields: ['name', 'description', 'environmentKinds', 'rules', 'action', 'enforceOnDeploy'] },
+  { resource: 'policies', verb: 'list', method: 'GET', path: '/api/v1/organizations/:org/policies', summary: 'Policies of the organization', columns: ['id', 'name', 'scopeType', 'environmentKinds', 'rules', 'action', 'enforceOnDeploy', 'enabled'] },
+  { resource: 'policies', verb: 'in-force', method: 'GET', path: '/api/v1/projects/:project/policies', summary: 'Policies in force on a project (own + inherited)', columns: ['id', 'name', 'scopeType', 'rules', 'action', 'inherited'] },
+  { resource: 'policy', verb: 'create', method: 'POST', path: '/api/v1/organizations/:org/policies', summary: 'Create at the organization (--name --environments prod,staging --max-severity high --block-kev --block-secrets --require-sbom --max-iac SEV --max-sast SEV --action block|warn --enforce; every rule is explicit: a block rule is off unless given, --no-block-secrets etc. turn one off)', fields: ['name', 'description', 'environmentKinds', 'rules', 'action', 'enforceOnDeploy'] },
   { resource: 'policy', verb: 'create-project', method: 'POST', path: '/api/v1/projects/:project/policies', summary: 'Create at a project (same flags)', fields: ['name', 'description', 'environmentKinds', 'rules', 'action', 'enforceOnDeploy'] },
   { resource: 'policy', verb: 'update', method: 'PATCH', path: '/api/v1/policies/:id', summary: 'Update (--enabled true|false, --action, --enforce, rule flags)', fields: ['name', 'description', 'enabled', 'environmentKinds', 'rules', 'action', 'enforceOnDeploy'] },
   { resource: 'policy', verb: 'delete', method: 'DELETE', path: '/api/v1/policies/:id', summary: 'Delete a policy' },
@@ -249,21 +249,42 @@ export const FIELD_FLAGS: Record<string, string> = { 'owner-email': 'ownerEmail'
 /** `--scope projects/ID` (also organizations/ID, workspaces/ID, teams/ID, or `org` for the default organization) → scopeType + scopeId. */
 export const SCOPE_SEGMENTS: Record<string, 'ORGANIZATION' | 'WORKSPACE' | 'TEAM' | 'PROJECT'> = { organizations: 'ORGANIZATION', orgs: 'ORGANIZATION', workspaces: 'WORKSPACE', teams: 'TEAM', projects: 'PROJECT' };
 
-/** Build the `rules` object for policy commands from flags. */
-export function policyRulesFromFlags(f: Record<string, string | boolean>): Record<string, unknown> | undefined {
-  const keys = ['max-severity', 'block-kev', 'block-secrets', 'require-sbom', 'max-iac', 'max-sast', 'honour-decisions'];
-  // Only the flags given are returned (a PATCH must not overwrite the other rules with defaults); create fills defaults server-side.
-  if (!keys.some((k) => k in f)) return undefined;
-  const bool = (k: string, d: boolean) => (k in f ? f[k] !== 'false' && f[k] !== false : d);
+/**
+ * The `rules` object for policy commands from flags. Booleans: `--block-secrets` on, `--no-block-secrets` (or
+ * `--block-secrets false`) off. `create` sends every rule explicitly — a block rule is OFF unless asked for (the API
+ * would otherwise fill blockKev / blockSecrets / requireSbom with true, and the operator who typed only
+ * `--max-severity high --block-kev` got a secrets violation), `--honour-decisions` defaults to on; `update` sends only
+ * the flags given (a PATCH must not overwrite the other rules).
+ */
+export function policyRulesFromFlags(f: Record<string, string | boolean>, mode: 'create' | 'update' = 'update'): Record<string, unknown> | undefined {
+  const given = (k: string) => k in f || `no-${k}` in f;
+  if (mode === 'update' && !RULE_FLAGS.some(given)) return undefined;
+  const bool = (k: string, d: boolean) => (`no-${k}` in f ? false : k in f ? f[k] !== 'false' && f[k] !== false : d);
+  const sev = (k: string) => (typeof f[k] === 'string' && f[k] !== 'none' ? f[k] : null);
   const out: Record<string, unknown> = {};
-  if ('max-severity' in f) out.maxSeverity = typeof f['max-severity'] === 'string' && f['max-severity'] !== 'none' ? f['max-severity'] : null;
-  if ('block-kev' in f) out.blockKev = bool('block-kev', true);
-  if ('block-secrets' in f) out.blockSecrets = bool('block-secrets', true);
-  if ('require-sbom' in f) out.requireSbom = bool('require-sbom', true);
-  if ('honour-decisions' in f) out.honourDecisions = bool('honour-decisions', true);
-  if ('max-iac' in f) out.maxIacSeverity = typeof f['max-iac'] === 'string' && f['max-iac'] !== 'none' ? f['max-iac'] : null;
-  if ('max-sast' in f) out.maxSastSeverity = typeof f['max-sast'] === 'string' && f['max-sast'] !== 'none' ? f['max-sast'] : null;
+  const put = (k: string, field: string, v: unknown) => { if (mode === 'create' || given(k)) out[field] = v; };
+  put('max-severity', 'maxSeverity', sev('max-severity'));
+  put('block-kev', 'blockKev', bool('block-kev', false));
+  put('block-secrets', 'blockSecrets', bool('block-secrets', false));
+  put('require-sbom', 'requireSbom', bool('require-sbom', false));
+  put('honour-decisions', 'honourDecisions', bool('honour-decisions', true));
+  put('max-iac', 'maxIacSeverity', sev('max-iac'));
+  put('max-sast', 'maxSastSeverity', sev('max-sast'));
   return out;
+}
+
+/** One line for a policy's rules, as `policies list` shows them: "max critical · kev · secrets · sbom · iac high · decisions off". */
+export function rulesSummary(r: Record<string, unknown> | null | undefined): string {
+  if (!r) return '(defaults)';
+  const parts: string[] = [];
+  if (r.maxSeverity) parts.push(`max ${r.maxSeverity}`);
+  if (r.blockKev !== false) parts.push('kev');
+  if (r.blockSecrets !== false) parts.push('secrets');
+  if (r.requireSbom !== false) parts.push('sbom');
+  if (r.maxIacSeverity) parts.push(`iac ${r.maxIacSeverity}`);
+  if (r.maxSastSeverity) parts.push(`sast ${r.maxSastSeverity}`);
+  if (r.honourDecisions === false) parts.push('decisions off');
+  return parts.length ? parts.join(' · ') : 'no rule';
 }
 
 /** Build the `slaDays` object for `sla set` from --critical/--high/--medium/--low. */
@@ -297,3 +318,5 @@ export const CUSTOM_COMMANDS: { cmd: string; method: string; path: string }[] = 
 
 /** Rule flags accepted by policy commands (also used to reject unknown flags). */
 export const RULE_FLAGS = ['max-severity', 'block-kev', 'block-secrets', 'require-sbom', 'max-iac', 'max-sast', 'honour-decisions'];
+/** The `--no-…` forms of the boolean rule flags. */
+export const RULE_NO_FLAGS = RULE_FLAGS.filter((k) => !k.startsWith('max-')).map((k) => `no-${k}`);

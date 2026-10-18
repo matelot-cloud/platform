@@ -23,7 +23,7 @@ Every CLI release attaches the npm package to a GitHub Release there:
 
 ```bash
 npm install -g https://github.com/matelot-cloud/setup-cli/releases/latest/download/matelot-cli.tgz          # newest release
-npm install -g https://github.com/matelot-cloud/setup-cli/releases/download/v2.23.2/matelot-cli-2.23.2.tgz  # pinned
+npm install -g https://github.com/matelot-cloud/setup-cli/releases/download/v2.24.0/matelot-cli-2.24.0.tgz  # pinned
 ```
 
 Do not install with the `github:<owner>/<repo>` git form: npm 10 links such an install to its temporary clone
@@ -31,7 +31,7 @@ and then deletes it, so `matelot` ends up as a dangling symlink. In GitHub Actio
 action, which installs the CLI at the tag it was used with and exports the variables:
 
 ```yaml
-- uses: matelot-cloud/setup-cli@v2   # or @v2.23.2
+- uses: matelot-cloud/setup-cli@v2   # or @v2.24.0
   with:
     url: ${{ vars.MATELOT_URL }}
     key-id: ${{ secrets.MATELOT_KEY_ID }}
@@ -181,13 +181,40 @@ Scripts that tested for `3` to detect a bad token must test for `4`.
 
 ## Pipeline jobs
 
-| Stage | Job | Tool | Needs |
-|---|---|---|---|
-| source | checkout | git | repository access (connection) |
-| inventory | sbom | syft | — |
-| scan | dependencies (`sca`) | platform correlation (OSV / NVD / KEV / EPSS) | the sbom job |
-| scan | code (`sast`) | Semgrep (`--config auto`; set `SEMGREP_CONFIG=p/ci` on an offline runner) | runner image ≥ this release |
-| scan | secrets, infrastructure | trivy | — |
-| policy | evaluate (`policy_eval`) | platform worker | — |
+Job names as the API, the web app and `matelot pipelines` / `jobs` report them (the internal job *type* in brackets):
+
+| Stage | Job | Type | Tool | Needs |
+|---|---|---|---|---|
+| source | checkout | `repository_check` | git | repository access (connection) |
+| inventory | sbom | `sbom` | syft | — |
+| scan | dependencies | `sca` | platform correlation (OSV / NVD / KEV / EPSS) | the sbom job |
+| scan | code | `sast` | Semgrep (`p/security-audit,p/secrets`; `SEMGREP_CONFIG` or the job's `config` to change) | runner image ≥ this release |
+| scan | secrets | `secrets` | trivy (built-in secret rules, offline) | — |
+| scan | infrastructure | `iac` | trivy misconfiguration checks (bundle embedded in the binary) | — |
+| policy | evaluate | `policy_eval` | platform worker | — |
+
+### What the secrets job detects
+
+The secrets job runs `trivy fs --scanners secret` on the checkout with trivy's built-in rules (no network, no
+database): cloud credentials (AWS access key id / secret access key, GCP service-account keys, Azure storage keys,
+Alibaba), code-host tokens (GitHub classic / fine-grained PAT, OAuth, App and refresh tokens, GitLab PAT), private keys
+(RSA / EC / OpenSSH / PGP), JWTs, and API keys of common services (Slack, Stripe, Twilio, SendGrid, Shopify, Heroku,
+HashiCorp, Hugging Face, OpenAI, PyPI, npm, Docker Hub, Grafana, …). The full list is trivy's
+`pkg/fanal/secret/builtin-rules.go` for the version in the runner image (see the runner Dockerfile); every finding
+carries the trivy rule id (`github-pat`, `aws-secret-access-key`, …), and the value is masked before it reaches the cell.
+
+Checked against the runner's exact command on a planted repository (trivy 0.74.0) — what does **not** fire, so a test
+with "obvious" secrets is not read as a detector gap:
+
+- **AWS documentation examples** (`AKIAIOSFODNN7EXAMPLE`, `wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY`) are on trivy's
+  allow list. Plant random-looking values; a 20-character `AKIA…` id fires anywhere, the 40-character secret key only
+  **with its keyword on the line** (`AWS_SECRET_ACCESS_KEY=…`, `aws_secret_access_key: …`) — a bare 40-character
+  string is not reported.
+- A GitHub classic token must be `ghp_` + exactly 36 characters (fine-grained: `github_pat_` + 82).
+- Paths matched by the built-in allow rules are skipped: `test/`, `tests/`, `testdata/`, `testing/`, `example(s)/`,
+  `sample(s)/`, `vendor/`, `node_modules/`, and every `*.md`.
+
+Semgrep's `p/secrets` pack runs in the **code** job as well, so a credential in a source file can appear twice with
+different rule ids; both are code findings of kind `secret`.
 
 Rebuild the runner image after this release (`docker build apps/runner`) so `semgrep` is present; a runner without it reports the code job as skipped with that reason.

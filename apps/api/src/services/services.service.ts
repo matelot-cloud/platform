@@ -1,10 +1,10 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { and, asc, eq, isNull } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 import { AuditService } from '../audit/audit.service';
 import { userActor } from '../audit/audit.types';
 import type { AuthenticatedUser } from '../auth/authenticated-user';
 import { DATABASE, Database } from '../database/database.module';
-import { projects, Service, services, teams, workspaces } from '../database/schema';
+import { advisories, codeFindings, findings, jobs, pipelines, projects, sboms, Service, services, teams, workspaces } from '../database/schema';
 import { AccessService } from '../rbac/access.service';
 import { AuthorizationService } from '../rbac/authorization.service';
 import { buildChain, ScopeChain } from '../rbac/scope.types';
@@ -97,6 +97,33 @@ export class ServicesService {
     if (!service) throw new NotFoundException('Service not found');
     // The chain is what CLIs and the MCP need next (recorrelate --org, scoped routes): expose it with the row.
     return { ...service, organizationId: chain.organizationId, workspaceId: chain.workspaceId ?? null, teamId: chain.teamId ?? null };
+  }
+
+  /**
+   * One call for CI scripts and `matelot service show`: the service, its latest pipeline (with jobs), the open
+   * findings by severity (+ KEV), open code findings by kind and the newest SBOM — what otherwise takes four reads.
+   */
+  async summary(chain: ScopeChain) {
+    const service = await this.get(chain);
+    const id = service.id;
+    const [pipeline] = await this.db.select().from(pipelines).where(eq(pipelines.serviceId, id)).orderBy(desc(pipelines.number)).limit(1);
+    const pipelineJobs = pipeline ? await this.db.select({ id: jobs.id, stage: jobs.stage, name: jobs.name, type: jobs.type, status: jobs.status, error: jobs.error }).from(jobs).where(eq(jobs.pipelineId, pipeline.id)).orderBy(asc(jobs.stageOrder)) : [];
+    // open findings the deployments still run (the default totals everywhere), by severity, with the KEV count
+    const sevRows = await this.db.select({ severity: findings.severity, n: sql<number>`count(*)::int`, kev: sql<number>`count(*) filter (where ${advisories.kev})::int` }).from(findings).innerJoin(advisories, eq(findings.advisoryId, advisories.id)).where(and(eq(findings.serviceId, id), eq(findings.status, 'open'), eq(findings.running, true))).groupBy(findings.severity);
+    const open = { critical: 0, high: 0, medium: 0, low: 0, unknown: 0, total: 0 };
+    let kev = 0;
+    for (const r of sevRows) { open[r.severity] = r.n; open.total += r.n; kev += r.kev; }
+    const kindRows = await this.db.select({ kind: codeFindings.kind, n: sql<number>`count(*)::int` }).from(codeFindings).where(and(eq(codeFindings.serviceId, id), eq(codeFindings.status, 'open'))).groupBy(codeFindings.kind);
+    const code = { secret: 0, iac: 0, sast: 0 };
+    for (const r of kindRows) code[r.kind] = r.n;
+    const [sbom] = await this.db.select({ id: sboms.id, target: sboms.target, targetRef: sboms.targetRef, componentCount: sboms.componentCount, createdAt: sboms.createdAt }).from(sboms).where(eq(sboms.serviceId, id)).orderBy(desc(sboms.createdAt)).limit(1);
+    return {
+      ...service,
+      latestPipeline: pipeline ? { id: pipeline.id, number: pipeline.number, name: pipeline.name, status: pipeline.status, ref: pipeline.ref, commitSha: pipeline.commitSha, trigger: pipeline.trigger, createdAt: pipeline.createdAt, startedAt: pipeline.startedAt, finishedAt: pipeline.finishedAt, jobs: pipelineJobs } : null,
+      findings: { open, kev },
+      codeFindings: { open: code },
+      latestSbom: sbom ?? null,
+    };
   }
 
   async update(user: AuthenticatedUser, chain: ScopeChain, dto: UpdateServiceDto): Promise<Service> {

@@ -13,19 +13,24 @@ export interface GateInput {
   /** What require_sbom says when there is no SBOM (defaults to the image wording). */
   noSbomMessage?: string;
 }
-/** Rules as stored may be partial (older rows, `--body` patches): a missing or null rule means "no limit" / default. */
+/** Rules of rows stored before every rule was explicit (older rows, `--body` patches): a missing rule reads as the
+ * original defaults so an existing policy keeps blocking what it blocked. */
 export const DEFAULT_RULES: PolicyRules = { maxSeverity: null, blockKev: true, blockSecrets: true, maxIacSeverity: null, maxSastSeverity: null, requireSbom: true, honourDecisions: true };
+/** A NEW policy is explicit: a block rule the caller did not ask for is off (the web form shows every rule as a
+ * checkbox and sends all of them; the CLI sends every rule; an API caller who omits one gets "off", never a surprise
+ * block_secrets violation). Decisions are honoured unless turned off. */
+export const CREATE_DEFAULTS: PolicyRules = { ...DEFAULT_RULES, blockKev: false, blockSecrets: false, requireSbom: false };
 const SEVERITIES = new Set(['critical', 'high', 'medium', 'low']);
-export function normalizeRules(r: Partial<PolicyRules> | null | undefined): PolicyRules {
+export function normalizeRules(r: Partial<PolicyRules> | null | undefined, fill: PolicyRules = DEFAULT_RULES): PolicyRules {
   const sev = (v: unknown) => (typeof v === 'string' && SEVERITIES.has(v) ? (v as PolicyRules['maxSeverity']) : null);
   return {
     maxSeverity: sev(r?.maxSeverity),
-    blockKev: typeof r?.blockKev === 'boolean' ? r.blockKev : DEFAULT_RULES.blockKev,
-    blockSecrets: typeof r?.blockSecrets === 'boolean' ? r.blockSecrets : DEFAULT_RULES.blockSecrets,
+    blockKev: typeof r?.blockKev === 'boolean' ? r.blockKev : fill.blockKev,
+    blockSecrets: typeof r?.blockSecrets === 'boolean' ? r.blockSecrets : fill.blockSecrets,
     maxIacSeverity: sev(r?.maxIacSeverity),
     maxSastSeverity: sev(r?.maxSastSeverity),
-    requireSbom: typeof r?.requireSbom === 'boolean' ? r.requireSbom : DEFAULT_RULES.requireSbom,
-    honourDecisions: typeof r?.honourDecisions === 'boolean' ? r.honourDecisions : DEFAULT_RULES.honourDecisions,
+    requireSbom: typeof r?.requireSbom === 'boolean' ? r.requireSbom : fill.requireSbom,
+    honourDecisions: typeof r?.honourDecisions === 'boolean' ? r.honourDecisions : fill.honourDecisions,
   };
 }
 

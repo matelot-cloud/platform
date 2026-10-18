@@ -9,7 +9,7 @@ import { userIdOrNull } from '../auth/authenticated-user';
 import { DATABASE, Database } from '../database/database.module';
 import { advisories, codeFindings, containerImages, environments, findings, findingSboms, gateEvaluations, imageTags, jobs, pipelines, policies, PolicyRules, releases, sboms, services, Severity } from '../database/schema';
 import { ScopeChain } from '../rbac/scope.types';
-import { evaluateGate, normalizeRules, GatePolicy, Violation } from './gate';
+import { evaluateGate, normalizeRules, GatePolicy, Violation, CREATE_DEFAULTS } from './gate';
 import { NotificationsService } from '../notifications/notifications.service';
 import { Optional } from '@nestjs/common';
 
@@ -64,7 +64,7 @@ export class PoliciesService {
 
   async create(user: AuthenticatedUser, chain: ScopeChain, input: { name: string; description?: string; environmentKinds?: string[]; rules: PolicyRules; action?: 'block' | 'warn'; enforceOnDeploy?: boolean }) {
     if (!input.name?.trim()) throw new BadRequestException('name is required');
-    input = { ...input, rules: normalizeRules(input.rules) };
+    input = { ...input, rules: normalizeRules(input.rules, CREATE_DEFAULTS) };
     const [row] = await this.db.insert(policies).values({ organizationId: chain.organizationId, scopeType: chain.target.type, scopeId: chain.target.id, name: input.name.trim(), description: input.description ?? null, environmentKinds: input.environmentKinds ?? [], rules: input.rules, action: input.action ?? 'block', enforceOnDeploy: input.enforceOnDeploy ?? false, createdById: userIdOrNull(user) }).returning();
     await this.audit.record({ organizationId: chain.organizationId, actor: userActor(user), action: 'policy.created', resourceType: 'policy', resourceId: row.id, after: { name: row.name, scope: `${row.scopeType}:${row.scopeId}`, rules: row.rules, action: row.action, enforceOnDeploy: row.enforceOnDeploy } });
     return row;

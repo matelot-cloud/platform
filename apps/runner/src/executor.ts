@@ -5,7 +5,7 @@ import type { CellClient } from './client';
 import { parseSemgrep, parseTrivy } from './code-scan';
 import { gitEnvironment, run, sanitize } from './git';
 import type { Credentials, Job, LogChunk } from './protocol';
-import { phase } from './telemetry';
+import { getTracer, phase } from './telemetry';
 
 /** Collects log lines and ships them to the cell in batches. */
 export class LogShipper {
@@ -35,6 +35,8 @@ export class LogShipper {
     const batch = this.buffer.splice(0, this.buffer.length);
     try {
       await this.client.logs(this.jobId, batch);
+      // a batch is an event on the job span (the timer was created in the job's context), never a span of its own
+      getTracer()?.current()?.addEvent('logs shipped', { lines: batch.length, seq: batch[batch.length - 1].seq });
     } catch (error) {
       this.buffer.unshift(...batch);
       process.stderr.write(`${JSON.stringify({ time: new Date().toISOString(), level: 'error', component: 'runner', msg: `log upload failed: ${(error as Error).message}` })}\n`);

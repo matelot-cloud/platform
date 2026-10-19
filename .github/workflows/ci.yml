@@ -15,6 +15,9 @@ jobs:
         ports: ["5432:5432"]
         options: >-
           --health-cmd "pg_isready -U platform" --health-interval 5s --health-timeout 3s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -27,6 +30,9 @@ jobs:
       - name: Migrations apply on a fresh database
         run: node apps/api/dist/migrate.js
         env: { DATABASE_URL: "postgresql://platform:platform@localhost:5432/platform" }
+      - name: Span budget - a security pipeline through the real instrumentation stays under 150 spans (test/span-budget.mjs)
+        run: node apps/api/test/span-budget.mjs
+        env: { DATABASE_URL: "postgresql://platform:platform@localhost:5432/platform", REDIS_URL: "redis://localhost:6379" }
       - name: Schema, migrations and snapshot are in sync (drizzle-kit generate must be a no-op)
         run: |
           pnpm --filter @secops/api db:generate

@@ -38,8 +38,10 @@ cat <<EOT
 
 Jaeger is up and the cell "$TENANT" exports traces to it. To look:
   kubectl -n $NS port-forward svc/jaeger 16686:16686 &
-  open http://localhost:16686   → service "matelot-api" / "matelot-runner" / "matelot-worker"
-Run a pipeline (matelot pipeline run … or the web app) and search for operation "pipeline Security pipeline": one
-trace with the api's job spans, the runner's phases and the worker's gate evaluation. Metrics of a pod:
+  open http://localhost:16686   → service "matelot-pipeline" (the pipeline and job spans, whichever process emitted
+                                  them), "matelot-api", "matelot-runner", "matelot-worker"
+Run a pipeline (matelot pipeline run … or the web app) and search service matelot-pipeline, operation
+"pipeline Security pipeline": one trace with the api's request spans, the runner's phases and the worker's gate
+evaluation. Metrics of a pod:
   kubectl -n tenant-$TENANT port-forward deploy/$TENANT-api 9464:9464 & curl -s localhost:9464/metrics | grep matelot_
 EOT

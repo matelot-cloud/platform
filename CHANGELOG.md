@@ -4,6 +4,27 @@
 
 Images `ghcr.io/matelot-cloud/{api,web,worker,runner}` and the chart `oci://ghcr.io/matelot-cloud/charts/secops-cell`, signed, with SBOM attestations; install guide at https://matelot-cloud.github.io/website/docs/latest/install.html. The sections below are the drops that make up the release, newest first.
 
+### Observability drop 1 fix-up: the pipeline trace trimmed from 1 824 spans to a budget of 150; pipeline spans under one service
+
+- Verified on kind (rc.16): one trace per pipeline across api / runner / worker, metrics on all three — and 1 824
+  spans in the trace, most of them Redis commands of the rate limiter and BullMQ housekeeping (`incr`, `multi`,
+  `pexpire`, sub-millisecond), `pg-pool.connect`, and one server span with children per runner `/logs` batch.
+- `telemetry/trim.ts`, a span processor applied when a span ends: ioredis housekeeping (`rl:` / `bull:` keys,
+  `multi` / `exec` / `pexpire` / `evalsha`) is dropped whatever its duration, any other Redis command under 5 ms too;
+  `pg-pool.connect` / `pg.connect` always, `pg.query:*` under 5 ms — slow queries and commands stay. Dropped spans
+  are leaves, nothing is orphaned (`trim.spec.ts`).
+- The runner sends its `/logs` batches with the sampled flag off: same trace id, no server span at the cell; each
+  batch is an event `logs shipped {lines, seq}` on the job span (runner `telemetry.test.ts` checks the header).
+- The root span was attributed to whichever process finished the pipeline (the worker, after the gate — which is why
+  a search under service `matelot-api` found nothing). Pipeline-level spans (`pipeline <name>`, `job <kind>`) now
+  come from a second tracer provider with service **`matelot-pipeline`** (attribute `matelot.emitted_by`), the same
+  trimming-free export; the Jaeger recipe in docs and `make kind-jaeger` say so.
+- `apps/api/test/span-budget.mjs`, run by CI's api job after the build (a Redis service was added): the built api and
+  worker with the tracing preload and `OTEL_TRACES_EXPORTER=file` (new), a security pipeline, a fake runner that
+  behaves like the real one; fails above 150 spans, on any `/logs` span, on a root not under `matelot-pipeline`,
+  on fewer than 7 job spans, on a surviving pool checkout or sub-5 ms Redis span. Today: 28 spans from the cell
+  (the real runner adds its own ~35).
+
 ### Observability drop 1 — instrumentation: OTLP traces (one per pipeline), Prometheus metrics with exemplars, JSON logs with trace ids (migration 0049, runner 0.3.3)
 
 - **Traces.** `apps/api/src/telemetry/tracing.ts`, preloaded with `node -r ./dist/telemetry/tracing.js` by the api and

@@ -75,6 +75,23 @@ set (a cell does tens of requests per second at most). Never traced: `/health/*`
 heartbeats (`/runner/heartbeat`, `/runner/jobs/:id/heartbeat`); the claim long-poll is traced (it is where a job
 starts). Span attributes never carry a query string (`url.path` only): the redaction rule applies to spans too.
 
+**Where to search.** The pipeline-level spans — `pipeline <name>` and the `job <kind>` spans — are emitted by
+whichever process finishes the work (the API on a runner's `/complete`, the worker after a gate), so they carry a
+resource of their own: service **`matelot-pipeline`** (attribute `matelot.emitted_by` names the process). In Jaeger
+or Tempo: service `matelot-pipeline`, operation `pipeline Security pipeline`, or tag `matelot.pipeline.id=<id>`; the
+request spans are under `matelot-api`, the phases under `matelot-runner`, the gate under `matelot-worker`.
+
+**Span budget.** A security pipeline on kind first produced 1 824 spans, most of them Redis commands of the rate
+limiter and BullMQ housekeeping, pool checkouts and sub-millisecond queries. `telemetry/trim.ts` drops, when a span
+ends: ioredis housekeeping (`rl:` / `bull:` keys, `multi` / `exec` / `pexpire` / `evalsha`) whatever its duration and
+any other Redis command under 5 ms; `pg-pool.connect` / `pg.connect` always and `pg.query:*` under 5 ms — a slow
+query or command stays, and that is what the trace is for. The runner's log batches (`/logs`, dozens per job) are
+sent with the trace's id but the sampled flag off, so the cell records no span for them; each batch is an event
+`logs shipped` on the job span. `apps/api/test/span-budget.mjs` (CI, api job) runs a security pipeline through the
+built api and worker with the real instrumentation and a fake runner, and fails above **150 spans** in the trace,
+on any `/logs` span, or when the root is not `pipeline Security pipeline` under `matelot-pipeline` — today the trace
+holds 28 spans from the cell plus the runner's own (about 35 for the real one).
+
 ### Metrics
 
 The OTel SDK's meter (`apps/api/src/telemetry/metrics.ts`) with explicit histogram buckets through Views — three
@@ -156,7 +173,7 @@ Standard OTel variables first, ours only where OTel has none. Every variable exi
 | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_EXPORTER_OTLP_PROTOCOL` | where traces (and optionally metrics / logs) go; `grpc` or `http/protobuf` | unset → nothing is pushed |
 | `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG` | SDK sampler | `parentbased_always_on` |
 | `OTEL_METRICS_EXPORTER` | `prometheus` (default), `otlp`, `none`, comma-separated (`prometheus,otlp` pushes too) | `prometheus` |
-| `OTEL_TRACES_EXPORTER` | `otlp` (default), `console`, `none` | `otlp` |
+| `OTEL_TRACES_EXPORTER` | `otlp` (default), `console`, `file` (JSON lines to `OTEL_TRACES_FILE`; tests), `none` | `otlp` |
 | `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES` | override / extend the resource | set by the chart / compose per component |
 | `MATELOT_METRICS_ENABLED`, `MATELOT_METRICS_PORT` | the `/metrics` listener | `true`, `9464` (runner: `RUNNER_METRICS_PORT`, `0` = off) |
 | `MATELOT_TRACING_ENABLED` | the tracer provider (auto `true` when an endpoint is set; `false` forces it off) | derived |

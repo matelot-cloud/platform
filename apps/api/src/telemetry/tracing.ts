@@ -20,9 +20,14 @@ export interface TracingHandle {
   /** Flush queued spans and stop exporting; resolves within `capMs` whatever the collector does. */
   shutdown(capMs?: number): Promise<void>;
   readonly exporter: string;
+  /** spans the trimming rules kept out (telemetry/trim.ts) */
+  readonly dropped: () => number;
 }
 
-const g = globalThis as unknown as { __matelotTracing?: TracingHandle | null };
+const g = globalThis as unknown as { __matelotTracing?: TracingHandle | null; __matelotPipelineTracer?: import('@opentelemetry/api').Tracer };
+
+/** service.name of the pipeline-level spans, whichever process emits them (docs: search this service in Jaeger / Tempo). */
+export const PIPELINE_SERVICE = 'matelot-pipeline';
 
 /** Whether the preload should start tracing: MATELOT_TRACING_ENABLED wins; else an OTLP endpoint (or a non-OTLP exporter) turns it on. */
 export function tracingEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -109,11 +114,21 @@ export function startTracing(env: NodeJS.ProcessEnv = process.env): TracingHandl
   const { registerInstrumentations } = require('@opentelemetry/instrumentation') as typeof import('@opentelemetry/instrumentation');
   const { PinnedIdGenerator } = require('./ids') as typeof import('./ids');
 
+  const { TrimmingSpanProcessor } = require('./trim') as typeof import('./trim');
   const exporterName = (env.OTEL_TRACES_EXPORTER ?? 'otlp').trim().toLowerCase();
-  const exporter = exporterName === 'console' ? new traceBase.ConsoleSpanExporter() : exporterName === 'none' ? null : otlpExporter(env);
-  const processors = exporter ? [new traceBase.BatchSpanProcessor(exporter, { maxQueueSize: 2048, maxExportBatchSize: 512, scheduledDelayMillis: 2000, exportTimeoutMillis: 5000 })] : [];
-  const provider = new NodeTracerProvider({ resource: resourceFromAttributes(resourceAttributes(env)), sampler: sampler(env, traceBase), spanProcessors: processors, idGenerator: new PinnedIdGenerator() });
+  const makeExporter = () => exporterName === 'console' ? new traceBase.ConsoleSpanExporter() : exporterName === 'file' ? new (require('./file-exporter').FileSpanExporter)(env.OTEL_TRACES_FILE ?? 'traces.jsonl') : exporterName === 'none' ? null : otlpExporter(env);
+  const batch = (exporter: import('@opentelemetry/sdk-trace-base').SpanExporter) => new traceBase.BatchSpanProcessor(exporter, { maxQueueSize: 2048, maxExportBatchSize: 512, scheduledDelayMillis: 2000, exportTimeoutMillis: 5000 });
+  const exporter = makeExporter();
+  // the process's own provider: its spans are trimmed (telemetry/trim.ts) before they are queued
+  const trimmed = exporter ? new TrimmingSpanProcessor(batch(exporter)) : null;
+  const provider = new NodeTracerProvider({ resource: resourceFromAttributes(resourceAttributes(env)), sampler: sampler(env, traceBase), spanProcessors: trimmed ? [trimmed] : [], idGenerator: new PinnedIdGenerator() });
   provider.register();
+  // the pipeline-level spans (pipeline root, job spans) are emitted by whichever process finishes the work — the api
+  // on a runner's /complete, the worker after a gate — so they carry a resource of their own, service.name
+  // "matelot-pipeline", and a search for "pipeline <name>" always finds them under that one service
+  const pipelineExporter = makeExporter();
+  const pipelineProvider = new NodeTracerProvider({ resource: resourceFromAttributes({ ...resourceAttributes(env), 'service.name': PIPELINE_SERVICE, 'matelot.emitted_by': String(resourceAttributes(env)['matelot.component']) }), sampler: sampler(env, traceBase), spanProcessors: pipelineExporter ? [batch(pipelineExporter)] : [], idGenerator: new PinnedIdGenerator() });
+  g.__matelotPipelineTracer = pipelineProvider.getTracer('matelot-pipeline');
 
   const { HttpInstrumentation } = require('@opentelemetry/instrumentation-http');
   const { ExpressInstrumentation, ExpressLayerType } = require('@opentelemetry/instrumentation-express');
@@ -138,9 +153,10 @@ export function startTracing(env: NodeJS.ProcessEnv = process.env): TracingHandl
   let done: Promise<void> | null = null;
   const handle: TracingHandle = {
     exporter: exporterName,
+    dropped: () => trimmed?.dropped ?? 0,
     shutdown(capMs = 5000) {
       if (done) return done;
-      done = Promise.race([provider.shutdown(), new Promise<void>((r) => setTimeout(r, capMs).unref())]).catch(() => undefined).then(() => {
+      done = Promise.race([Promise.all([provider.shutdown(), pipelineProvider.shutdown()]), new Promise<void>((r) => setTimeout(r, capMs).unref())]).catch(() => undefined).then(() => {
         if (once.dropped) process.stderr.write(`{"level":"warn","component":"telemetry","msg":"trace export: ${once.dropped} further export failure(s) during this process"}\n`);
       });
       return done;
@@ -155,6 +171,11 @@ export function startTracing(env: NodeJS.ProcessEnv = process.env): TracingHandl
 /** The handle the preload created, for TelemetryModule's shutdown flush. */
 export function tracingHandle(): TracingHandle | null {
   return g.__matelotTracing ?? null;
+}
+
+/** The tracer for pipeline-level spans (service "matelot-pipeline"); the process tracer when the preload is off. */
+export function pipelineTracer(): import('@opentelemetry/api').Tracer | null {
+  return g.__matelotPipelineTracer ?? null;
 }
 
 // preloaded with `node -r`: start now. Imported later (TelemetryModule, tests): idempotent, and a no-op without an endpoint.

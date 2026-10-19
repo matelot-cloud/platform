@@ -12,6 +12,14 @@ export class CellClient {
     this.token = token;
   }
 
+  /** The traceparent header: the active span's; for the log batches the same trace with the sampled flag OFF, so the
+   *  cell records no server span for them (a job ships dozens of batches — they are events on the job span instead). */
+  private traceparentFor(path: string): string | undefined {
+    const tp = getTracer()?.currentTraceparent();
+    if (!tp) return undefined;
+    return path.endsWith('/logs') ? tp.replace(/-01$/, '-00') : tp;
+  }
+
   private async call<T>(path: string, body?: unknown, timeoutMs = 30_000, signal?: AbortSignal): Promise<{ status: number; data: T | null }> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -21,7 +29,7 @@ export class CellClient {
       const response = await fetch(`${this.baseUrl}${path}`, {
         method: 'POST',
         // the active span's traceparent: the cell's side of this call (SBOM ingestion, the gate) joins the pipeline's trace
-        headers: { 'Content-Type': 'application/json', ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}), 'User-Agent': 'secops-runner/0.1', ...(getTracer()?.currentTraceparent() ? { traceparent: getTracer()!.currentTraceparent()! } : {}) },
+        headers: { 'Content-Type': 'application/json', ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}), 'User-Agent': 'secops-runner/0.1', ...(this.traceparentFor(path) ? { traceparent: this.traceparentFor(path)! } : {}) },
         body: JSON.stringify(body ?? {}),
         signal: controller.signal,
       });

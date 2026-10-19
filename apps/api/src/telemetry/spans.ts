@@ -4,6 +4,7 @@
  */
 import { context, propagation, trace, ROOT_CONTEXT, SpanKind, SpanStatusCode, TraceFlags, type Attributes, type Context, type Span } from '@opentelemetry/api';
 import { parseTraceparent, withPinnedIds } from './ids';
+import { pipelineTracer } from './tracing';
 
 export const tracer = () => trace.getTracer('matelot');
 
@@ -59,7 +60,8 @@ export interface CompletedSpan {
  */
 export function emitCompletedSpan(s: CompletedSpan): void {
   const parent = contextFromTraceparent(s.parentTraceparent);
-  const span = withPinnedIds(s.traceId, s.spanId, () => tracer().startSpan(s.name, { startTime: s.startTime, attributes: s.attributes, kind: s.kind ?? SpanKind.INTERNAL }, parent));
+  const t = pipelineTracer() ?? tracer();   // service "matelot-pipeline" whichever process emits (tracing.ts)
+  const span = withPinnedIds(s.traceId, s.spanId, () => t.startSpan(s.name, { startTime: s.startTime, attributes: s.attributes, kind: s.kind ?? SpanKind.INTERNAL }, parent));
   for (const e of s.events ?? []) span.addEvent(e.name, e.attributes, e.time);
   span.setStatus(s.error ? { code: SpanStatusCode.ERROR, message: s.error } : { code: SpanStatusCode.OK });
   span.end(s.endTime);

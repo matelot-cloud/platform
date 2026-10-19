@@ -124,3 +124,26 @@ test('log line: schema fields, trace ids from the current span, secrets redacted
   assert.match(lines[1].span_id, /^[0-9a-f]{16}$/);
   assert.deepEqual(redact({ Authorization: 'x', list: [{ secret: 'y' }] }), { Authorization: '[Redacted]', list: [{ secret: '[Redacted]' }] });
 });
+
+test('client: the traceparent header is the active span, log batches go unsampled (no server span at the cell)', async () => {
+  const { CellClient } = await import('./client');
+  const seen: { path: string; traceparent?: string }[] = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: string, init: any) => { seen.push({ path: new URL(url).pathname, traceparent: init.headers.traceparent }); return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } }); }) as typeof fetch;
+  try {
+    const tracer = new Tracer({ resource: RESOURCE });
+    setTracer(tracer);
+    const client = new CellClient('http://cell/api/v1', 'tok');
+    await client.start('j1');                                           // outside a span: no header
+    await tracer.run(tracer.start('job run sbom', '00-a0a1a2a3a4a5a6a7a8a9aaabacadaeaf-0102030405060708-01'), async () => {
+      await client.start('j1');
+      await client.logs('j1', [{ seq: 0, stream: 'stdout', content: 'x' }]);
+      await client.complete('j1', 'succeeded', {}, undefined, 0);
+    });
+  } finally { globalThis.fetch = realFetch; setTracer(null); }
+  assert.equal(seen[0].traceparent, undefined);
+  assert.match(seen[1].traceparent!, /^00-a0a1a2a3a4a5a6a7a8a9aaabacadaeaf-[0-9a-f]{16}-01$/);
+  assert.match(seen[2].traceparent!, /^00-a0a1a2a3a4a5a6a7a8a9aaabacadaeaf-[0-9a-f]{16}-00$/);   // /logs: same trace, not sampled
+  assert.equal(seen[2].path, '/api/v1/runner/jobs/j1/logs');
+  assert.match(seen[3].traceparent!, /-01$/);
+});

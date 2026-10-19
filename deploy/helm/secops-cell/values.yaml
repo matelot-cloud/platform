@@ -186,3 +186,21 @@ backup:
     limits: { cpu: "1", memory: 1Gi }
 networkPolicy:
   enabled: true
+
+observability:
+  # docs/observability.md — standard signals for the customer's own stack. Metrics: every api / worker / runner pod
+  # serves Prometheus / OpenMetrics (with trace exemplars) on its own port, never on the ingress; the NetworkPolicy
+  # admits scrapers from the namespaces below. Traces: OTLP to the endpoint below (off while it is empty).
+  # ServiceMonitors, PrometheusRule and dashboards come with the next drop.
+  metrics:
+    enabled: true
+    port: 9464
+    scrapeFromNamespaces: [monitoring, observability]   # namespaces whose pods may reach the metrics ports
+  otlp:
+    endpoint: ""                     # e.g. http://otel-collector.monitoring:4318 (http/protobuf) — sets OTEL_EXPORTER_OTLP_ENDPOINT on every component
+    protocol: http/protobuf          # grpc | http/protobuf | http/json
+    headers: {}                      # e.g. { Authorization: "Basic …" } for Grafana Cloud — stored in a Secret
+    tracesSampler: parentbased_always_on
+    tracesSamplerArg: ""
+    metrics: false                   # also push the metrics over OTLP (OTEL_METRICS_EXPORTER=prometheus,otlp)
+  environment: production            # deployment.environment on every signal

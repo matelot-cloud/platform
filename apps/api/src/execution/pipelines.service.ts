@@ -7,6 +7,7 @@ import { DATABASE, Database } from '../database/database.module';
 import { Job, jobs, Pipeline, pipelines, repositories, runners, serviceRepositories, services } from '../database/schema';
 import { ScopeChain } from '../rbac/scope.types';
 import { StageDefinition, templateByKey } from './pipeline-templates';
+import { PipelineTelemetry, pipelineTelemetry } from '../telemetry/pipeline-telemetry';
 
 const TERMINAL = ['succeeded', 'failed', 'cancelled', 'timed_out', 'skipped'];
 
@@ -16,7 +17,13 @@ export class PipelinesService {
   constructor(
     @Inject(DATABASE) private readonly db: Database,
     private readonly audit: AuditService,
-  ) {}
+    @Inject(PipelineTelemetry) telemetry: PipelineTelemetry | undefined,
+  ) {
+    if (telemetry) this.telemetry = telemetry;
+  }
+  private telemetry?: PipelineTelemetry;
+  /** Injected by Nest; the process-wide instance where a spec built the service by hand. */
+  private get tele(): PipelineTelemetry { return (this.telemetry ??= pipelineTelemetry()); }
 
   async create(user: AuthenticatedUser | null, serviceChain: ScopeChain, input: { template?: string; stages?: StageDefinition[]; repositoryId?: string; ref?: string; requiredTags?: string[]; poolId?: string; trigger?: Pipeline['trigger']; commitSha?: string }) {
     const serviceId = serviceChain.serviceId!;
@@ -37,9 +44,10 @@ export class PipelinesService {
     // when --ref was passed, so the evaluate job of a plain run had no subject and failed require_sbom (#42, #43).
     const effectiveRef = input.ref ?? repo?.defaultBranch ?? null;
     const [{ next }] = await this.db.select({ next: sql<number>`coalesce(max(${pipelines.number}), 0) + 1` }).from(pipelines).where(eq(pipelines.projectId, serviceChain.projectId!));
+    const trace = this.tele.newTrace();   // one trace per pipeline; every job gets its span id now (the runner parents under it)
     const [pipeline] = await this.db
       .insert(pipelines)
-      .values({ organizationId: serviceChain.organizationId, projectId: serviceChain.projectId!, serviceId, repositoryId, number: Number(next), name: template.name, ref: effectiveRef, commitSha: input.commitSha ?? null, trigger: input.trigger ?? 'manual', stages: template.stages, createdById: userIdOrNull(user) })
+      .values({ organizationId: serviceChain.organizationId, projectId: serviceChain.projectId!, serviceId, repositoryId, number: Number(next), name: template.name, ref: effectiveRef, commitSha: input.commitSha ?? null, trigger: input.trigger ?? 'manual', stages: template.stages, createdById: userIdOrNull(user), traceParent: trace.pipeline })
       .returning();
 
     const rows = template.stages.flatMap((stage, order) =>
@@ -60,6 +68,7 @@ export class PipelinesService {
         requestedPoolId: input.poolId ?? null,
         payload: { ...(job.payload ?? {}), ...(effectiveRef ? { ref: effectiveRef } : {}), ...(input.commitSha ? { commitSha: input.commitSha } : {}) },
         createdById: userIdOrNull(user),
+        traceParent: trace.job(),
       })),
     );
     await this.db.insert(jobs).values(rows);
@@ -100,7 +109,8 @@ export class PipelinesService {
     if (!pipeline || ['succeeded', 'failed', 'cancelled'].includes(pipeline.status)) return;
     const all = await this.db.select().from(jobs).where(eq(jobs.pipelineId, pipelineId)).orderBy(asc(jobs.stageOrder));
     if (all.some((j) => ['failed', 'timed_out'].includes(j.status))) {
-      await this.db.update(jobs).set({ status: 'skipped', error: 'skipped: an earlier stage failed', finishedAt: new Date() }).where(and(eq(jobs.pipelineId, pipelineId), eq(jobs.status, 'pending')));
+      const skipped = await this.db.update(jobs).set({ status: 'skipped', error: 'skipped: an earlier stage failed', finishedAt: new Date() }).where(and(eq(jobs.pipelineId, pipelineId), eq(jobs.status, 'pending'))).returning();
+      for (const j of skipped) this.tele.jobFinished(j, pipeline, null);
       await this.finish(pipeline, 'failed');
       return;
     }
@@ -121,16 +131,19 @@ export class PipelinesService {
   }
 
   private async finish(pipeline: Pipeline, status: Pipeline['status']) {
-    await this.db.update(pipelines).set({ status, finishedAt: new Date() }).where(eq(pipelines.id, pipeline.id));
+    const [done] = await this.db.update(pipelines).set({ status, finishedAt: new Date() }).where(eq(pipelines.id, pipeline.id)).returning();
+    if (done) this.tele.pipelineFinished(done);
     await this.audit.record({ organizationId: pipeline.organizationId, actor: SYSTEM_ACTOR, action: `pipeline.${status}`, resourceType: 'pipeline', resourceId: pipeline.id, after: { number: pipeline.number } });
   }
 
   async cancel(user: AuthenticatedUser, pipelineId: string) {
     const pipeline = await this.get(pipelineId);
-    await this.db.update(jobs).set({ status: 'cancelled', finishedAt: new Date(), error: `cancelled by ${user.email}` }).where(and(eq(jobs.pipelineId, pipelineId), inArray(jobs.status, ['queued', 'assigned', 'running'])));
-    await this.db.update(jobs).set({ status: 'skipped', error: 'skipped: pipeline cancelled', finishedAt: new Date() }).where(and(eq(jobs.pipelineId, pipelineId), eq(jobs.status, 'pending')));
+    const cancelled = await this.db.update(jobs).set({ status: 'cancelled', finishedAt: new Date(), error: `cancelled by ${user.email}` }).where(and(eq(jobs.pipelineId, pipelineId), inArray(jobs.status, ['queued', 'assigned', 'running']))).returning();
+    const skipped = await this.db.update(jobs).set({ status: 'skipped', error: 'skipped: pipeline cancelled', finishedAt: new Date() }).where(and(eq(jobs.pipelineId, pipelineId), eq(jobs.status, 'pending'))).returning();
     for (const j of pipeline.jobs) if (j.runnerId && ['assigned', 'running'].includes(j.status)) await this.db.update(runners).set({ currentJobId: null, status: 'online' }).where(and(eq(runners.id, j.runnerId), eq(runners.currentJobId, j.id)));
-    await this.db.update(pipelines).set({ status: 'cancelled', finishedAt: new Date() }).where(eq(pipelines.id, pipelineId));
+    const [done] = await this.db.update(pipelines).set({ status: 'cancelled', finishedAt: new Date() }).where(eq(pipelines.id, pipelineId)).returning();
+    for (const j of [...cancelled, ...skipped]) this.tele.jobFinished(j, done ?? null, null);
+    if (done) this.tele.pipelineFinished(done);
     await this.audit.record({ organizationId: pipeline.organizationId, actor: userActor(user), action: 'pipeline.cancelled', resourceType: 'pipeline', resourceId: pipelineId, after: { number: pipeline.number } });
     return this.get(pipelineId);
   }
@@ -138,7 +151,9 @@ export class PipelinesService {
   /** Re-runs one job in place (new attempt); a failed pipeline becomes running again. */
   async retryJob(user: AuthenticatedUser, job: Job) {
     if (!TERMINAL.includes(job.status)) throw new BadRequestException('Only finished jobs can be retried');
-    await this.db.update(jobs).set({ status: 'queued', runnerId: null, poolId: job.requestedPoolId, result: null, error: null, exitCode: null, startedAt: null, finishedAt: null, assignedAt: null, leaseExpiresAt: null, attempts: 0 }).where(eq(jobs.id, job.id));
+    const [pipeline] = job.pipelineId ? await this.db.select({ traceParent: pipelines.traceParent }).from(pipelines).where(eq(pipelines.id, job.pipelineId)).limit(1) : [];
+    // a new attempt is a new span in the pipeline's trace
+    await this.db.update(jobs).set({ status: 'queued', runnerId: null, poolId: job.requestedPoolId, result: null, error: null, exitCode: null, startedAt: null, finishedAt: null, assignedAt: null, leaseExpiresAt: null, attempts: 0, traceParent: this.tele.jobTraceparentFor(pipeline?.traceParent) }).where(eq(jobs.id, job.id));
     if (job.pipelineId) {
       await this.db.update(jobs).set({ status: 'pending', error: null, finishedAt: null }).where(and(eq(jobs.pipelineId, job.pipelineId), eq(jobs.status, 'skipped'), sql`${jobs.stageOrder} > ${job.stageOrder}`));
       await this.db.update(pipelines).set({ status: 'running', finishedAt: null }).where(eq(pipelines.id, job.pipelineId));

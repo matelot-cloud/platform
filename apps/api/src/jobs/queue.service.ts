@@ -4,6 +4,7 @@ import { JobsOptions, Queue } from 'bullmq';
 import IORedis from 'ioredis';
 import { AppConfig } from '../config/env';
 import { QueueName } from './queues';
+import { currentTraceparent } from '../telemetry/spans';
 
 /** Producer side of the job queues (BullMQ on the cell's Redis). */
 @Injectable()
@@ -29,8 +30,10 @@ export class QueueService implements OnApplicationShutdown {
     return queue;
   }
 
+  /** The active trace travels with the job (`__traceparent`), so the worker's run is a child of the request that queued it. */
   enqueue<T extends object>(name: QueueName, data: T, options?: JobsOptions) {
-    return this.queue(name).add(name, data, options);
+    const traceparent = currentTraceparent();
+    return this.queue(name).add(name, traceparent ? { ...data, __traceparent: traceparent } : data, options);
   }
 
   async onApplicationShutdown(): Promise<void> {

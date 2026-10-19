@@ -55,9 +55,17 @@ spec:
           ports:
             - name: http
               containerPort: 3000
+            {{- if .Values.observability.metrics.enabled }}
+            - name: metrics
+              containerPort: {{ .Values.observability.metrics.port }}
+            {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ .Release.Name }}-api-config
+            {{- if .Values.observability.otlp.headers }}
+            - secretRef:
+                name: {{ .Release.Name }}-otel
+            {{- end }}
             - secretRef:
                 name: {{ .Release.Name }}-api-secrets
             - secretRef:
@@ -70,9 +78,11 @@ spec:
             - secretRef:
                 name: {{ .Release.Name }}-registry
             {{- end }}
-          {{- if .Values.keycloak.bundled }}
-          # user administration (create, reset, invite links) through the bundled Keycloak's admin API
           env:
+            - name: MATELOT_COMPONENT
+              value: api
+          {{- if .Values.keycloak.bundled }}
+            # user administration (create, reset, invite links) through the bundled Keycloak's admin API
             - name: KC_BOOTSTRAP_ADMIN_USERNAME
               valueFrom: { secretKeyRef: { name: {{ .Release.Name }}-keycloak, key: KC_BOOTSTRAP_ADMIN_USERNAME } }
             - name: KC_BOOTSTRAP_ADMIN_PASSWORD

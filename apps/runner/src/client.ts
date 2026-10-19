@@ -1,5 +1,6 @@
 import type { CodeFindingInput } from './code-scan';
 import type { Credentials, Job, LogChunk, RegisterResponse, RegistryCredentials, RunnerConfig } from './protocol';
+import { getTracer } from './telemetry';
 
 export class CellClient {
   constructor(
@@ -19,7 +20,8 @@ export class CellClient {
     try {
       const response = await fetch(`${this.baseUrl}${path}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}), 'User-Agent': 'secops-runner/0.1' },
+        // the active span's traceparent: the cell's side of this call (SBOM ingestion, the gate) joins the pipeline's trace
+        headers: { 'Content-Type': 'application/json', ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}), 'User-Agent': 'secops-runner/0.1', ...(getTracer()?.currentTraceparent() ? { traceparent: getTracer()!.currentTraceparent()! } : {}) },
         body: JSON.stringify(body ?? {}),
         signal: controller.signal,
       });

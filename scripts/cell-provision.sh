@@ -176,13 +176,16 @@ cmd_apply() {
     release_recoverable || exit 1
     # what `helm --dry-run` cannot see, the API server can: validate the rendered chart server-side before touching
     # the release (a ConfigMap key in both data and binaryData, a schema error) — the upgrade starts only when it passes.
-    # Server-side apply: no last-applied-configuration annotation needed (helm's hook Jobs have none, client-side apply
-    # warns about every one); --force-conflicts because helm owns the fields and a dry run persists nothing
-    say "server-side validation of the rendered chart (kubectl apply --dry-run=server)"
-    if ! helm template "$RELEASE" "$CHART" --namespace "$NAMESPACE" -f "$filled" --set "tenant.slug=$SLUG" ${EXTRA[@]+"${EXTRA[@]}"} ${TAG:+--set "image.tag=$TAG" --set "worker.image.tag=$TAG" --set "web.image.tag=$TAG" --set "managedRunners.image.tag=$TAG"} | "${K[@]}" apply --server-side --dry-run=server --field-manager=cell-provision-check --force-conflicts -f - > /dev/null; then
-      echo "the API server rejects the rendered chart (see above) — nothing was changed; fix the chart or the values and apply again" >&2; exit 1
-    fi
-    echo "   ok"
+    # Hooks are checked apart (scripts/lib/split-hooks.py): the realm-sync Job exists from the previous run until helm
+    # deletes and recreates it (hook-delete-policy before-hook-creation) and a Job's spec.template is immutable, so a
+    # dry-run APPLY of it fails with "field is immutable" on every upgrade — it is validated as a NEW object instead
+    # (kubectl create --dry-run=server on a copy with a unique name). Server-side apply for the rest: no
+    # last-applied-configuration annotation needed; --force-conflicts because helm owns the fields and nothing persists
+    say "server-side validation of the rendered chart (kubectl apply --dry-run=server; hooks as new objects)"
+    local rendered; rendered="$(mktemp -d)"
+    helm template "$RELEASE" "$CHART" --namespace "$NAMESPACE" -f "$filled" --set "tenant.slug=$SLUG" ${EXTRA[@]+"${EXTRA[@]}"} ${TAG:+--set "image.tag=$TAG" --set "worker.image.tag=$TAG" --set "web.image.tag=$TAG" --set "managedRunners.image.tag=$TAG"} > "$rendered/all.yaml"
+    dry_run_rendered "$rendered/all.yaml" || { rm -rf "$rendered"; echo "the API server rejects the rendered chart (see above) — nothing was changed; fix the chart or the values and apply again" >&2; exit 1; }
+    rm -rf "$rendered"
   fi
   if [ "$existed" = 1 ] && [ "$FIRST_BACKUP" = 1 ] && "${K[@]}" get cronjob "$RELEASE-backup" > /dev/null 2>&1; then
     say "pre-upgrade backup"
@@ -253,6 +256,20 @@ readiness_report() {
       echo "   api:      GET $url → the probe pod gave no verdict: $(printf '%s' "$out" | tail -3 | tr '\n' ' ' | head -c 300)" >&2
       return 1;;
   esac
+}
+
+# dry_run_rendered <rendered.yaml> — the server-side dry run of a rendered chart, hooks apart (see apply):
+# non-hook resources through `apply --dry-run=server` as they will be applied, hooks through `create --dry-run=server`
+# under a unique name so an existing hook Job (immutable spec.template) cannot make the check fail.
+dry_run_rendered() {   # the namespace comes with K
+  local all="$1" dir; dir="$(mktemp -d)"
+  python3 scripts/lib/split-hooks.py --rest "$dir/rest.yaml" --hooks "$dir/hooks.yaml" --suffix "dryrun-$(date +%s)" < "$all" 2> "$dir/split.log" || { cat "$dir/split.log" >&2; rm -rf "$dir"; return 1; }
+  sed 's/^/   /' "$dir/split.log"
+  "${K[@]}" apply --server-side --dry-run=server --field-manager=cell-provision-check --force-conflicts -f "$dir/rest.yaml" > /dev/null || { rm -rf "$dir"; return 1; }
+  if [ -s "$dir/hooks.yaml" ]; then
+    "${K[@]}" create --dry-run=server -f "$dir/hooks.yaml" > /dev/null || { rm -rf "$dir"; return 1; }
+  fi
+  rm -rf "$dir"; echo "   ok"
 }
 
 # release_recoverable — a release left failed / pending by an earlier apply: helm upgrades over `failed` when a good

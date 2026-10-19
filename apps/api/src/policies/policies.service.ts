@@ -1,4 +1,5 @@
 import { releaseImage } from '../sbom/running-sbom';
+import { getMetrics } from '../telemetry/metrics';
 import { uniqueVulnerabilities } from '../vulnerabilities/severity';
 import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import { and, desc, eq, inArray } from 'drizzle-orm';
@@ -224,6 +225,7 @@ export class PoliciesService {
     const evaluated = evaluateGate(pols, { environmentKind: env?.kind ?? null, hasSbom: !!f.sbomId, findings: f.findings, kevOpen: f.kevOpen, secretsOpen: f.secretsOpen, iacOpen: f.iacOpen, sastOpen: f.sastOpen, noSbomMessage });
     // Fail safe: an SBOM whose findings are not linked yet (or whose correlation failed) looks clean but is unknown.
     const result = uncorrelated ? 'fail' : evaluated.result;
+    getMetrics().counterAdd(getMetrics().gateEvaluations, 1, { result });
     const violations = uncorrelated ? [uncorrelated, ...evaluated.violations] : evaluated.violations;
     const applied = evaluated.applied;
     const [row] = await this.db.insert(gateEvaluations).values({ organizationId: chain.organizationId, serviceId, environmentId: options.environmentId ?? null, subject: { ...subject, version: subject.version ?? f.version ?? null, evaluatedDigest: f.evaluatedDigest, sbomDigest: f.sbomDigest, sbomId: f.sbomId ?? undefined, sbomSource: f.sbomId ? (subject.sbomId && f.sbomId === subject.sbomId ? 'pipeline' : 'lookup') : undefined }, result, violations, policyIds: applied, jobId: options.jobId ?? null, deploymentId: options.deploymentId ?? null, actor: options.actor ?? null }).returning();

@@ -84,6 +84,31 @@ spec:
                 secretKeyRef:
                   name: {{ .Release.Name }}-managed-runner
                   key: MANAGED_RUNNER_SECRET
+            # observability: the runner's own /metrics and OTLP traces (one trace per pipeline with the api / worker)
+            - name: RUNNER_METRICS_PORT
+              value: {{ ternary (toString .Values.observability.metrics.port) "0" .Values.observability.metrics.enabled | quote }}
+            - name: APP_VERSION
+              value: {{ .Values.managedRunners.image.tag | default .Chart.AppVersion | quote }}
+            - name: DEPLOYMENT_ENVIRONMENT
+              value: {{ .Values.observability.environment | quote }}
+            - name: MATELOT_CELL
+              value: {{ .Values.tenant.slug | quote }}
+            {{- with .Values.observability.otlp.endpoint }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ . | quote }}
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: {{ $.Values.observability.otlp.protocol | quote }}
+            {{- end }}
+          {{- if .Values.observability.otlp.headers }}
+          envFrom:
+            - secretRef:
+                name: {{ .Release.Name }}-otel
+          {{- end }}
+          {{- if .Values.observability.metrics.enabled }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.observability.metrics.port }}
+          {{- end }}
           resources:
             {{- toYaml .Values.managedRunners.resources | nindent 12 }}
           securityContext:

@@ -209,6 +209,50 @@ assert "loginTheme" not in json.loads(by(off, "ConfigMap", "acme-keycloak-realm"
 assert not any(v["name"] == "theme" for v in by(off, "Deployment", "acme-keycloak")["spec"]["template"]["spec"]["volumes"])
 print("   login theme: ConfigMap holds every file (images binary, cell.css from values); every item resolves to /opt/keycloak/themes/matelot/<path>, login/theme.properties included; realm selects it; theme.enabled=false is stock")
 PY
+# observability (docs/observability.md, drop 1): metrics ports and env on by default, OTLP env only once an endpoint
+# is set (headers in a Secret), a NetworkPolicy admitting scrapers from the monitoring namespaces; metrics.enabled=false
+# removes ports, env and policy. No monitoring CRD is rendered (ServiceMonitors come with drop 2).
+run otlp --set observability.otlp.endpoint=http://jaeger.observability:4318 --set observability.otlp.headers.Authorization="Basic abc" --set observability.otlp.metrics=true
+run metrics-off --set observability.metrics.enabled=false
+python3 - "$OUT" <<'PY'
+import sys, yaml
+out = sys.argv[1]
+def docs(name): return [d for d in yaml.safe_load_all(open(f"{out}/{name}.yaml")) if d]
+def by(ds, kind, name): return next(d for d in ds if d["kind"] == kind and d["metadata"]["name"] == name)
+def container(ds, kind, name, c): return next(x for x in by(ds, kind, name)["spec"]["template"]["spec"]["containers"] if x["name"] == c)
+def env(c): return {e["name"]: e.get("value") for e in c.get("env", [])}
+WORKLOADS = (("Deployment", "acme-api", "api"), ("Deployment", "acme-worker", "worker"), ("StatefulSet", "acme-runner", "runner"))
+d = docs("defaults")
+cm = by(d, "ConfigMap", "acme-api-config")["data"]
+assert cm["MATELOT_METRICS_ENABLED"] == "true" and cm["MATELOT_METRICS_PORT"] == "9464" and cm["DEPLOYMENT_ENVIRONMENT"] == "production", cm
+assert "OTEL_EXPORTER_OTLP_ENDPOINT" not in cm, "no OTLP env without an endpoint"
+for kind, name, c in WORKLOADS:
+    ports = {p["name"]: p["containerPort"] for p in container(d, kind, name, c).get("ports", [])}
+    assert ports.get("metrics") == 9464, (name, ports)
+assert env(container(d, "Deployment", "acme-api", "api"))["MATELOT_COMPONENT"] == "api"
+assert env(container(d, "Deployment", "acme-worker", "worker"))["MATELOT_COMPONENT"] == "worker"
+r = env(container(d, "StatefulSet", "acme-runner", "runner"))
+assert r["RUNNER_METRICS_PORT"] == "9464" and r["MATELOT_CELL"] == "acme" and "OTEL_EXPORTER_OTLP_ENDPOINT" not in r, r
+np = by(d, "NetworkPolicy", "acme-allow-metrics-scrape")["spec"]
+assert np["ingress"][0]["ports"] == [{"port": 9464}] and {f["namespaceSelector"]["matchLabels"]["kubernetes.io/metadata.name"] for f in np["ingress"][0]["from"]} == {"monitoring", "observability"}, np
+assert not any(x["apiVersion"].startswith("monitoring.coreos.com") for x in d), "no monitoring CRD with defaults"
+assert not any(x["kind"] == "Secret" and x["metadata"]["name"] == "acme-otel" for x in d)
+o = docs("otlp")
+cm = by(o, "ConfigMap", "acme-api-config")["data"]
+assert cm["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://jaeger.observability:4318" and cm["OTEL_EXPORTER_OTLP_PROTOCOL"] == "http/protobuf" and cm["OTEL_TRACES_SAMPLER"] == "parentbased_always_on" and cm["OTEL_METRICS_EXPORTER"] == "prometheus,otlp", cm
+assert by(o, "Secret", "acme-otel")["stringData"]["OTEL_EXPORTER_OTLP_HEADERS"] == "Authorization=Basic abc"
+for kind, name, c in WORKLOADS:
+    assert any(e.get("secretRef", {}).get("name") == "acme-otel" for e in container(o, kind, name, c).get("envFrom", [])), f"{name}: the OTLP headers Secret is not referenced"
+r = env(container(o, "StatefulSet", "acme-runner", "runner"))
+assert r["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://jaeger.observability:4318" and r["OTEL_EXPORTER_OTLP_PROTOCOL"] == "http/protobuf", r
+m = docs("metrics-off")
+assert by(m, "ConfigMap", "acme-api-config")["data"]["MATELOT_METRICS_ENABLED"] == "false"
+for kind, name, c in WORKLOADS:
+    assert not any(p["name"] == "metrics" for p in container(m, kind, name, c).get("ports", [])), name
+assert env(container(m, "StatefulSet", "acme-runner", "runner"))["RUNNER_METRICS_PORT"] == "0"
+assert not any(x["kind"] == "NetworkPolicy" and x["metadata"]["name"] == "acme-allow-metrics-scrape" for x in m)
+print("   observability: metrics ports + env on by default, scrape NetworkPolicy, OTLP env + headers Secret once an endpoint is set, all off with metrics.enabled=false, no monitoring CRD")
+PY
 # the realm-sync hook: post-install + post-upgrade, mounts the realm ConfigMap, runs the shared script; Keycloak's import
 # directory gets realm.json only (the script must not land in /opt/keycloak/data/import)
 grep -q 'helm.sh/hook: post-install,post-upgrade' "$OUT/defaults.yaml" && grep -q 'node, /realm/realm-sync.js\|"node", "/realm/realm-sync.js"' "$OUT/defaults.yaml" || { echo "realm-sync hook Job missing" >&2; exit 1; }

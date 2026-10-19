@@ -22,6 +22,10 @@ import { jobs } from '../database/schema';
 import { DATABASE, Database } from '../database/database.module';
 import { RiskService } from '../risk/risk.service';
 import { GithubSyncJob, GithubWebhookJob, QUEUES } from '../jobs/queues';
+import { WorkerGauges } from '../telemetry/worker-gauges';
+import { Metrics } from '../telemetry/metrics';
+import { contextFromTraceparent, inSpan } from '../telemetry/spans';
+import { context as otelContext } from '@opentelemetry/api';
 
 @Injectable()
 export class WorkerService implements OnModuleInit, OnApplicationShutdown {
@@ -56,9 +60,12 @@ export class WorkerService implements OnModuleInit, OnApplicationShutdown {
     private readonly digest: DigestService,
     private readonly resolver: ScopeResolverService,
     @Inject(DATABASE) private readonly db: Database,
+    private readonly gauges: WorkerGauges,
+    private readonly metrics: Metrics,
   ) {
     this.connection = new IORedis(config.get('REDIS_URL', { infer: true }), { maxRetriesPerRequest: null });
   }
+  private gaugeTick?: NodeJS.Timeout;
 
   onModuleInit(): void {
     this.workers = [
@@ -66,16 +73,28 @@ export class WorkerService implements OnModuleInit, OnApplicationShutdown {
       new Worker<GithubWebhookJob>(QUEUES.githubWebhooks, (job) => this.handleWebhook(job), { connection: this.connection, concurrency: 5 }),
     ];
     for (const worker of this.workers) {
-      worker.on('failed', (job, error) => this.logger.error(`${worker.name} job ${job?.id} failed: ${error.message}`));
-      worker.on('completed', (job) => this.logger.log(`${worker.name} job ${job.id} completed`));
+      worker.on('failed', (job, error) => { this.metrics.counterAdd(this.metrics.queueJobsProcessed, 1, { queue: worker.name, result: 'failed' }); this.logger.error(`${worker.name} job ${job?.id} failed: ${error.message}`); });
+      worker.on('completed', (job) => { this.metrics.counterAdd(this.metrics.queueJobsProcessed, 1, { queue: worker.name, result: 'completed' }); this.logger.log(`${worker.name} job ${job.id} completed`); });
     }
+    // the gauges a scrape cannot compute: queue depth, pipeline queue, runners (15 s); open findings with correlation
+    this.gauges.attach(this.connection);
+    void this.gauges.refresh();
+    void this.gauges.refreshFindings();
+    this.gaugeTick = setInterval(() => void this.gauges.refresh(), 15_000);
     this.sweeper = setInterval(() => void this.jobs.sweep().catch((e: Error) => this.logger.error(`sweep failed: ${e.message}`)), 15_000);
     if (this.registry.available) {
       const run = () => void this.registry.reconcile().then((r) => r.newTags && this.logger.log(`registry reconcile: ${r.newTags} new tags across ${r.repositories} repositories`)).catch((e: Error) => this.logger.warn(`registry reconcile failed: ${e.message}`));
       setTimeout(run, 10_000);
       this.registryReconcile = setInterval(run, 2 * 60_000);
     }
-    const correlate = () => void this.correlation.run({ limit: 2000 }).then((r) => (r.checked || r.findingsOpened || r.findingsFixed) && this.logger.log(`correlation: ${r.checked} components checked, ${r.newAdvisories} new advisories, ${r.findingsOpened} findings opened, ${r.findingsFixed} fixed`)).catch((e: Error) => this.logger.warn(`correlation failed: ${e.message}`));
+    // every interval loop is one root span ("worker <loop>"): a slow correlation run is one trace, not log lines
+    const correlate = () => void inSpan('worker correlation', async () => {
+      const started = Date.now();
+      const r = await this.correlation.run({ limit: 2000 });
+      this.metrics.sbomCorrelationDuration.record((Date.now() - started) / 1000, { source: 'loop' });
+      if (r.checked || r.findingsOpened || r.findingsFixed) this.logger.log(`correlation: ${r.checked} components checked, ${r.newAdvisories} new advisories, ${r.findingsOpened} findings opened, ${r.findingsFixed} fixed`);
+      await this.gauges.refreshFindings();
+    }).catch((e: Error) => this.logger.warn(`correlation failed: ${e.message}`));
     // Pipeline "evaluate" stage: policy_eval jobs are executed here, not by runners.
     const exceptionsTick = () => this.exceptionsService.tick().then((r) => { if (r.expired || r.applied) this.logger.log(`exceptions: ${r.expired} expired, ${r.applied} finding(s) covered`); }).catch((e: Error) => this.logger.warn(`exceptions tick failed: ${e.message}`));
     this.exceptionsLoop = setInterval(() => { void exceptionsTick(); void this.digest.tick().then((r) => { if (r.overdue || r.kev || r.expiring) this.logger.log(`notifications: ${r.overdue} SLA, ${r.kev} KEV, ${r.expiring} expiring`); }).catch((e: Error) => this.logger.warn(`digest failed: ${e.message}`)); void this.remediationService.reconcile().then((r) => { if (r.closed) this.logger.log(`remediations: ${r.closed} closed (findings resolved)`); }).then(() => this.remediationService.syncFromTrackers()).then((r) => { if (r.closed || r.reopened) this.logger.log(`trackers: ${r.closed} remediation(s) closed, ${r.reopened} reopened from Jira/GitHub/GitLab`); }).catch((e: Error) => this.logger.warn(`remediation reconcile failed: ${e.message}`)); }, 60 * 60_000);
@@ -121,7 +140,8 @@ export class WorkerService implements OnModuleInit, OnApplicationShutdown {
         try {
           if (!job.serviceId) throw new Error('job has no service');
           const chain = await this.resolver.resolveChain({ serviceId: job.serviceId });
-          const ev = await this.policiesService.evaluateJob({ id: job.id, serviceId: job.serviceId, payload: job.payload as Record<string, unknown>, pipelineId: job.pipelineId }, chain);
+          // the evaluation runs under the job's span in the pipeline's trace (jobs.finish emits the job span itself)
+          const ev = await otelContext.with(contextFromTraceparent(job.traceParent), () => inSpan('gate evaluate', () => this.policiesService.evaluateJob({ id: job.id, serviceId: job.serviceId!, payload: job.payload as Record<string, unknown>, pipelineId: job.pipelineId }, chain), { attributes: { 'matelot.job.id': job.id, 'matelot.pipeline.id': job.pipelineId ?? '' } }));
           const lines = [`gate: ${ev.result.toUpperCase()} — ${ev.policies.length} polic${ev.policies.length === 1 ? 'y' : 'ies'} applied`, ...ev.violations.map((v) => `${v.action === 'block' ? '✗' : '!'} ${v.policyName}: ${v.message}`)];
           await this.jobs.appendSystemLog(job.id, lines);
           await this.jobs.finish(job.id, ev.result === 'fail' ? 'failed' : 'succeeded', { gate: ev.result, evaluationId: ev.id, violations: ev.violations }, ev.result === 'fail' ? ev.violations.filter((v) => v.action === 'block').map((v) => v.message).join('; ') : null);
@@ -140,17 +160,30 @@ export class WorkerService implements OnModuleInit, OnApplicationShutdown {
     return out;
   }
 
-  private async handleSync(job: Job<GithubSyncJob>) {
-    const result = await this.sourceSync.sync(job.data.integrationId);
-    this.logger.log(`synced integration ${job.data.integrationId}: ${JSON.stringify(result)}`);
-    return result;
+  /** A queue job runs under the trace of whoever enqueued it (QueueService puts the traceparent into the job data). */
+  private async handleSync(job: Job<GithubSyncJob & { __traceparent?: string }>) {
+    return otelContext.with(contextFromTraceparent(job.data.__traceparent), () => inSpan(`queue ${QUEUES.githubSync}`, async () => {
+      try {
+        const result = await this.sourceSync.sync(job.data.integrationId);
+        this.logger.log(`synced integration ${job.data.integrationId}: ${JSON.stringify(result)}`);
+        return result;
+      } catch (error) {
+        this.metrics.counterAdd(this.metrics.integrationSyncFailures, 1, { kind: 'source' });
+        throw error;
+      }
+    }, { attributes: { 'messaging.system': 'bullmq', 'messaging.destination.name': QUEUES.githubSync } }));
   }
 
-  private async handleWebhook(job: Job<GithubWebhookJob>) {
-    await this.githubSync.processDelivery(job.data.deliveryId);
+  private async handleWebhook(job: Job<GithubWebhookJob & { __traceparent?: string }>) {
+    return otelContext.with(contextFromTraceparent(job.data.__traceparent), () => inSpan(`queue ${QUEUES.githubWebhooks}`, async () => {
+      this.metrics.webhookLag.record(Math.max(0, (Date.now() - job.timestamp) / 1000), { provider: 'github' });
+      await this.githubSync.processDelivery(job.data.deliveryId);
+    }, { attributes: { 'messaging.system': 'bullmq', 'messaging.destination.name': QUEUES.githubWebhooks } }));
   }
 
   async onApplicationShutdown(): Promise<void> {
+    if (this.gaugeTick) clearInterval(this.gaugeTick);
+    await this.gauges.close();
     if (this.sweeper) clearInterval(this.sweeper);
     if (this.imageSync) clearInterval(this.imageSync);
     if (this.registryReconcile) clearInterval(this.registryReconcile);

@@ -6,13 +6,22 @@ import { isTransient, retryTransient } from './retry';
 import { CellClient } from './client';
 import type { RunnerConfig } from './protocol';
 import { execute, LogShipper } from './executor';
+import { JsonLogger, levelFromEnv, Metrics, setTracer, tracerFromEnv } from './telemetry';
 
-const VERSION = '0.3.2';
+const VERSION = '0.3.3';
 const url = (process.env.RUNNER_URL ?? '').replace(/\/$/, '');
 const dataDir = process.env.RUNNER_DATA_DIR ?? '/data';
 const stateFile = join(dataDir, 'runner.json');
 const name = process.env.RUNNER_NAME ?? hostname();
 const tags = (process.env.RUNNER_TAGS ?? '').split(',').map((t) => t.trim()).filter(Boolean);
+
+// observability (docs/observability.md): spans to OTEL_EXPORTER_OTLP_ENDPOINT when set, /metrics on RUNNER_METRICS_PORT
+// (0 = off), JSON log lines with the trace id — the same resource attributes as the api and the worker
+const resource = { 'service.name': 'matelot-runner', 'service.version': process.env.APP_VERSION ?? VERSION, 'deployment.environment': process.env.DEPLOYMENT_ENVIRONMENT ?? 'production', 'matelot.component': 'runner', 'matelot.runner.name': name, ...(process.env.MATELOT_CELL ? { 'matelot.cell': process.env.MATELOT_CELL } : {}) };
+const tracer = tracerFromEnv(process.env, resource);
+setTracer(tracer);
+const logger = new JsonLogger({ component: 'runner', runner: name, ...(process.env.MATELOT_CELL ? { cell: process.env.MATELOT_CELL } : {}) }, tracer, levelFromEnv(process.env));
+const metrics = new Metrics({ version: process.env.APP_VERSION ?? VERSION, commit: process.env.APP_COMMIT ?? 'unknown', node_version: process.version, component: 'runner' });
 
 interface State {
   runnerId: string;
@@ -42,7 +51,7 @@ function applyConfig(config?: RunnerConfig) {
   process.env.REGISTRY_HOST_ALIASES = [own, fromCell].filter(Boolean).join(',');
   if (config.latestVersion && config.latestVersion !== VERSION && announcedVersion !== config.latestVersion) {
     announcedVersion = config.latestVersion;
-    console.warn(`runner agent ${VERSION} is outdated; the cell ships ${config.latestVersion} — rebuild the image and recreate the container`);
+    logger.warn(`runner agent ${VERSION} is outdated; the cell ships ${config.latestVersion} — rebuild the image and recreate the container`);
   }
 }
 
@@ -76,15 +85,15 @@ async function main() {
     state = { runnerId: reg.runnerId, runnerToken: reg.runnerToken, url };
     await writeFile(stateFile, JSON.stringify(state), { mode: 0o600 });
     client.setToken(reg.runnerToken);
-    console.log(`registered as ${name} in pool "${reg.pool.name}"${managedSecret ? ' (managed)' : ''} (tags: ${autoTags.join(', ') || 'none'})`);
+    logger.info(`registered as ${name} in pool "${reg.pool.name}"${managedSecret ? ' (managed)' : ''} (tags: ${autoTags.join(', ') || 'none'})`);
   };
   if (managedSecret || !state || state.url !== url) await register();
-  else console.log(`resuming runner ${state.runnerId} (${name})`);
+  else logger.info(`resuming runner ${state.runnerId} (${name})`);
   /** A managed runner whose record was replaced or pruned gets 401: it registers again instead of failing forever. */
   const reRegisterOn401 = async (error: Error) => {
     if (!managedSecret || !/→ 401/.test(error.message)) return false;
-    console.warn('runner token no longer accepted; registering again with the managed secret');
-    await register().catch((e: Error) => console.error(`re-registration failed: ${e.message}`));
+    logger.warn('runner token no longer accepted; registering again with the managed secret');
+    await register().catch((e: Error) => logger.error(`re-registration failed: ${e.message}`));
     return true;
   };
 
@@ -94,13 +103,16 @@ async function main() {
     if (stopping) return;
     stopping = true;
     claimAbort.abort();
-    console.log('shutting down after the current job');
+    logger.info('shutting down after the current job');
   };
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
+  const metricsPort = Number(process.env.RUNNER_METRICS_PORT ?? 0);
+  if (metricsPort > 0) await metrics.listen(metricsPort).then((p) => logger.info(`metrics on :${p}/metrics${tracer.enabled ? '; tracing on' : '; tracing off'}`)).catch((e: Error) => logger.warn(`metrics listener not started: ${e.message}`));
+  metrics.set('matelot_runner_busy', {}, 0);
 
-  const heartbeat = setInterval(() => void client.heartbeat(metadata, autoTags).then((r) => applyConfig(r?.config)).catch((e: Error) => console.error(`heartbeat failed: ${e.message}`)), 15_000);
-  await retryTransient('heartbeat', () => client.heartbeat(metadata, autoTags), { until: () => stopping }).then((r) => applyConfig(r?.config)).catch((e: Error) => console.error(`heartbeat failed: ${e.message}`));
+  const heartbeat = setInterval(() => void client.heartbeat(metadata, autoTags).then((r) => applyConfig(r?.config)).catch((e: Error) => logger.error(`heartbeat failed: ${e.message}`)), 15_000);
+  await retryTransient('heartbeat', () => client.heartbeat(metadata, autoTags), { until: () => stopping }).then((r) => applyConfig(r?.config)).catch((e: Error) => logger.error(`heartbeat failed: ${e.message}`));
 
   while (!stopping) {
     let job;
@@ -109,14 +121,19 @@ async function main() {
     } catch (error) {
       if (stopping) break;
       if (await reRegisterOn401(error as Error)) continue;
-      console.error(`claim failed: ${(error as Error).message}${isTransient(error) ? ' (cell unreachable; will keep trying)' : ''}`);
+      logger.error(`claim failed: ${(error as Error).message}${isTransient(error) ? ' (cell unreachable; will keep trying)' : ''}`);
       await new Promise((r) => setTimeout(r, 5000));
       continue;
     }
     if (!job) continue;
     if (stopping) break; // never start a job after SIGTERM (the platform takes back an unstarted assignment)
 
-    console.log(`job ${job.id} (${job.type}) assigned`);
+    // the job's span, under the pipeline's trace the cell fixed for it (job.traceParent); phases are its children
+    const span = tracer.start(`job run ${job.type}`, job.traceParent ?? null, { 'matelot.job.id': job.id, 'matelot.job.kind': job.type, 'matelot.job.attempt': job.attempts, 'matelot.runner.name': name });
+    const jobStarted = Date.now();
+    await tracer.run(span, async () => {
+    logger.info(`job ${job.id} (${job.type}) assigned`, { job: job.id, kind: job.type });
+    metrics.set('matelot_runner_busy', {}, 1);
     const log = new LogShipper(client, job.id);
     const controller = new AbortController();
     const lease = setInterval(() => {
@@ -128,12 +145,13 @@ async function main() {
             controller.abort();
           }
         })
-        .catch((e: Error) => console.error(`job heartbeat failed: ${e.message}`));
+        .catch((e: Error) => logger.error(`job heartbeat failed: ${e.message}`));
     }, 20_000);
     const timeout = setTimeout(() => {
       log.system(`timeout after ${job.timeoutSeconds}s`);
       controller.abort();
     }, job.timeoutSeconds * 1000);
+    let status = 'failed';
     try {
       await client.start(job.id);
       log.system(`runner ${name} v${VERSION} starting ${job.type} (attempt ${job.attempts})`);
@@ -141,23 +159,36 @@ async function main() {
       log.system('done');
       await log.close();
       await client.complete(job.id, 'succeeded', result, undefined, 0);
-      console.log(`job ${job.id} succeeded`);
+      status = 'succeeded';
+      span.setAttribute('matelot.job.exit_code', 0);
+      logger.info(`job ${job.id} succeeded`, { job: job.id, kind: job.type, seconds: Math.round((Date.now() - jobStarted) / 1000) });
     } catch (error) {
       const message = (error as Error).message ?? String(error);
       const skipped = !!(error as { skipped?: boolean }).skipped;
+      status = skipped ? 'skipped' : 'failed';
+      const exitCode = skipped ? undefined : ((error as { exitCode?: number }).exitCode ?? 1);
+      span.setAttribute('matelot.job.exit_code', exitCode ?? null);
       log.system(skipped ? `skipped: ${message}` : `failed: ${message}`);
       await log.close();
-      await client.complete(job.id, skipped ? 'skipped' : 'failed', undefined, message, skipped ? undefined : ((error as { exitCode?: number }).exitCode ?? 1)).catch((e: Error) => console.error(`complete failed: ${e.message}`));
-      console.error(`job ${job.id} ${skipped ? 'skipped' : 'failed'}: ${message}`);
+      await client.complete(job.id, skipped ? 'skipped' : 'failed', undefined, message, exitCode).catch((e: Error) => logger.error(`complete failed: ${e.message}`));
+      logger.error(`job ${job.id} ${status}: ${message}`, { job: job.id, kind: job.type });
+      if (!skipped) throw error;   // ends the span with the error status
     } finally {
       clearInterval(lease);
       clearTimeout(timeout);
+      span.setAttribute('matelot.job.status', status);
+      metrics.set('matelot_runner_busy', {}, 0);
+      metrics.inc('matelot_runner_jobs_total', { kind: job.type, status });
+      metrics.observe('matelot_runner_job_duration_seconds', { kind: job.type, phase: 'total' }, (Date.now() - jobStarted) / 1000, span.sampled && tracer.enabled ? { traceId: span.traceId, spanId: span.spanId } : undefined);
     }
+    }).catch(() => undefined);   // the failure is reported above; the loop goes on
   }
   clearInterval(heartbeat);
+  await metrics.close();
+  await tracer.shutdown(5000);   // the last spans leave before the process does (SIGTERM on a pod rollout)
 }
 
 main().catch((error: Error) => {
-  console.error(error.message);
+  logger.error(error.message);
   process.exit(1);
 });

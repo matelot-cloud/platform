@@ -99,14 +99,29 @@ jobs:
       - name: kind cluster for API-server validation (about 40 s)
         uses: helm/kind-action@v1
         with: { cluster_name: chart-dry-run, wait: 60s }
-      - name: Rendered chart passes `kubectl apply --dry-run=server` (what helm template cannot see - duplicate ConfigMap keys, schema errors)
+      - name: Rendered chart passes the server-side dry run, fresh AND over an existing release (what helm template cannot see)
+        # the same check `apply` runs before every upgrade (scripts/cell-provision.sh dry_run_rendered): non-hook
+        # resources through apply --dry-run=server, hooks through create --dry-run=server under a unique name. The
+        # upgrade case matters: once the realm-sync hook Job exists (helm keeps it until the next run), a dry-run APPLY
+        # of it fails with "spec.template: field is immutable" — the fresh-namespace check alone passed while every real
+        # upgrade failed. So: dry-run each configuration on the empty namespace, create the default render for real,
+        # dry-run every configuration again.
         run: |
           kubectl create namespace tenant-acme
-          for cfg in "" "--set ingress.tls=true" "--set tenant.name=Globex --set keycloak.theme.logo=https://cdn.example.com/logo.png --set keycloak.theme.primaryColor=#0f766e" "--set backup.enabled=true"; do
-            # shellcheck disable=SC2086
-            helm template acme deploy/helm/secops-cell --namespace tenant-acme $cfg | kubectl apply --server-side --dry-run=server --field-manager=ci-check --namespace tenant-acme -f - > /dev/null || { echo "server-side validation failed for: ${cfg:-defaults}" >&2; exit 1; }
-            echo "server dry-run ok: ${cfg:-defaults}"
-          done
+          dry_run() { # <label> <helm --set args…>
+            local label="$1"; shift
+            helm template acme deploy/helm/secops-cell --namespace tenant-acme "$@" > /tmp/all.yaml
+            python3 scripts/lib/split-hooks.py --rest /tmp/rest.yaml --hooks /tmp/hooks.yaml --suffix "dryrun-$RANDOM" < /tmp/all.yaml
+            kubectl apply --server-side --dry-run=server --field-manager=ci-check --force-conflicts --namespace tenant-acme -f /tmp/rest.yaml > /dev/null || { echo "server-side validation failed for: $label" >&2; exit 1; }
+            kubectl create --dry-run=server --namespace tenant-acme -f /tmp/hooks.yaml > /dev/null || { echo "hook validation failed for: $label" >&2; exit 1; }
+            echo "server dry-run ok: $label"
+          }
+          configs=("defaults" "tls --set ingress.tls=true" "branded --set tenant.name=Globex --set keycloak.theme.logo=https://cdn.example.com/logo.png --set keycloak.theme.primaryColor=#0f766e" "backup --set backup.enabled=true")
+          for cfg in "${configs[@]}"; do dry_run $cfg; done
+          echo "--- the release exists (hook Job included): the upgrade case"
+          helm template acme deploy/helm/secops-cell --namespace tenant-acme | kubectl create --namespace tenant-acme -f - > /dev/null
+          kubectl get job -n tenant-acme acme-realm-sync > /dev/null
+          for cfg in "${configs[@]}"; do dry_run $cfg; done
       - name: Login theme on a real Keycloak pod (the chart's theme volume + mount as kubelet projects it; about 90 s)
         run: bash scripts/chart-theme-kind-test.sh
       - name: Operator scripts parse

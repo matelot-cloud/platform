@@ -35,6 +35,14 @@ spec:
         - name: worker
           image: {{ include "cell.workerImage" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if .Values.observability.metrics.enabled }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.observability.metrics.port }}
+          {{- end }}
+          env:
+            - name: MATELOT_COMPONENT
+              value: worker
           envFrom:
             - configMapRef:
                 name: {{ .Release.Name }}-api-config
@@ -42,6 +50,10 @@ spec:
                 name: {{ .Release.Name }}-api-secrets
             - secretRef:
                 name: {{ .Release.Name }}-cell-key
+            {{- if .Values.observability.otlp.headers }}
+            - secretRef:
+                name: {{ .Release.Name }}-otel
+            {{- end }}
           resources:
             {{- toYaml .Values.worker.resources | nindent 12 }}
           securityContext:

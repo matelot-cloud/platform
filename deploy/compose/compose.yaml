@@ -114,7 +114,7 @@ services:
   api:
     image: ${MATELOT_REGISTRY_PREFIX:-ghcr.io/matelot-cloud}/api:${MATELOT_VERSION:-latest}
     <<: [*app-image, *restart, *logging]
-    command: ["sh", "-c", "eval \"$$LOAD_ENV\" && node dist/migrate.js && exec node dist/main.js"]
+    command: ["sh", "-c", "eval \"$$LOAD_ENV\" && node dist/migrate.js && exec node -r ./dist/telemetry/tracing.js dist/main.js"]
     environment:
       LOAD_ENV: *load-env
     volumes:
@@ -134,7 +134,7 @@ services:
   worker:
     image: ${MATELOT_REGISTRY_PREFIX:-ghcr.io/matelot-cloud}/worker:${MATELOT_VERSION:-latest}
     <<: [*app-image, *restart, *logging]
-    command: ["sh", "-c", "eval \"$$LOAD_ENV\" && exec node dist/worker.js"]
+    command: ["sh", "-c", "eval \"$$LOAD_ENV\" && exec node -r ./dist/telemetry/tracing.js dist/worker.js"]
     environment:
       LOAD_ENV: *load-env
     volumes:
@@ -166,6 +166,13 @@ services:
       RUNNER_DATA_DIR: /data
       RUNNER_WORKDIR: /work
       HOME: /work
+      # observability (docs/observability.md): /metrics on the compose network only; traces when an endpoint is set
+      RUNNER_METRICS_PORT: "9464"
+      APP_VERSION: ${MATELOT_VERSION:-latest}
+      MATELOT_CELL: ${MATELOT_ORG_SLUG:-matelot}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${MATELOT_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${MATELOT_OTLP_PROTOCOL:-http/protobuf}
+      OTEL_EXPORTER_OTLP_HEADERS: ${MATELOT_OTLP_HEADERS:-}
     volumes:
       - config:/matelot:ro
       - runner-data:/data

@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 # work on a copy of the repo's deploy/cells so the real folder stays untouched; a fake kubectl answers the kind context
 mkdir -p "$T/bin" "$T/repo/scripts/lib" "$T/repo/deploy/cells"
-cp scripts/cell-provision.sh "$T/repo/scripts/"; cp scripts/lib/wait.sh "$T/repo/scripts/lib/"; cp deploy/cells/_template.values.yaml "$T/repo/deploy/cells/"
+cp scripts/cell-provision.sh "$T/repo/scripts/"; cp scripts/lib/wait.sh scripts/lib/split-hooks.py "$T/repo/scripts/lib/"; cp deploy/cells/_template.values.yaml "$T/repo/deploy/cells/"
 printf '#!/usr/bin/env bash\n[ "$1 $2" = "config current-context" ] && { echo "${FAKE_CONTEXT:-kind-secops}"; exit 0; }\nexit 1\n' > "$T/bin/kubectl"; chmod +x "$T/bin/kubectl"
 export PATH="$T/bin:$PATH"
 cd "$T/repo"
@@ -116,4 +116,76 @@ pending='1\tMon Oct 13 10:00:00 2026\tsuperseded\tsecops-cell-0.1.0\t0.1.0-rc.11
 HELM_STATUS=pending-upgrade HELM_HISTORY="$pending" release_recoverable > "$T/r.out" || { echo "FAIL: pending-upgrade with a good revision must roll back and pass" >&2; exit 1; }
 grep -q "rollback globex 2 -n tenant-globex --wait --timeout 5m" "$HELM_LOG" || { echo "FAIL: expected a rollback to revision 2: $(cat "$HELM_LOG")" >&2; exit 1; }
 
-echo "cell-provision ok (new picks the issuer per context; values_get reads the generated file with PyYAML and without; checks skip terminating and replaced pods; readiness probe retries with backoff and reports the last status; failed / pending releases are recovered or explained)"
+# 6. dry_run_rendered: the upgrade case — the realm-sync hook Job exists from the previous run (immutable
+#    spec.template), the rendered chart carries the same Job; the fake kubectl rejects an APPLY of any Job that exists
+#    (what the API server does) and accepts CREATE of a new name. Without the hook split the check fails; with it, passes.
+sed -n '/^dry_run_rendered()/,/^}/p' scripts/cell-provision.sh > "$T/dry_run.sh"
+# shellcheck disable=SC1091
+source "$T/dry_run.sh"
+K=(kubectl -n tenant-globex)   # used by dry_run_rendered
+# shellcheck disable=SC2034
+: "${K[0]}"
+cat > "$T/bin/kubectl" <<'FAKE'
+#!/usr/bin/env bash
+# fake API server: Jobs named in EXISTING_JOBS exist; apply of such a Job → "field is immutable"; create of an existing
+# name → AlreadyExists; everything else passes. Reads -f FILE.
+f=""; verb=""; while [ $# -gt 0 ]; do case "$1" in -f|-n) [ "$1" = -f ] && f="$2"; shift;; -*) ;; *) [ -n "$verb" ] || verb="$1";; esac; shift; done
+python3 - "$f" "$verb" <<'PY2'
+import re, sys, os
+text, verb = open(sys.argv[1]).read(), sys.argv[2]
+existing = set(os.environ.get("EXISTING_JOBS", "").split(","))
+for doc in re.split(r"(?m)^---[ \t]*$", text):
+    if not re.search(r"(?m)^kind: Job$", doc): continue
+    name = re.search(r"(?m)^metadata:\n(?:  .*\n|\n)*?  name:[ \t]+(\S+)", doc).group(1)
+    if name in existing:
+        if verb == "apply": print(f'The Job "{name}" is invalid: spec.template: Invalid value: ...: field is immutable', file=sys.stderr); sys.exit(1)
+        if verb == "create": print(f'jobs.batch "{name}" already exists', file=sys.stderr); sys.exit(1)
+PY2
+FAKE
+chmod +x "$T/bin/kubectl"
+# a rendered chart: a ConfigMap and the hook Job as the chart renders it
+cat > "$T/all.yaml" <<'YAML'
+---
+# Source: secops-cell/templates/keycloak.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: globex-keycloak-realm
+data:
+  realm.json: "{}"
+---
+# Source: secops-cell/templates/keycloak.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: globex-realm-sync
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "5"
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers: [{ name: sync, image: node:22-alpine }]
+YAML
+export EXISTING_JOBS=globex-realm-sync
+# the fake rejects what the API server rejects: an apply of the raw render
+if kubectl -n tenant-globex apply --dry-run=server -f "$T/all.yaml" 2> "$T/raw.err"; then echo "FAIL: the fake API server must reject the existing Job" >&2; exit 1; fi
+grep -q "field is immutable" "$T/raw.err" || { echo "FAIL: $(cat "$T/raw.err")" >&2; exit 1; }
+# the check apply runs: passes over the existing Job
+dry_run_rendered "$T/all.yaml" > "$T/dry.out" 2>&1 || { echo "FAIL: dry_run_rendered must pass over an existing hook Job: $(cat "$T/dry.out")" >&2; exit 1; }
+grep -q "1 resources to apply, 1 hook(s) checked as new objects" "$T/dry.out" || { echo "FAIL: $(cat "$T/dry.out")" >&2; exit 1; }
+# and on a fresh namespace
+EXISTING_JOBS='' dry_run_rendered "$T/all.yaml" > "$T/dry.out" 2>&1 || { echo "FAIL: dry_run_rendered must pass on a fresh namespace: $(cat "$T/dry.out")" >&2; exit 1; }
+# a real error in a non-hook resource still fails (the fake rejects a Job named in EXISTING_JOBS whatever the annotations)
+sed 's/helm.sh\/hook:/not-a-hook:/' "$T/all.yaml" > "$T/plain.yaml"
+if dry_run_rendered "$T/plain.yaml" > "$T/dry.out" 2>&1; then echo "FAIL: an invalid non-hook resource must fail the check" >&2; exit 1; fi
+# the splitter: no hook left in the rest, the hook renamed and still annotated
+python3 scripts/lib/split-hooks.py --rest "$T/rest.yaml" --hooks "$T/hooks.yaml" --suffix dryrun-7 < "$T/all.yaml" 2> /dev/null
+grep -q "helm.sh/hook" "$T/rest.yaml" && { echo "FAIL: a hook left among the resources to apply" >&2; exit 1; }
+grep -q "^kind: ConfigMap" "$T/rest.yaml" || { echo "FAIL: the ConfigMap is missing from the rest" >&2; exit 1; }
+grep -q "^  name: globex-realm-sync-dryrun-7$" "$T/hooks.yaml" && grep -q "helm.sh/hook: post-install" "$T/hooks.yaml" || { echo "FAIL: hook not renamed: $(cat "$T/hooks.yaml")" >&2; exit 1; }
+unset EXISTING_JOBS
+
+echo "cell-provision ok (new picks the issuer per context; values_get reads the generated file with PyYAML and without; checks skip terminating and replaced pods; readiness probe retries with backoff and reports the last status; failed / pending releases are recovered or explained; the server-side dry run passes over an existing hook Job)"

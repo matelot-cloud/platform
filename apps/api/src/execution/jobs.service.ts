@@ -18,6 +18,8 @@ import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { PipelinesService } from './pipelines.service';
 import { PoolsService } from './pools.service';
 import { RunnerPrincipal } from './runner-auth';
+import { PipelineTelemetry, pipelineTelemetry } from '../telemetry/pipeline-telemetry';
+import { getMetrics, Metrics } from '../telemetry/metrics';
 
 const LEASE_SECONDS = 60;
 /** An assigned job the runner has not started within this many seconds goes back to the queue (the agent starts at once). */
@@ -37,10 +39,20 @@ export class JobsService {
     private readonly githubSync: GithubSyncService,
     private readonly github: GithubAppClient,
     private readonly pipelines: PipelinesService,
+    @Inject(PipelineTelemetry) telemetry: PipelineTelemetry | undefined,
+    @Inject(Metrics) metrics: Metrics | undefined,
     @Inject(forwardRef(() => InventoryService)) private readonly inventory: InventoryService,
     private readonly resolver: ScopeResolverService,
     @Inject(forwardRef(() => RegistryService)) private readonly registry: RegistryService,
-  ) {}
+  ) {
+    if (telemetry) this.telemetry = telemetry;
+    if (metrics) this.metrics = metrics;
+  }
+  private telemetry?: PipelineTelemetry;
+  private metrics?: Metrics;
+  /** Injected by Nest; the process-wide instances where a spec built the service by hand. */
+  private get tele(): PipelineTelemetry { return (this.telemetry ??= pipelineTelemetry()); }
+  private get met(): Metrics { return (this.metrics ??= getMetrics()); }
 
   // ---------------------------------------------------------------- users
 
@@ -121,6 +133,7 @@ export class JobsService {
   async cancel(user: AuthenticatedUser, job: Job) {
     if (!['queued', 'assigned', 'running'].includes(job.status)) throw new BadRequestException(`Job is already ${job.status}`);
     const [after] = await this.db.update(jobs).set({ status: 'cancelled', finishedAt: new Date(), error: `cancelled by ${user.email}` }).where(eq(jobs.id, job.id)).returning();
+    if (after) await this.traceFinished(after, null);
     if (job.runnerId) await this.db.update(runners).set({ currentJobId: null, status: 'online' }).where(and(eq(runners.id, job.runnerId), eq(runners.currentJobId, job.id)));
     await this.audit.record({ organizationId: job.organizationId, actor: userActor(user), action: 'job.cancelled', resourceType: 'job', resourceId: job.id, before: { status: job.status } });
     if (job.pipelineId) await this.pipelines.advance(job.pipelineId);
@@ -166,6 +179,7 @@ export class JobsService {
       return (rows.rows?.[0] ?? (Array.isArray(rows) ? rows[0] : undefined)) as Record<string, unknown> | undefined;
     });
     if (!claimed) return null;
+    this.met.counterAdd(this.met.runnerClaims, 1, { result: 'job' });
     const job = await this.get(String(claimed.id));
     await this.db.update(runners).set({ status: 'busy', currentJobId: job.id, lastHeartbeatAt: new Date() }).where(eq(runners.id, runner.id));
     await this.appendSystemLog(job.id, `assigned to runner ${runner.name} (pool ${pool.slug})`);
@@ -215,10 +229,17 @@ export class JobsService {
     return r?.at ?? null;
   }
 
+  /** The job's span and metrics once it is terminal (telemetry/pipeline-telemetry.ts). */
+  private async traceFinished(job: Job, runnerName: string | null): Promise<void> {
+    const [pipeline] = job.pipelineId ? await this.db.select({ traceParent: pipelines.traceParent, number: pipelines.number }).from(pipelines).where(eq(pipelines.id, job.pipelineId)).limit(1) : [];
+    this.tele.jobFinished(job, pipeline ?? null, runnerName);
+  }
+
   async finish(jobId: string, status: 'succeeded' | 'failed', result: Record<string, unknown>, error: string | null) {
     const [job] = await this.db.select().from(jobs).where(eq(jobs.id, jobId)).limit(1);
     if (!job) return;
-    await this.db.update(jobs).set({ status, result, error, exitCode: status === 'succeeded' ? 0 : 1, finishedAt: new Date(), leaseExpiresAt: null }).where(eq(jobs.id, jobId));
+    const [done] = await this.db.update(jobs).set({ status, result, error, exitCode: status === 'succeeded' ? 0 : 1, finishedAt: new Date(), leaseExpiresAt: null }).where(eq(jobs.id, jobId)).returning();
+    if (done) await this.traceFinished(done, 'platform');
     await this.audit.record({ organizationId: job.organizationId, actor: SYSTEM_ACTOR, action: `job.${status}`, resourceType: 'job', resourceId: job.id, after: { type: job.type, runner: 'platform', exitCode: status === 'succeeded' ? 0 : 1 }, reason: error ?? undefined });
     if (job.pipelineId) await this.pipelines.advance(job.pipelineId);
   }
@@ -240,6 +261,7 @@ export class JobsService {
     if (['succeeded', 'failed', 'cancelled', 'timed_out'].includes(job.status)) return job;
     const [after] = await this.db.update(jobs).set({ status: dto.status, result: dto.result ?? null, error: dto.error ?? null, exitCode: dto.exitCode ?? null, finishedAt: new Date(), leaseExpiresAt: null }).where(eq(jobs.id, job.id)).returning();
     await this.db.update(runners).set({ status: 'online', currentJobId: null, lastHeartbeatAt: new Date() }).where(eq(runners.id, principal.runner.id));
+    await this.traceFinished(after, principal.runner.name);
     await this.audit.record({ organizationId: job.organizationId, actor: SYSTEM_ACTOR, action: `job.${dto.status}`, resourceType: 'job', resourceId: job.id, after: { type: job.type, runner: principal.runner.name, exitCode: dto.exitCode ?? null }, reason: dto.error });
     if (job.pipelineId && dto.status === 'succeeded') await this.recordCommit(job.pipelineId, dto.result);
     if (job.pipelineId) await this.pipelines.advance(job.pipelineId);
@@ -335,7 +357,8 @@ export class JobsService {
         await this.appendSystemLog(job.id, `lease expired on attempt ${job.attempts}; requeued${job.requestedPoolId ? '' : ' for any eligible runner'}`);
         requeued++;
       } else {
-        await this.db.update(jobs).set({ status: overTime ? 'timed_out' : 'failed', error: overTime ? `exceeded ${job.timeoutSeconds}s` : `runner lost after ${job.attempts} attempts`, finishedAt: now, leaseExpiresAt: null }).where(eq(jobs.id, job.id));
+        const [done] = await this.db.update(jobs).set({ status: overTime ? 'timed_out' : 'failed', error: overTime ? `exceeded ${job.timeoutSeconds}s` : `runner lost after ${job.attempts} attempts`, finishedAt: now, leaseExpiresAt: null }).where(eq(jobs.id, job.id)).returning();
+        if (done) await this.traceFinished(done, null);
         await this.appendSystemLog(job.id, overTime ? 'timed out' : 'runner lost; no attempts left');
         if (job.pipelineId) await this.pipelines.advance(job.pipelineId);
         failed++;

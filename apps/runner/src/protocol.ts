@@ -14,6 +14,8 @@ export interface Job {
   repositoryId: string | null;
   timeoutSeconds: number;
   attempts: number;
+  /** W3C traceparent of this job's span in the pipeline's trace: the runner's spans go under it (telemetry.ts). */
+  traceParent?: string | null;
 }
 
 export type Credentials =

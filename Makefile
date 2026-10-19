@@ -8,7 +8,7 @@ IMAGE_RUNNER ?= secops-runner
 IMAGE_WORKER ?= secops-worker
 TAG ?= dev
 
-.PHONY: help install dev-infra dev dev-stop worker runner runner-image registry-keys web migrate build test token smoke kind-up kind-down image kind-load deploy provision decommission backup restore undeploy helm-lint docs-check docs-sync check-layout
+.PHONY: help install dev-infra dev dev-stop worker runner runner-image registry-keys web migrate build test token smoke kind-up kind-down kind-jaeger image kind-load deploy provision decommission backup restore undeploy helm-lint docs-check docs-sync check-layout
 
 help: ## List targets
 > @grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
@@ -64,6 +64,9 @@ kind-up: ## Create the local kind cluster with ingress-nginx
 
 kind-down: ## Delete the kind cluster
 > kind delete cluster --name secops
+
+kind-jaeger: ## Jaeger all-in-one on kind and the cell exporting traces to it: make kind-jaeger TENANT=acme
+> bash scripts/kind-jaeger.sh $(TENANT)
 
 image: ## Build the API, web and runner container images
 > docker build -f apps/api/Dockerfile -t $(IMAGE):$(TAG) .

@@ -4,6 +4,8 @@ import { PersonalTokensModule } from '../auth/personal-tokens/personal-tokens.mo
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { LoggerModule } from 'nestjs-pino';
+import { logSchema } from '../telemetry/log-schema';
+import { TelemetryModule } from '../telemetry/telemetry.module';
 import { AuditModule } from '../audit/audit.module';
 import { CryptoModule } from '../common/crypto.module';
 import { AppConfig, validateEnv } from '../config/env';
@@ -36,13 +38,11 @@ import { WorkerService } from './worker.service';
     LoggerModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: AppConfig) => ({
-        pinoHttp: {
-          level: config.get('LOG_LEVEL', { infer: true }),
-          transport: config.get('NODE_ENV', { infer: true }) === 'production' ? undefined : { target: 'pino-pretty', options: { singleLine: true } },
-        },
+        pinoHttp: logSchema({ component: 'worker', cell: config.get('BOOTSTRAP_ORG_SLUG', { infer: true }), logLevel: config.get('LOG_LEVEL', { infer: true }), pretty: config.get('NODE_ENV', { infer: true }) !== 'production' }),
       }),
     }),
     DatabaseModule,
+    TelemetryModule,
     CryptoModule,
     AuditModule,
     RbacModule,

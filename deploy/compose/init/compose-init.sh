@@ -238,6 +238,18 @@ kv "$E" GITHUB_APP_ID ""
 kv "$E" GITHUB_APP_SLUG ""
 kv "$E" GITHUB_API_URL https://api.github.com
 kv "$E" GITHUB_URL https://github.com
+# observability (docs/observability.md): the metrics page on :9464 of api and worker (compose network only, never
+# through Caddy); OTLP tracing once MATELOT_OTLP_ENDPOINT is set in .env (and metrics pushed too with MATELOT_OTLP_METRICS=1)
+kv "$E" MATELOT_METRICS_ENABLED true
+kv "$E" MATELOT_METRICS_PORT 9464
+kv "$E" DEPLOYMENT_ENVIRONMENT "${MATELOT_ENVIRONMENT:-production}"
+if [ -n "${MATELOT_OTLP_ENDPOINT:-}" ]; then
+  kv "$E" OTEL_EXPORTER_OTLP_ENDPOINT "$MATELOT_OTLP_ENDPOINT"
+  kv "$E" OTEL_EXPORTER_OTLP_PROTOCOL "${MATELOT_OTLP_PROTOCOL:-http/protobuf}"
+  [ -n "${MATELOT_OTLP_HEADERS:-}" ] && kv "$E" OTEL_EXPORTER_OTLP_HEADERS "$MATELOT_OTLP_HEADERS"
+  kv "$E" OTEL_TRACES_SAMPLER "${MATELOT_TRACES_SAMPLER:-parentbased_always_on}"
+  [ "${MATELOT_OTLP_METRICS:-0}" = 1 ] && kv "$E" OTEL_METRICS_EXPORTER "prometheus,otlp"
+fi
 kv "$E" MATELOT_LICENSE "${MATELOT_LICENSE:-}"
 C="$M/env/cell.env"; : > "$C"
 kv "$C" BASE_URL "$BASE_URL"; kv "$C" ADMIN_EMAIL "$ADMIN_EMAIL"; kv "$C" REGISTRY_HOST "$REGISTRY_HOST"; kv "$C" SCHEME "$SCHEME"

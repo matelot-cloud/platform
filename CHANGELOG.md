@@ -4,6 +4,78 @@
 
 Images `ghcr.io/matelot-cloud/{api,web,worker,runner}` and the chart `oci://ghcr.io/matelot-cloud/charts/secops-cell`, signed, with SBOM attestations; install guide at https://matelot-cloud.github.io/website/docs/latest/install.html. The sections below are the drops that make up the release, newest first.
 
+### Observability drop 1 — instrumentation: OTLP traces (one per pipeline), Prometheus metrics with exemplars, JSON logs with trace ids (migration 0049, runner 0.3.3)
+
+- **Traces.** `apps/api/src/telemetry/tracing.ts`, preloaded with `node -r ./dist/telemetry/tracing.js` by the api and
+  worker images, Compose and `pnpm start`: the OpenTelemetry SDK with the `http`, `express` (route template only),
+  `pg`, `ioredis` and `undici` instrumentations. Off is a no-op (one env read, no SDK module loaded) until
+  `OTEL_EXPORTER_OTLP_ENDPOINT` is set or `MATELOT_TRACING_ENABLED=true`; export is asynchronous with a bounded queue
+  (2048 spans), an unreachable collector costs dropped spans and one warning, never a slow request or a failed
+  `/health/live`; SIGTERM and Nest's shutdown flush with a 5 s cap. Protocols `http/protobuf` (default), `grpc`,
+  `http/json`; sampler from `OTEL_TRACES_SAMPLER`; probes, `/metrics` and runner heartbeats are never traced.
+- **One trace per pipeline.** Ids are fixed at creation and stored on the rows (`pipelines.trace_parent`,
+  `jobs.trace_parent`); the claim response hands the runner its job's traceparent; the runner's `job run <kind>` span
+  (phases `checkout`, `tool syft|trivy|semgrep`, `upload sbom`, `upload findings`, `correlate`) goes under it and
+  every call back carries the `traceparent` header, so the API side of a job joins the trace; the worker's gate
+  evaluation runs under the `policy_eval` job's span; BullMQ job data carries the enqueuer's traceparent. The
+  pipeline's root span and each job's span (start = created, events `claimed` / `started`, kind, status, exit code,
+  runner) are emitted at their terminal status with the stored ids by whichever process finished them — nothing in
+  memory across requests or replicas (`PinnedIdGenerator`). Verified against a real Jaeger 2.22: a security pipeline
+  (checkout, syft, trivy ×2, semgrep, gate) is one trace across api, runner and worker — and the trace already
+  showed something the logs never did: `semgrep --version` taking 105 s in a sandbox before the scan started.
+- **Metrics.** One meter (`telemetry/metrics.ts`) with explicit buckets through Views (http 5 ms–10 s, pipeline jobs
+  1 s–30 min, correlation 100 ms–5 min), served on port 9464 (`MATELOT_METRICS_PORT`, never on the ingress) by our own
+  OpenMetrics serializer (`telemetry/exposition.ts`) because the SDK's Prometheus exporter renders no **trace
+  exemplars**: a scraper accepting OpenMetrics gets `# {trace_id,span_id} value ts` per bucket, pipeline histograms
+  pointing at the pipeline's trace — Grafana jumps from a slow p95 to the exact trace. `exposition.spec.ts` pins the
+  format (names, `_total`, unit suffixes, buckets, `matelot_build_info` = 1, every label in `ALLOWED_LABELS` —
+  an instrument given an id or a name as a label throws). The table of docs/observability.md is implemented:
+  http RED by route template, pool connections, BullMQ and pipeline queue depth / age, pipeline jobs and durations
+  (+ queue wait), pipelines, runners online / busy / **`matelot_runner_last_seen_timestamp_seconds{pool}`** (so
+  `NoRunnerOnline` is an expression on the scrape), claims, correlation duration, open findings by severity and
+  kind, gate evaluations, integration sync failures, webhook lag, `build_info`; gauges that need a query are
+  refreshed by the worker on a timer (`WorkerGauges`), never on scrape, and their absent series vanish. Optional
+  OTLP push with `OTEL_METRICS_EXPORTER=prometheus,otlp`. The runner serves its own page (`RUNNER_METRICS_PORT`):
+  job durations with exemplars, jobs by status, busy, `build_info`.
+- **Logs.** One line shape for api, worker and runner (`telemetry/log-schema.ts`, the runner's `JsonLogger`):
+  `time, level, component, cell, msg, context, trace_id, span_id, request_id, …`; `LOG_LEVEL=info,jobs=debug` per
+  module; one redaction list applied at any depth, with a test that logs every known secret key nested three levels
+  and fails if a value survives. The runner's `console.*` is gone.
+- **Delivery.** Env in `env.ts`, the api ConfigMap and `compose-init` (`MATELOT_OTLP_*` in `.env`); chart values
+  `observability.{metrics,otlp,environment}` — metrics ports on api / worker / managed runners, a NetworkPolicy
+  admitting scrapers from `metrics.scrapeFromNamespaces`, `OTEL_*` on every component once `otlp.endpoint` is set
+  (headers in a Secret); chart-test renders defaults / otlp / metrics-off. `make kind-jaeger TENANT=acme` puts a
+  Jaeger all-in-one on kind and points the cell at it. `/api/v1/version` carries `commit` and `builtAt` (image
+  build arguments from the release workflow). The runner ships no dependency: its `telemetry.ts` (OTLP/HTTP JSON,
+  bounded batching, exemplars, redaction) is 300 lines of its own, tested with `node --test`.
+- Not in this drop (drop 2 onwards): ServiceMonitors / PrometheusRule / dashboards, the Compose observability
+  profile, backup gauges, OTLP log export, Settings → Observability.
+
+### Design: observability milestone (M14) — `docs/observability.md`, ADR 0004
+
+- The design for platform self-monitoring, OpenTelemetry-first and on the customer's stack: what every process
+  emits (OTLP traces, Prometheus metrics on port 9464, JSON logs with `trace_id`), one trace per pipeline carried
+  through the runner protocol, the metric table with its cardinality rules, the `OTEL_*` / `MATELOT_*` configuration,
+  the Helm `observability.*` block (ServiceMonitors, PrometheusRule, dashboards ConfigMaps — all off by default) and
+  the Compose `observability` profile, the four dashboards and twelve alerts, Settings → Observability and the
+  `doctor` section, and the four drops with their acceptance. No code in this drop.
+
+### Fix: `apply` on an existing cell failed its own server-side dry run ("Job globex-realm-sync … field is immutable")
+
+- The pre-upgrade `kubectl apply --dry-run=server` included the `realm-sync` hook Job, which exists from the previous
+  run until helm deletes and recreates it (`hook-delete-policy: before-hook-creation`); a Job's `spec.template` is
+  immutable, so the API server rejected the dry run on every upgrade of every cell, while a fresh install (CI's kind
+  dry-run) passed. The rendered chart is now split (`scripts/lib/split-hooks.py`, standard library only): resources
+  without a `helm.sh/hook` annotation go through `apply --dry-run=server` as before, hooks through
+  `kubectl create --dry-run=server` under a unique name (`<name>-dryrun-<time>`), which validates them without
+  touching the existing Job (`dry_run_rendered` in cell-provision.sh).
+- `cell-provision.test.sh` covers the upgrade case with a fake API server that rejects an apply of an existing Job and
+  accepts a create under a new name: the raw render fails, `dry_run_rendered` passes over the existing Job and on a
+  fresh namespace, an invalid non-hook resource still fails, the splitter leaves no hook among the resources to apply.
+  CI's kind step does the real thing: the four configurations dry-run on the empty namespace, then the default render
+  is created for real (hook Job included) and all four are dry-run again — the same filter, so an upgrade-only
+  regression cannot pass CI again.
+
 ### Fix: the Helm chart mounted the login theme one level too high — Keycloak fell back to the stock theme
 
 - The theme ConfigMap was mounted at `/opt/keycloak/themes/matelot` with the items named relative to `login/`, so the

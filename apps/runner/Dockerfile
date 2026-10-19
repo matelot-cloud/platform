@@ -18,6 +18,8 @@ WORKDIR /app
 COPY --from=build /app/dist ./dist
 COPY package.json ./
 USER runner
-ENV RUNNER_DATA_DIR=/data NODE_ENV=production
+ARG APP_COMMIT=unknown
+ENV RUNNER_DATA_DIR=/data NODE_ENV=production APP_COMMIT=$APP_COMMIT
+EXPOSE 9464
 VOLUME ["/data"]
 CMD ["node", "dist/index.js"]

@@ -97,6 +97,9 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            APP_COMMIT=${{ github.sha }}
+            APP_BUILT_AT=${{ github.event.head_commit.timestamp || github.event.repository.pushed_at }}
           provenance: false
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,scope=${{ matrix.name }},mode=max
@@ -138,6 +141,9 @@ jobs:
           push: true
           tags: ${{ steps.meta-also.outputs.tags }}
           labels: ${{ steps.meta-also.outputs.labels }}
+          build-args: |
+            APP_COMMIT=${{ github.sha }}
+            APP_BUILT_AT=${{ github.event.head_commit.timestamp || github.event.repository.pushed_at }}
           provenance: false
           cache-from: |
             type=gha,scope=${{ matrix.name }}

@@ -7,7 +7,8 @@ const emptyToUndefined = (value: unknown) => (value === '' ? undefined : value);
 export const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(3000),
-  LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
+  /** Default level, then per-module overrides: `info,jobs=debug,integrations.github=trace` (telemetry/log-schema.ts). */
+  LOG_LEVEL: z.string().regex(/^(trace|debug|info|warn|error|fatal|silent)(,[A-Za-z0-9_.-]+=(trace|debug|info|warn|error|fatal|silent))*$/, 'LOG_LEVEL: <level>[,<module>=<level>…]').default('info'),
 
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
   REDIS_URL: z.string().min(1).default('redis://localhost:6379'),
@@ -82,6 +83,24 @@ export const envSchema = z.object({
   MATELOT_FEATURES_DISABLED: z.preprocess(emptyToUndefined, z.string().optional()),
   GITHUB_API_URL: z.string().url().default('https://api.github.com'),
   GITHUB_URL: z.string().url().default('https://github.com'),
+
+  // Observability (docs/observability.md). The OTEL_* variables are read by the SDK itself (tracing preload); these
+  // are ours. Metrics: a Prometheus / OpenMetrics page on its own port, never on the ingress.
+  MATELOT_METRICS_ENABLED: z.preprocess((v) => (v === undefined || v === '' ? undefined : v === 'true' || v === '1' || v === true), z.boolean().default(true)),
+  MATELOT_METRICS_PORT: z.preprocess(emptyToUndefined, z.coerce.number().int().positive().default(9464)),
+  /** Tracing is decided by the preload (MATELOT_TRACING_ENABLED, else an OTLP endpoint); listed here so it is documented and validated. */
+  MATELOT_TRACING_ENABLED: z.preprocess(emptyToUndefined, z.enum(['true', 'false', '1', '0', 'yes', 'no']).optional()),
+  OTEL_EXPORTER_OTLP_ENDPOINT: z.preprocess(emptyToUndefined, z.string().url().optional()),
+  OTEL_EXPORTER_OTLP_HEADERS: z.preprocess(emptyToUndefined, z.string().optional()),
+  OTEL_EXPORTER_OTLP_PROTOCOL: z.preprocess(emptyToUndefined, z.enum(['grpc', 'http/protobuf', 'http/json']).optional()),
+  OTEL_TRACES_SAMPLER: z.preprocess(emptyToUndefined, z.enum(['always_on', 'always_off', 'traceidratio', 'parentbased_always_on', 'parentbased_always_off', 'parentbased_traceidratio']).optional()),
+  OTEL_TRACES_SAMPLER_ARG: z.preprocess(emptyToUndefined, z.coerce.number().min(0).max(1).optional()),
+  OTEL_METRICS_EXPORTER: z.preprocess(emptyToUndefined, z.string().regex(/^(prometheus|otlp|none)(,(prometheus|otlp|none))*$/).optional()),
+  /** `deployment.environment` on every signal. */
+  DEPLOYMENT_ENVIRONMENT: z.string().default('production'),
+  APP_VERSION: z.preprocess(emptyToUndefined, z.string().optional()),
+  APP_COMMIT: z.preprocess(emptyToUndefined, z.string().optional()),
+  APP_BUILT_AT: z.preprocess(emptyToUndefined, z.string().optional()),
 });
 
 export type Env = z.infer<typeof envSchema>;

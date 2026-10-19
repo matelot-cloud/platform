@@ -1,4 +1,5 @@
 import { CorrelationService } from '../vulnerabilities/correlation.service';
+import { getMetrics } from '../telemetry/metrics';
 import { BadRequestException, Body, Controller, HttpCode, Inject, Param, ParseUUIDPipe, Post, Res, UnauthorizedException, forwardRef } from '@nestjs/common';
 import { ApiExcludeController } from '@nestjs/swagger';
 import type { Response } from 'express';
@@ -13,7 +14,7 @@ import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/env';
 
 /** Version of the runner agent shipped with this platform build (apps/runner). */
-export const RUNNER_AGENT_VERSION = '0.3.2';
+export const RUNNER_AGENT_VERSION = '0.3.3';
 import { SbomService } from '../sbom/sbom.service';
 import { PoolsService } from './pools.service';
 import { CurrentRunner, RunnerAuth, RunnerPrincipal } from './runner-auth';
@@ -86,6 +87,7 @@ export class RunnerController {
         const job = await this.jobs.claim(principal);
         if (job) {
           if (gone) {
+            getMetrics().counterAdd(getMetrics().runnerClaims, 1, { result: 'disconnected' });
             await this.jobs.unclaim(job.id, principal.runner.id, `runner ${principal.runner.name} disconnected while claiming; back in the queue`);
             return;
           }
@@ -96,6 +98,7 @@ export class RunnerController {
           return job;
         }
         if (Date.now() >= deadline) {
+          getMetrics().counterAdd(getMetrics().runnerClaims, 1, { result: 'empty' });
           res.status(204);
           return;
         }

@@ -147,7 +147,9 @@ modified; `keycloak.seedAdmins: false` leaves user creation to the operator or t
 * **A release left `failed` or `pending-*`** by an interrupted or rejected apply: just run `apply` again. It upgrades
   over `failed` when a good revision exists, rolls `pending-*` back to the last good revision first, and validates the
   rendered chart with `kubectl apply --dry-run=server` before helm touches the release — a chart the API server rejects
-  changes nothing. Only a first install whose every revision failed must be removed (`helm uninstall`; the namespace
+  changes nothing. Helm hooks (the `realm-sync` Job) are validated apart, as new objects under a throwaway name: the
+  Job from the previous run still exists until helm replaces it and a Job's `spec.template` is immutable, so a dry-run
+  apply of it would fail with "field is immutable" on every upgrade. Only a first install whose every revision failed must be removed (`helm uninstall`; the namespace
   and its volumes stay) before applying again.
 
 ### Branding the sign-in page

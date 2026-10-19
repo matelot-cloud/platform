@@ -25,6 +25,11 @@ check_env "$M/env/api.env" APP_VERSION 1.2.3
 check_env "$M/env/api.env" API_PUBLIC_URL "http://localhost"
 check_env "$M/env/api.env" REGISTRY_INTERNAL_URL "http://registry:5000"
 check_env "$M/env/api.env" KEYCLOAK_ADMIN_URL "http://keycloak:8080/auth"
+# observability: metrics always on (compose network only), OTLP only once MATELOT_OTLP_ENDPOINT is set
+check_env "$M/env/api.env" MATELOT_METRICS_ENABLED true
+check_env "$M/env/api.env" MATELOT_METRICS_PORT 9464
+check_env "$M/env/api.env" OTEL_EXPORTER_OTLP_ENDPOINT ""
+grep -q 'node -r ./dist/telemetry/tracing.js dist/main.js' ../compose.yaml && grep -q 'node -r ./dist/telemetry/tracing.js dist/worker.js' ../compose.yaml || { echo "FAIL: api / worker must start through the tracing preload" >&2; exit 1; }
 check_env "$M/env/cell.env" ADMIN_EMAIL "$EMAIL"
 check_env "$M/keycloak/keycloak.env" KC_DB_PASSWORD "$(cat "$M/secrets/postgres/POSTGRES_PASSWORD")"
 check_env "$M/keycloak/keycloak.env" KC_HOSTNAME "http://localhost/auth"
@@ -55,7 +60,11 @@ grep -q 'test -f /opt/keycloak/themes/matelot/login/theme.properties' ../compose
 grep -q -- '--matelot-logo' "$M/keycloak/theme/matelot/login/resources/css/cell.css" && { echo "FAIL: cell.css should carry no logo without MATELOT_THEME_LOGO" >&2; exit 1; }
 # secrets are generated once: a second run with a new domain keeps them and rewrites the derived files
 cp "$M/secrets/cell-key/CELL_ENCRYPTION_KEY" "$T/key1"; cp "$M/secrets/postgres/POSTGRES_PASSWORD" "$T/pg1"
-MATELOT_ORG_NAME="$NAME" MATELOT_DOMAIN=matelot.example.com MATELOT_ACME_EMAIL="$EMAIL" MATELOT_THEME_LOGO='https://cdn.example.com/logo.png' MATELOT_THEME_PRIMARY_COLOR='#0f766e' bash compose-init.sh > "$T/out2" 2>&1 || { cat "$T/out2"; exit 1; }
+MATELOT_ORG_NAME="$NAME" MATELOT_DOMAIN=matelot.example.com MATELOT_ACME_EMAIL="$EMAIL" MATELOT_THEME_LOGO='https://cdn.example.com/logo.png' MATELOT_THEME_PRIMARY_COLOR='#0f766e' MATELOT_OTLP_ENDPOINT=http://jaeger:4318 MATELOT_OTLP_HEADERS='Authorization=Basic abc' MATELOT_OTLP_METRICS=1 bash compose-init.sh > "$T/out2" 2>&1 || { cat "$T/out2"; exit 1; }
+check_env "$M/env/api.env" OTEL_EXPORTER_OTLP_ENDPOINT "http://jaeger:4318"
+check_env "$M/env/api.env" OTEL_EXPORTER_OTLP_PROTOCOL "http/protobuf"
+check_env "$M/env/api.env" OTEL_EXPORTER_OTLP_HEADERS "Authorization=Basic abc"
+check_env "$M/env/api.env" OTEL_METRICS_EXPORTER "prometheus,otlp"
 grep -q -- '--matelot-logo: url("https://cdn.example.com/logo.png");' "$M/keycloak/theme/matelot/login/resources/css/cell.css" || { echo "FAIL: cell.css logo override" >&2; exit 1; }
 grep -q -- '--matelot-primary: #0f766e;' "$M/keycloak/theme/matelot/login/resources/css/cell.css" || { echo "FAIL: cell.css colour override" >&2; exit 1; }
 grep -q -- '--matelot-primary-hover: #0f766e;' "$M/keycloak/theme/matelot/login/resources/css/cell.css" || { echo "FAIL: hover defaults to the primary colour" >&2; exit 1; }

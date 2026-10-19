@@ -470,6 +470,8 @@ export const pipelines = pgTable(
     ref: text('ref'),
     /** The commit the pipeline ran on: given at creation (--commit) or resolved by its checkout job. */
     commitSha: text('commit_sha'),
+    /** W3C traceparent of the pipeline's root span: one trace per pipeline (telemetry/pipeline-telemetry.ts). */
+    traceParent: text('trace_parent'),
     status: pipelineStatusEnum('status').notNull().default('created'),
     trigger: pipelineTriggerEnum('trigger').notNull().default('manual'),
     /** The definition it ran: [{ name, jobs: [{ name, type, payload? }] }] */
@@ -509,6 +511,8 @@ export const jobs = pgTable(
     exitCode: integer('exit_code'),
     attempts: integer('attempts').notNull().default(0),
     maxAttempts: integer('max_attempts').notNull().default(2),
+    /** W3C traceparent of this job's span in the pipeline's trace; handed to the runner with the claim. */
+    traceParent: text('trace_parent'),
     timeoutSeconds: integer('timeout_seconds').notNull().default(1800),
     createdById: uuid('created_by_id').references(() => users.id, { onDelete: 'set null' }),
     createdByActor: actorTypeEnum('created_by_actor').notNull().default('USER'),

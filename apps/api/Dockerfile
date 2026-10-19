@@ -25,7 +25,10 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store pnpm install --frozen-lo
 
 # ---- runtime -----------------------------------------------------------------
 FROM node:22-bookworm-slim AS runtime
-ENV NODE_ENV=production
+# the build these processes report (matelot_build_info, GET /api/v1/version); CI passes the commit and the time
+ARG APP_COMMIT=unknown
+ARG APP_BUILT_AT=unknown
+ENV NODE_ENV=production APP_COMMIT=$APP_COMMIT APP_BUILT_AT=$APP_BUILT_AT
 RUN apt-get update && apt-get install -y --no-install-recommends git openssh-client ca-certificates && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 app && useradd --uid 10001 --gid app --create-home --shell /usr/sbin/nologin app
 WORKDIR /app
@@ -37,10 +40,12 @@ COPY --from=build --chown=app:app /repo/apps/api/drizzle ./apps/api/drizzle
 COPY --from=build --chown=app:app /repo/apps/api/package.json ./apps/api/package.json
 USER app
 WORKDIR /app/apps/api
-EXPOSE 3000
-CMD ["node", "dist/main.js"]
+EXPOSE 3000 9464
+# the tracing preload (dist/telemetry/tracing.js) is a no-op without an OTLP endpoint — docs/observability.md
+CMD ["node", "-r", "./dist/telemetry/tracing.js", "dist/main.js"]
 
 # ---- worker: the same runtime with the worker entrypoint (published as ghcr.io/matelot-cloud/worker) -----------------
 FROM runtime AS worker
-CMD ["node", "dist/worker.js"]
+ENV MATELOT_COMPONENT=worker
+CMD ["node", "-r", "./dist/telemetry/tracing.js", "dist/worker.js"]
 

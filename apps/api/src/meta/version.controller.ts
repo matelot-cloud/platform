@@ -10,6 +10,6 @@ export class VersionController {
   @Public()
   @Get()
   version() {
-    return { name: 'matelot', version: process.env.APP_VERSION ?? '0.1.0' };
+    return { name: 'matelot', version: process.env.APP_VERSION ?? '0.1.0', commit: process.env.APP_COMMIT ?? null, builtAt: process.env.APP_BUILT_AT ?? null };
   }
 }

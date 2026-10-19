@@ -40,4 +40,26 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: {{ .Values.ingress.controllerNamespace }}
+{{- if .Values.observability.metrics.enabled }}
+---
+# Scrapers (Prometheus, an OTel Collector) from the monitoring namespaces may reach the metrics ports only
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-allow-metrics-scrape
+  labels:
+    {{- include "cell.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        {{- range .Values.observability.metrics.scrapeFromNamespaces }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . | quote }}
+        {{- end }}
+      ports:
+        - port: {{ .Values.observability.metrics.port }}
+{{- end }}
 {{- end }}

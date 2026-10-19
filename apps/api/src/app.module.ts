@@ -6,6 +6,8 @@ import { UsageModule } from './usage/usage.module';
 import { RateLimitInterceptor } from './common/rate-limit/rate-limit.interceptor';
 import { randomUUID } from 'node:crypto';
 import { LoggerModule } from 'nestjs-pino';
+import { logSchema } from './telemetry/log-schema';
+import { TelemetryModule } from './telemetry/telemetry.module';
 import { AdminModule } from './admin/admin.module';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
@@ -57,19 +59,18 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
         const isProduction = config.get('NODE_ENV', { infer: true }) === 'production';
         return {
           pinoHttp: {
-            level: config.get('LOG_LEVEL', { infer: true }),
+            ...logSchema({ component: 'api', cell: config.get('BOOTSTRAP_ORG_SLUG', { infer: true }), logLevel: config.get('LOG_LEVEL', { infer: true }), pretty: !isProduction }),
             genReqId: (req) => {
               const header = req.headers['x-request-id'];
               return (Array.isArray(header) ? header[0] : header) ?? randomUUID();
             },
-            redact: ['req.headers.authorization', 'req.headers.cookie'],
             autoLogging: { ignore: (req) => (req.url ?? '').includes('/health/') },
-            transport: isProduction ? undefined : { target: 'pino-pretty', options: { singleLine: true } },
           },
         };
       },
     }),
     DatabaseModule,
+    TelemetryModule,
     CryptoModule,
     JobsModule,
     RbacModule,

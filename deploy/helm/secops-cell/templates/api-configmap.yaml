@@ -9,6 +9,21 @@ data:
   PORT: "3000"
   LOG_LEVEL: {{ .Values.api.logLevel | quote }}
   APP_VERSION: {{ .Values.image.tag | default .Chart.AppVersion | quote }}   # shown as "API x.y.z" in the web app footer and GET /api/v1/meta
+  # observability (docs/observability.md): the metrics page on its own port; OTLP tracing once an endpoint is set
+  MATELOT_METRICS_ENABLED: {{ .Values.observability.metrics.enabled | quote }}
+  MATELOT_METRICS_PORT: {{ .Values.observability.metrics.port | quote }}
+  DEPLOYMENT_ENVIRONMENT: {{ .Values.observability.environment | quote }}
+{{- with .Values.observability.otlp.endpoint }}
+  OTEL_EXPORTER_OTLP_ENDPOINT: {{ . | quote }}
+  OTEL_EXPORTER_OTLP_PROTOCOL: {{ $.Values.observability.otlp.protocol | quote }}
+  OTEL_TRACES_SAMPLER: {{ $.Values.observability.otlp.tracesSampler | quote }}
+  {{- with $.Values.observability.otlp.tracesSamplerArg }}
+  OTEL_TRACES_SAMPLER_ARG: {{ . | quote }}
+  {{- end }}
+  {{- if $.Values.observability.otlp.metrics }}
+  OTEL_METRICS_EXPORTER: "prometheus,otlp"
+  {{- end }}
+{{- end }}
   KEYCLOAK_ISSUER: {{ include "cell.keycloakIssuer" . | quote }}
   KEYCLOAK_JWKS_URI: {{ include "cell.keycloakJwksUri" . | quote }}
   KEYCLOAK_AUDIENCE: {{ .Values.keycloak.audience | quote }}

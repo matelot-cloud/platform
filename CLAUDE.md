@@ -64,6 +64,7 @@ make test           unit tests (RBAC matrix)
 pnpm db:generate    after editing apps/api/src/database/schema.ts (see Working on the schema — never hand-write a migration without the snapshot)
 make check-layout   fail on stale top-level directories (CI does too)
 make kind-up / kind-load / deploy TENANT=acme   kind-up installs ingress-nginx + cert-manager + ClusterIssuer `selfsigned`; deploy uses it (HTTPS: browsers sign in only in a secure context)
+make kind-jaeger TENANT=acme   Jaeger all-in-one on kind, the cell exporting traces to it (one trace per pipeline; docs/observability.md)
 make backup TENANT=acme / restore TENANT=acme ARCHIVE=…   cell backup (CronJob in the chart) and restore; docs/backup-restore.md
 deploy/compose/smoke.sh   the Compose quick start end to end (up → doctor → project → backup → down -v → restore); CI job `compose`
 make provision TENANT=globex / decommission TENANT=globex   real cells from deploy/cells/<slug>.values.yaml; docs/cell-provisioning.md
@@ -134,6 +135,14 @@ mirror this layout exactly — nothing at the root that is not in the repository
   the resolved paths, CI starts a Keycloak pod with them (`scripts/chart-theme-kind-test.sh`)); icons come from `apps/web/public/favicon.svg` and
   `logo-512.png` through `pnpm icons:build` (`tools/icons/build.mjs`, also writes the theme's copies; CI checks);
   a new API setting goes into `api-configmap.yaml` **and** `compose-init.sh` (`env/api.env`).
+- Observability (docs/observability.md, ADR 0004): tracing is the preload `apps/api/src/telemetry/tracing.ts`
+  (`node -r`, a no-op without an OTLP endpoint); metrics are the instruments in `telemetry/metrics.ts` — add a metric
+  there, with bounded labels only (`ALLOWED_LABELS`; never ids, names, paths), buckets through `HISTOGRAMS`, and a
+  gauge that needs a query goes into `WorkerGauges` on a timer, never on scrape; the page format is pinned by
+  `exposition.spec.ts`. One trace per pipeline: ids are fixed at creation (`PipelineTelemetry.newTrace`) and spans
+  emitted at terminal status — a new job terminal transition must call `jobFinished`. Logs: one schema
+  (`telemetry/log-schema.ts`), secrets in `REDACTED_KEYS`. The runner has no dependencies: its `telemetry.ts` is the
+  same contract by hand.
 
 ## v1 focus (read first)
 

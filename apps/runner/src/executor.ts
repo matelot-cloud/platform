@@ -5,6 +5,7 @@ import type { CellClient } from './client';
 import { parseSemgrep, parseTrivy } from './code-scan';
 import { gitEnvironment, run, sanitize } from './git';
 import type { Credentials, Job, LogChunk } from './protocol';
+import { phase } from './telemetry';
 
 /** Collects log lines and ships them to the cell in batches. */
 export class LogShipper {
@@ -36,7 +37,7 @@ export class LogShipper {
       await this.client.logs(this.jobId, batch);
     } catch (error) {
       this.buffer.unshift(...batch);
-      console.error(`log upload failed: ${(error as Error).message}`);
+      process.stderr.write(`${JSON.stringify({ time: new Date().toISOString(), level: 'error', component: 'runner', msg: `log upload failed: ${(error as Error).message}` })}\n`);
     }
   }
 
@@ -114,7 +115,7 @@ export async function execute(job: Job, client: CellClient, log: LogShipper, sig
     switch (job.type) {
       case 'repository_check': {
         const credentials = await client.credentials(job.id);
-        const repo = await clone(job, credentials, workspace, log, signal);
+        const repo = await phase('checkout', () => clone(job, credentials, workspace, log, signal));
         const head = (await run('git', ['rev-parse', 'HEAD'], { cwd: repo })).stdout.trim();
         const date = (await run('git', ['log', '-1', '--format=%cI'], { cwd: repo })).stdout.trim();
         const author = (await run('git', ['log', '-1', '--format=%an'], { cwd: repo })).stdout.trim();
@@ -129,7 +130,7 @@ export async function execute(job: Job, client: CellClient, log: LogShipper, sig
         let cwd = workspace;
         if (job.repositoryId) {
           const credentials = await client.credentials(job.id);
-          cwd = await clone(job, credentials, workspace, log, signal);
+          cwd = await phase('checkout', () => clone(job, credentials, workspace, log, signal));
         }
         log.system(`$ ${command}`);
         const result = await run('sh', ['-c', command], { cwd, signal, onLine: (s, l) => log.write(s, l) });
@@ -163,14 +164,14 @@ export async function execute(job: Job, client: CellClient, log: LogShipper, sig
           version = job.payload.version ? String(job.payload.version) : undefined;
         } else {
           const credentials = await client.credentials(job.id);
-          const repo = await clone(job, credentials, workspace, log, signal);
+          const repo = await phase('checkout', () => clone(job, credentials, workspace, log, signal));
           const ref = String(job.payload.ref ?? (credentials.kind !== 'none' ? credentials.defaultBranch ?? 'HEAD' : 'HEAD'));
           targetRef = `${credentials.kind !== 'none' ? credentials.fullName : 'source'}@${ref}`;
           scanTarget = `dir:${repo}`;
           version = job.payload.version ? String(job.payload.version) : /^v?\d+\.\d+/.test(ref) ? ref : undefined;
         }
         log.system(`syft ${scanTarget}`);
-        const result = await run('syft', [scanTarget, '-o', `cyclonedx-json=${output}`], { env: syftEnv, signal, onLine: (s, l) => log.write(s, l) });
+        const result = await phase('tool syft', () => run('syft', [scanTarget, '-o', `cyclonedx-json=${output}`], { env: syftEnv, signal, onLine: (s, l) => log.write(s, l) }), { 'matelot.tool': 'syft' });
         if (result.code !== 0) {
           const lines = `${result.stderr}\n${result.stdout}`.split('\n').map((l) => l.replace(/\x1b\[[0-9;]*m/g, '').trim()).filter((l) => l && !/checking for.*update|newer version/i.test(l));
           const reason = lines.filter((l) => /error|fail|denied|unauthorized|refused|not found|no such|timeout|unable/i.test(l)).slice(-2).join(' · ') || lines.slice(-2).join(' · ');
@@ -179,7 +180,7 @@ export async function execute(job: Job, client: CellClient, log: LogShipper, sig
         const document = JSON.parse(await readFile(output, 'utf8')) as { components?: unknown[] };
         const count = document.components?.length ?? 0;
         log.system(`${count} components found; uploading`);
-        const stored = await client.sbom(job.id, { target, targetRef, version, imageRef, document });
+        const stored = await phase('upload sbom', () => client.sbom(job.id, { target, targetRef, version, imageRef, document }));
         log.system(stored.deduplicated ? 'identical SBOM already stored' : `stored SBOM ${stored.id} (${stored.componentCount} components${stored.releaseId ? ', linked to release' : ''})`);
         return { result: { sbomId: stored.id, components: stored.componentCount, target, targetRef, linkedToRelease: !!stored.releaseId } };
       }
@@ -214,15 +215,15 @@ export async function execute(job: Job, client: CellClient, log: LogShipper, sig
       case 'secrets':
       case 'iac': {
         const scanner = job.type === 'secrets' ? 'secret' : 'misconfig';
-        const version = await run('trivy', ['--version'], { signal }).catch(() => ({ code: 127, stdout: '', stderr: '' }));
+        const version = await phase('tool trivy --version', () => run('trivy', ['--version'], { signal })).catch(() => ({ code: 127, stdout: '', stderr: '' }));
         if (version.code !== 0) throw Object.assign(new Error('trivy is not installed on this runner (use the runner image, or install trivy)'), { skipped: true });
         const credentials = await client.credentials(job.id);
-        const repo = await clone(job, credentials, workspace, log, signal);
+        const repo = await phase('checkout', () => clone(job, credentials, workspace, log, signal));
         const output = join(workspace, `${job.type}.json`);
         // Offline: secret rules are built in; misconfiguration checks use the bundle embedded in the binary.
         const args = ['fs', '--scanners', scanner, '--format', 'json', '--output', output, '--quiet', '--skip-db-update', '--skip-java-db-update', ...(scanner === 'misconfig' ? ['--skip-check-update'] : []), '--exit-code', '0', repo];
         log.system(`trivy ${args.filter((a) => a !== repo).join(' ')} <repository>`);
-        const result = await run('trivy', args, { env: { ...process.env, TRIVY_NO_PROGRESS: 'true', TRIVY_CACHE_DIR: join(workspace, '.trivy') }, signal, onLine: (s, l) => log.write(s, l) });
+        const result = await phase('tool trivy', () => run('trivy', args, { env: { ...process.env, TRIVY_NO_PROGRESS: 'true', TRIVY_CACHE_DIR: join(workspace, '.trivy') }, signal, onLine: (s, l) => log.write(s, l) }), { 'matelot.tool': 'trivy' });
         if (result.code !== 0) throw new Error(`trivy failed (${result.code}): ${sanitize(result.stderr.trim().split('\n').slice(-2).join(' · ')) || 'no output'}`);
         const report = JSON.parse(await readFile(output, 'utf8')) as Parameters<typeof parseTrivy>[0];
         // Paths relative to the repository root.
@@ -231,7 +232,7 @@ export async function execute(job: Job, client: CellClient, log: LogShipper, sig
         const bySeverity = findings.reduce<Record<string, number>>((acc, f) => ({ ...acc, [f.severity]: (acc[f.severity] ?? 0) + 1 }), {});
         log.system(`${findings.length} ${job.type === 'secrets' ? 'secrets' : 'misconfigurations'} found${findings.length ? ` (${Object.entries(bySeverity).map(([k, v]) => `${v} ${k}`).join(', ')})` : ''}; uploading`);
         const ref = String(job.payload.ref ?? (credentials.kind !== 'none' ? credentials.defaultBranch ?? 'HEAD' : 'HEAD'));
-        const stored = await client.codeFindings(job.id, { kind: job.type === 'secrets' ? 'secret' : 'iac', ref, findings });
+        const stored = await phase('upload findings', () => client.codeFindings(job.id, { kind: job.type === 'secrets' ? 'secret' : 'iac', ref, findings }));
         log.system(`${stored.opened} new, ${stored.seen} already known, ${stored.fixed} fixed since the last scan`);
         return { result: { kind: job.type, findings: findings.length, bySeverity, opened: stored.opened, fixed: stored.fixed } };
       }
@@ -239,7 +240,7 @@ export async function execute(job: Job, client: CellClient, log: LogShipper, sig
         // Dependency vulnerabilities = SBOM × advisories: ask the platform to correlate now (it waits for the run) and
         // report what the pipeline's SBOM carries, so the pipeline shows real numbers and the gate stage has fresh data.
         log.system('correlating the service SBOMs against the advisory sources (OSV / NVD / KEV / EPSS)…');
-        const r = await client.correlate(job.id);
+        const r = await phase('correlate', () => client.correlate(job.id));
         if (!r.sbomId) { log.system('no SBOM for this service yet: run the inventory stage first'); return { result: { correlated: r.result, sbomId: null } }; }
         const f = r.findings ?? { critical: 0, high: 0, medium: 0, low: 0, unknown: 0, packages: 0 };
         log.system(`SBOM ${r.sbomId.slice(0, 8)} · ${r.components ?? '?'} components · open vulnerabilities: ${f.critical} critical · ${f.high} high · ${f.medium} medium · ${f.low} low · ${f.unknown} unknown (${f.packages} package findings)`);
@@ -249,10 +250,10 @@ export async function execute(job: Job, client: CellClient, log: LogShipper, sig
       case 'sast': {
         // Static analysis with Semgrep (installed in the runner image). Rules: payload.config (a registry pack such as
         // p/ci, p/security-audit, or a path/URL), default "auto" when the runner has network, else the bundled p/ci.
-        const version = await run('semgrep', ['--version'], { signal }).catch(() => ({ code: 127, stdout: '', stderr: '' }));
+        const version = await phase('tool semgrep --version', () => run('semgrep', ['--version'], { signal })).catch(() => ({ code: 127, stdout: '', stderr: '' }));
         if (version.code !== 0) throw Object.assign(new Error('semgrep is not installed on this runner (use the runner image, or pip install semgrep)'), { skipped: true });
         const credentials = await client.credentials(job.id);
-        const repo = await clone(job, credentials, workspace, log, signal);
+        const repo = await phase('checkout', () => clone(job, credentials, workspace, log, signal));
         const output = join(workspace, 'sast.json');
         // Rules: p/security-audit (broad, security-focused) + p/secrets by default; `auto` only when asked. Several
         // --config flags are allowed; each is a registry pack (p/…), a path, or a URL. p/python found 2 of 4 planted issues,
@@ -261,7 +262,7 @@ export async function execute(job: Job, client: CellClient, log: LogShipper, sig
         const config = configs.join(',');
         const args = ['scan', ...configs.flatMap((c) => ['--config', c]), '--json', '--output', output, '--quiet', '--metrics=off', '--disable-version-check', '--timeout', '120', repo];
         log.system(`semgrep ${args.filter((a) => a !== repo).join(' ')} <repository> (v${version.stdout.trim()})`);
-        const result = await run('semgrep', args, { env: { ...process.env, SEMGREP_SEND_METRICS: 'off' }, signal, onLine: (st, l) => log.write(st, l) });
+        const result = await phase('tool semgrep', () => run('semgrep', args, { env: { ...process.env, SEMGREP_SEND_METRICS: 'off' }, signal, onLine: (st, l) => log.write(st, l) }), { 'matelot.tool': 'semgrep' });
         // exit 0 = clean, 1 = findings (we do not use --error), anything else = failure
         if (result.code !== 0 && result.code !== 1) throw new Error(`semgrep failed (${result.code}): ${sanitize(result.stderr.trim().split('\n').slice(-2).join(' · ')) || 'no output'}`);
         const report = JSON.parse(await readFile(output, 'utf8')) as Parameters<typeof parseSemgrep>[0];
@@ -272,7 +273,7 @@ export async function execute(job: Job, client: CellClient, log: LogShipper, sig
         const bySeverity = findings.reduce<Record<string, number>>((acc, f) => ({ ...acc, [f.severity]: (acc[f.severity] ?? 0) + 1 }), {});
         log.system(`${findings.length} code finding${findings.length === 1 ? '' : 's'}${findings.length ? ` (${Object.entries(bySeverity).map(([k, v]) => `${v} ${k}`).join(', ')})` : ''}`);
         const ref = String(job.payload.ref ?? (credentials.kind !== 'none' ? credentials.defaultBranch ?? 'HEAD' : 'HEAD'));
-        const stored = await client.codeFindings(job.id, { kind: 'sast', ref, findings });
+        const stored = await phase('upload findings', () => client.codeFindings(job.id, { kind: 'sast', ref, findings }));
         log.system(`${stored.opened} new, ${stored.seen} already known, ${stored.fixed} fixed since the last scan`);
         return { result: { kind: 'sast', findings: findings.length, bySeverity, opened: stored.opened, fixed: stored.fixed } };
       }

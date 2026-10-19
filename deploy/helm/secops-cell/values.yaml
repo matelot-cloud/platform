@@ -135,6 +135,13 @@ keycloak:
   adminPassword: change-me-please
   allowPasswordGrant: true   # direct-access grants on platform-web; handy for CLI/dev, disable in prod
   extraRedirectUris: ["http://localhost:5173/*"]
+  # The cell's sign-in pages: the "matelot" login theme (favicon, logo, tenant name, palette, font on the stock
+  # Keycloak layout). Override the logo and the colours per cell; docs/cell-provisioning.md §Branding the sign-in page.
+  theme:
+    enabled: true
+    logo: ""               # URL or data: URI of the logo above the form (default: the Matelot mark); 72×72 shown
+    primaryColor: ""       # buttons and links, e.g. "#0f766e" (default: the app's brand blue)
+    primaryColorHover: ""  # default: primaryColor
   # The first administrators: every tenant.adminEmails address without a user in the realm is created by the realm-sync
   # hook (install and every upgrade) with this password, marked temporary — the first login asks for a new one. Empty =
   # generated once and kept in the Secret <release>-keycloak as SEED_ADMIN_PASSWORD (NOTES print how to read it).

@@ -133,11 +133,24 @@ kv "$M/keycloak/keycloak.env" KC_HTTP_RELATIVE_PATH /auth
 kv "$M/keycloak/keycloak.env" KC_HTTP_MANAGEMENT_RELATIVE_PATH /
 kv "$M/keycloak/keycloak.env" KC_PROXY_HEADERS xforwarded
 kv "$M/keycloak/keycloak.env" KC_HEALTH_ENABLED true
+# the "matelot" login theme (init/theme, a copy of the chart's files/theme) plus this cell's overrides in cell.css:
+# the keycloak service copies it into /opt/keycloak/themes at start
+THEME_SRC="${MATELOT_THEME_SRC:-$(dirname "$0")/theme/matelot}"
+rm -rf "$M/keycloak/theme"; mkdir -p "$M/keycloak/theme"; cp -R "$THEME_SRC" "$M/keycloak/theme/matelot"
+{
+  echo "/* rendered by compose-init from MATELOT_THEME_LOGO / MATELOT_THEME_PRIMARY_COLOR */"
+  echo ":root {"
+  [ -n "${MATELOT_THEME_LOGO:-}" ] && echo "  --matelot-logo: url(\"$MATELOT_THEME_LOGO\");"
+  [ -n "${MATELOT_THEME_PRIMARY_COLOR:-}" ] && echo "  --matelot-primary: $MATELOT_THEME_PRIMARY_COLOR;" && echo "  --matelot-primary-hover: ${MATELOT_THEME_PRIMARY_COLOR_HOVER:-$MATELOT_THEME_PRIMARY_COLOR};"
+  echo "}"
+} > "$M/keycloak/theme/matelot/login/resources/css/cell.css"
 SEED_PASSWORD="$(cat "$M/secrets/keycloak/SEED_ADMIN_PASSWORD")"
 cat > "$M/keycloak/import/realm.json" <<REALM
 {
   "realm": "platform",
-  "displayName": "$(json_str "$ORG_NAME") · Matelot",
+  "displayName": "$(json_str "$ORG_NAME")",
+  "displayNameHtml": "$(json_str "$ORG_NAME")",
+  "loginTheme": "matelot",
   "enabled": true,
   "sslRequired": "$SSL_REQUIRED",
   "registrationAllowed": false,

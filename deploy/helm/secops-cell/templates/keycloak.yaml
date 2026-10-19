@@ -27,6 +27,41 @@ data:
 {{ tpl (.Files.Get "files/realm.json.tpl") . | indent 4 }}
   realm-sync.js: |-
 {{ .Files.Get "files/realm-sync.js" | indent 4 }}
+{{- if .Values.keycloak.theme.enabled }}
+---
+# The "matelot" login theme (files/theme/matelot/login: the stock keycloak.v2 layout with our favicon, logo, palette
+# and font). Mounted at /opt/keycloak/themes/matelot: keys are the file paths with "/" → "__" (a ConfigMap key cannot
+# hold a slash), the volume maps them back. css/cell.css carries this cell's overrides (keycloak.theme.logo / colours).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-keycloak-theme
+  labels:
+    {{- include "cell.labels" . | nindent 4 }}
+data:
+{{- range $path, $_ := .Files.Glob "files/theme/matelot/login/**" }}
+{{- $rel := trimPrefix "files/theme/matelot/login/" $path }}
+{{- if and (not (hasSuffix ".png" $path)) (not (hasSuffix ".ico" $path)) (ne $rel "resources/css/cell.css") }}
+  {{ $rel | replace "/" "__" }}: |-
+{{ $.Files.Get $path | indent 4 }}
+{{- end }}
+{{- end }}
+  resources__css__cell.css: |-
+    /* rendered by the chart from keycloak.theme.* */
+    :root {
+    {{- with .Values.keycloak.theme.logo }}
+      --matelot-logo: url("{{ . }}");
+    {{- end }}
+    {{- with .Values.keycloak.theme.primaryColor }}
+      --matelot-primary: {{ . }};
+      --matelot-primary-hover: {{ $.Values.keycloak.theme.primaryColorHover | default . }};
+    {{- end }}
+    }
+binaryData:
+{{- range $path, $_ := .Files.Glob "files/theme/matelot/login/resources/img/*" }}
+  {{ trimPrefix "files/theme/matelot/login/" $path | replace "/" "__" }}: {{ $.Files.Get $path | b64enc }}
+{{- end }}
+{{- end }}
 ---
 # `start --import-realm` imports once (IGNORE_EXISTING): after a scheme or hostname change the clients' redirect URIs in
 # the database stay old ("Invalid parameter: redirect_uri"). This hook applies the rendered realm's URL-shaped settings
@@ -138,6 +173,9 @@ spec:
         secops.io/ingress-exposed: "true"
       annotations:
         checksum/realm: {{ tpl (.Files.Get "files/realm.json.tpl") . | sha256sum }}
+{{- if .Values.keycloak.theme.enabled }}
+        checksum/theme: {{ print (toJson .Values.keycloak.theme) (.Files.Glob "files/theme/matelot/login/**" | toJson | sha256sum) | sha256sum }}
+{{- end }}
     spec:
       {{- if .Values.postgres.bundled }}
       initContainers:
@@ -187,6 +225,11 @@ spec:
             - name: realm
               mountPath: /opt/keycloak/data/import
               readOnly: true
+{{- if .Values.keycloak.theme.enabled }}
+            - name: theme
+              mountPath: /opt/keycloak/themes/matelot
+              readOnly: true
+{{- end }}
           startupProbe:
             httpGet:
               path: /health/started
@@ -210,6 +253,16 @@ spec:
           configMap:
             name: {{ .Release.Name }}-keycloak-realm
             items: [{ key: realm.json, path: realm.json }]   # only the realm: the import directory must hold JSON only
+{{- if .Values.keycloak.theme.enabled }}
+        - name: theme
+          configMap:
+            name: {{ .Release.Name }}-keycloak-theme
+            items:
+{{- range $path, $_ := .Files.Glob "files/theme/matelot/login/**" }}
+{{- $rel := trimPrefix "files/theme/matelot/login/" $path }}
+              - { key: {{ $rel | replace "/" "__" | quote }}, path: {{ $rel | quote }} }
+{{- end }}
+{{- end }}
 {{- if .Values.ingress.enabled }}
 ---
 apiVersion: networking.k8s.io/v1

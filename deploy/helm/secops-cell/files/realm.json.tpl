@@ -1,6 +1,10 @@
 {
   "realm": {{ .Values.keycloak.realm | quote }},
-  "displayName": {{ printf "%s Security Platform" .Values.tenant.name | quote }},
+  "displayName": {{ .Values.tenant.name | quote }},
+  "displayNameHtml": {{ .Values.tenant.name | quote }},
+{{- if .Values.keycloak.theme.enabled }}
+  "loginTheme": "matelot",
+{{- end }}
   "enabled": true,
   "sslRequired": {{ ternary "external" "none" .Values.ingress.tls | quote }},
   "registrationAllowed": false,

@@ -80,6 +80,7 @@ docker push "$(matelot registry path --service <serviceId>)":1   # prints host +
 | `MATELOT_HTTP_PORT` / `MATELOT_HTTPS_PORT` / `MATELOT_REGISTRY_PORT` | 80 / 443 / 5000 | published ports |
 | `MATELOT_LICENSE` | empty | licence key (Free tier when empty; entitlements arrive with the commercial release) |
 | `MATELOT_BACKUP_RETENTION_DAYS` | 14 | archives kept on the backups volume |
+| `MATELOT_THEME_LOGO` / `MATELOT_THEME_PRIMARY_COLOR` | empty | the sign-in page's logo (URL or data: URI) and button / link colour (see *Branding the sign-in page* below) |
 
 Changing `MATELOT_DOMAIN` (or the scheme) after the first start is just `docker compose up -d`: Keycloak imported the
 realm once, so the one-shot `realm-sync` service updates the realm's redirect URIs and `sslRequired` through the admin
@@ -180,6 +181,13 @@ backup:
 Images are `ghcr.io/matelot-cloud/{api,worker,web,runner}` at the chart's `appVersion`; leave the `image` blocks alone
 unless you mirror them. Everything else (replicas, resources, managed runner count, SMTP via `api.extraEnv`) has a
 documented default in `values.yaml`.
+
+**Branding the sign-in page.** Sign-in, OTP, password-reset and consent pages are Keycloak's, rendered with the
+cell's `matelot` login theme: your organization's name as the heading and in the tab title, the product logo, the
+app's colours in light and dark mode. To show your own logo and colour instead, set `keycloak.theme.logo` (a URL or
+`data:` URI) and `keycloak.theme.primaryColor` (`primaryColorHover` optional) in the values file — on Compose
+`MATELOT_THEME_LOGO` / `MATELOT_THEME_PRIMARY_COLOR` in `.env`; `keycloak.theme.enabled: false` restores the stock
+Keycloak look. The theme overrides no Keycloak template, so Keycloak upgrades keep working.
 
 Member management needs nothing extra: with the bundled Keycloak the API reaches its admin API in-cluster
 (`KEYCLOAK_ADMIN_URL`, set by the chart and by Compose) to create invited users and set passwords. Optional API

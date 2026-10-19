@@ -93,6 +93,7 @@ services:
       - |
         set -e; set -a; . /matelot/keycloak/keycloak.env; set +a
         mkdir -p /opt/keycloak/data/import && cp /matelot/keycloak/import/realm.json /opt/keycloak/data/import/realm.json
+        rm -rf /opt/keycloak/themes/matelot && cp -R /matelot/keycloak/theme/matelot /opt/keycloak/themes/matelot
         exec /opt/keycloak/bin/kc.sh start --import-realm
     environment:
       JAVA_OPTS_KC_HEAP: "-XX:MaxRAMPercentage=70"

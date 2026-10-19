@@ -145,6 +145,31 @@ modified; `keycloak.seedAdmins: false` leaves user creation to the operator or t
   the bootstrap value.
 * **Restore:** docs/backup-restore.md.
 
+### Branding the sign-in page
+
+The cell's sign-in, OTP, password-reset and consent pages are Keycloak's own, rendered with the **`matelot` login
+theme** that the chart ships: the stock `keycloak.v2` layout and behaviour with our favicon, the product logo above
+the form, the tenant name as the heading ("Sign in to Globex Corporation"), the tab title "Globex Corporation ·
+Matelot", the web app's palette (light and dark, following the browser's `prefers-color-scheme`) and font. Nothing
+in it overrides a Keycloak template, so Keycloak upgrades do not break it. Customers who want their own look set, in
+the cell's values file:
+
+```yaml
+keycloak:
+  theme:
+    logo: https://cdn.example.com/brand/mark.png   # or a data: URI; shown 72×72 above the form
+    primaryColor: "#0f766e"                        # buttons and links (default: the app's brand blue)
+    primaryColorHover: "#115e59"                   # optional, defaults to primaryColor
+```
+
+`apply` renders them into the theme's `css/cell.css` and restarts Keycloak (the theme ConfigMap is part of its pod
+checksum); `realm-sync` keeps `loginTheme=matelot` set on every run, so a theme shipped with a later release reaches
+existing cells too. `keycloak.theme.enabled: false` goes back to the stock Keycloak look. The tenant name on the page
+is the realm's display name: it is set from `tenant.name` on install, the old templated form ("… Security Platform")
+is migrated once, and a name typed by hand in the Keycloak console is kept. The font loads from Google Fonts; a cell
+without internet access falls back to the system font. The Docker Compose stack has the same theme, with
+`MATELOT_THEME_LOGO` and `MATELOT_THEME_PRIMARY_COLOR` in `.env`.
+
 ## 7. Decommission
 
 ```

@@ -127,7 +127,9 @@ mirror this layout exactly — nothing at the root that is not in the repository
   + hooks in `src/platform/api/hooks.ts`; respect 403 with an explanatory empty state.
 - Keep the Helm chart deployable with defaults on kind; anything production-only is a values switch. The Compose
   stack (`deploy/compose`) mirrors the chart: same env names, same generated-secret layout (`secrets/<name>/<KEY>`),
-  same backup/restore scripts (`backup/*.sh` are copies of the chart's files — chart-test fails when they differ);
+  same backup/restore scripts (`backup/*.sh` are copies of the chart's files — chart-test fails when they differ),
+  the same Keycloak login theme (`deploy/helm/secops-cell/files/theme` is the source, `deploy/compose/init/theme` the
+  copy — chart-test diffs them; `realm-sync.js` likewise);
   a new API setting goes into `api-configmap.yaml` **and** `compose-init.sh` (`env/api.env`).
 
 ## v1 focus (read first)

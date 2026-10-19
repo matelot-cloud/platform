@@ -4,6 +4,38 @@
 
 Images `ghcr.io/matelot-cloud/{api,web,worker,runner}` and the chart `oci://ghcr.io/matelot-cloud/charts/secops-cell`, signed, with SBOM attestations; install guide at https://matelot-cloud.github.io/website/docs/latest/install.html. The sections below are the drops that make up the release, newest first.
 
+### Branded sign-in page: the `matelot` Keycloak login theme (Helm and Compose)
+
+- The sign-in pages rendered the stock `keycloak.v2` theme: Keycloak's favicon, "Sign in to <realm>" as tab title, no
+  branding. The cell now ships a **`matelot` login theme** (`deploy/helm/secops-cell/files/theme`, copied to
+  `deploy/compose/init/theme`): it extends `keycloak.v2` and overrides no template — only `theme.properties`
+  (stylesheets + one script), a messages file, CSS, a small script and images — so OTP, password reset, consent and
+  error pages keep Keycloak's layout and a Keycloak upgrade cannot break it. Branding: the web app's favicon
+  (`favicon.ico` built from `apps/web/public/favicon.png`, plus the apple-touch-icon), the product logo above the
+  form, the tenant name in the brand band and as the sign-in heading ("Sign in to Globex Corporation" — set by the
+  theme's script on the sign-in page, English only; other pages and locales keep Keycloak's wording), the tab title
+  "<tenant> · Matelot", the app's palette in light and dark (`prefers-color-scheme`) through PatternFly variables, and
+  the Outfit font (Google Fonts; system font offline).
+- **Per cell:** `keycloak.theme.logo`, `keycloak.theme.primaryColor` (`primaryColorHover`) render `css/cell.css`;
+  `keycloak.theme.enabled: false` is the stock look. Compose: `MATELOT_THEME_LOGO`, `MATELOT_THEME_PRIMARY_COLOR`.
+  docs/cell-provisioning.md §Branding the sign-in page.
+- **Helm:** one ConfigMap `<release>-keycloak-theme` holds every theme file (images as `binaryData`; keys are the
+  paths with `/` → `__`, mapped back by the volume) mounted at `/opt/keycloak/themes/matelot`; its checksum is on the
+  Keycloak pod, so a theme change restarts Keycloak. **Compose:** `compose-init` assembles the theme plus `cell.css`
+  into the config volume and the keycloak service copies it into `/opt/keycloak/themes` at start.
+- **realm-sync** applies `loginTheme` (and `accountTheme` / `emailTheme` when a realm.json carries them) on every run,
+  like the URLs. The realm **display name** is now the plain tenant name (no "Security Platform" / "· Matelot"
+  suffix) with `displayNameHtml` the same; realm-sync migrates the old templated forms once and keeps a display name
+  typed by hand.
+- Tests: `realm-sync.test.js` (themes applied, stale names migrated, hand-typed names kept, pure `realmSettingsPatch`
+  cases); `compose-init.test.sh` (theme assembled, cell.css empty by default and rendered from the variables);
+  `chart-test.sh` (every theme file in the ConfigMap, images byte-identical, the volume maps every key, mount path,
+  checksum, realm selects the theme, `theme.enabled=false` is stock, compose copy identical); the Compose smoke test
+  loads the realm's sign-in page and checks the "· Matelot" title and that favicon.ico, apple-touch-icon.png,
+  logo.png, matelot.css, cell.css and matelot.js are served (200). The web app's jsdom tests are untouched.
+- Not verified here: the page in a real Keycloak 26 (the chart render was checked with a stand-in renderer and the
+  CI chart job runs the real helm; the smoke step runs in CI's `compose` job).
+
 ### Fix: cell-provision `checks` declared the cell unhealthy in the endpoint-switch window after a rollout
 
 - Right after "all workloads rolled out", the in-cluster probe (`GET http://<release>-api/api/v1/health/ready` from a

@@ -7,10 +7,10 @@ const http = require('node:http');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { sync, clientPatch, namesFromEmail } = require('./realm-sync.js');
+const { sync, clientPatch, namesFromEmail, realmSettingsPatch } = require('./realm-sync.js');
 
 const state = {
-  realm: { realm: 'platform', sslRequired: 'none', enabled: true, displayName: 'Keep me' },
+  realm: { realm: 'platform', sslRequired: 'none', enabled: true, displayName: 'Keep me', displayNameHtml: 'ACME Corp Security Platform', loginTheme: 'keycloak.v2' },
   profile: { attributes: [{ name: 'username' }, { name: 'email', required: { roles: ['user'] } }, { name: 'firstName', required: { roles: ['user'] }, permissions: { view: ['admin', 'user'] } }, { name: 'lastName', required: { roles: ['user'] } }], groups: [] },
   users: [{ id: 'u1', username: 'old@acme.local', email: 'old@acme.local', enabled: false, credentials: 'keep' }],
   clients: [
@@ -47,7 +47,7 @@ const server = http.createServer((req, res) => {
   const base = `http://127.0.0.1:${server.address().port}/auth`;
   const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'realm-')), 'realm.json');
   fs.writeFileSync(file, JSON.stringify({
-    realm: 'platform', sslRequired: 'external', displayName: 'Rendered name (must not be applied)',
+    realm: 'platform', sslRequired: 'external', displayName: 'Rendered name (must not be applied)', displayNameHtml: 'ACME Corp', loginTheme: 'matelot',
     clients: [
       { clientId: 'platform-api', bearerOnly: true },
       { clientId: 'platform-web', publicClient: true, redirectUris: ['https://acme.platform.local/*'], webOrigins: ['+'], attributes: { 'pkce.code.challenge.method': 'S256', 'post.logout.redirect.uris': '+' } },
@@ -60,13 +60,16 @@ const server = http.createServer((req, res) => {
   await assert.rejects(sync(base, file, { username: 'admin', password: 'nope', timeoutSeconds: 5, log: () => {} }), /admin login failed/);
   assert.equal(state.clients[0].redirectUris[0], 'http://acme.platform.local/*');
   const changes = await sync(base, file, { username: 'admin', password: 's3cret', timeoutSeconds: 5, log: (l) => logs.push(l) });
-  assert.deepEqual(changes, ['realm sslRequired none → external', 'user profile: first and last name optional', 'client platform-web: redirectUris → https://acme.platform.local/*']);
+  assert.deepEqual(changes, ['realm sslRequired "none" → "external"', 'realm loginTheme "keycloak.v2" → "matelot"', 'realm displayNameHtml "ACME Corp Security Platform" → "ACME Corp"', 'user profile: first and last name optional', 'client platform-web: redirectUris → https://acme.platform.local/*']);
   const attr = (n) => state.profile.attributes.find((a) => a.name === n);
   assert.equal(attr('firstName').required, undefined); assert.equal(attr('lastName').required, undefined);
   assert.deepEqual(attr('email').required, { roles: ['user'] }, 'e-mail stays required');
   assert.deepEqual(attr('firstName').permissions, { view: ['admin', 'user'] }, 'other attribute settings kept');
   assert.equal(state.realm.sslRequired, 'external');
-  assert.equal(state.realm.displayName, 'Keep me', 'only URL-shaped settings are applied');
+  assert.equal(state.realm.displayName, 'Keep me', 'a display name typed by hand is kept');
+  assert.equal(state.realm.displayNameHtml, 'ACME Corp', 'the old templated "… Security Platform" is migrated to the tenant name');
+  assert.equal(state.realm.loginTheme, 'matelot', 'the login theme is applied on every run');
+  assert.equal(state.realm.enabled, true, 'the PUT carries only the changed settings');
   const web = state.clients.find((c) => c.clientId === 'platform-web');
   assert.deepEqual(web.redirectUris, ['https://acme.platform.local/*']);
   assert.equal(web.attributes['made.by.hand'], 'yes', 'hand-made attributes survive');
@@ -81,6 +84,11 @@ const server = http.createServer((req, res) => {
   assert.equal(created.firstName, undefined, 'no placeholder name for a one-part local part');
   assert.deepEqual(namesFromEmail('jane.doe@acme.local'), { firstName: 'Jane', lastName: 'Doe' });
   assert.deepEqual(namesFromEmail('ciso@globex.test'), {});
+  // realm settings: themes always follow the rendered realm; display names only while still the old templated form
+  assert.equal(realmSettingsPatch({ sslRequired: 'external', loginTheme: 'matelot', displayName: 'Globex', displayNameHtml: 'Globex' }, { sslRequired: 'external', loginTheme: 'matelot', displayName: 'Globex Corporation', displayNameHtml: 'Globex Corporation' }), null, 'a renamed display name is kept');
+  assert.deepEqual(realmSettingsPatch({ displayName: 'Globex · Matelot', displayNameHtml: '' }, { loginTheme: 'matelot', displayName: 'Globex', displayNameHtml: 'Globex' }), { loginTheme: 'matelot', displayName: 'Globex', displayNameHtml: 'Globex' }, 'the Compose form "· Matelot" and an empty displayNameHtml are migrated');
+  assert.deepEqual(realmSettingsPatch({ loginTheme: 'matelot' }, { loginTheme: 'matelot', accountTheme: 'matelot' }), { accountTheme: 'matelot' });
+  assert.equal(realmSettingsPatch({ loginTheme: 'custom-by-hand' }, {}), null, 'a realm.json without a theme never touches the theme');
   assert.deepEqual(state.users[0], { id: 'u1', username: 'old@acme.local', email: 'old@acme.local', enabled: false, credentials: 'keep' }, 'existing user untouched');
   assert.ok(!calls.some((c) => /PUT .*\/users\/(?!profile)/.test(c)), 'no user is ever updated');
   // a second seeding run creates nothing

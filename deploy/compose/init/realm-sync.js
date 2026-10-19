@@ -1,7 +1,8 @@
 // Keycloak realm sync — what `start --import-realm` does not do. The import strategy is IGNORE_EXISTING: after the
 // first start the realm in the database never changes, so a domain or scheme change (http → https, a new hostname)
 // leaves the clients' redirect URIs behind ("Invalid parameter: redirect_uri"). This applies the rendered realm.json's
-// URL-shaped settings through the admin API and nothing else: realm sslRequired, and per client (matched by clientId)
+// URL-shaped settings through the admin API and nothing else: realm sslRequired and the login/account/email themes
+// (ours), the display names only while they still carry the old templated suffix, and per client (matched by clientId)
 // redirectUris, webOrigins, rootUrl, baseUrl, adminUrl, the post-logout redirect attribute. Users, groups, roles,
 // credentials and anything created by hand stay untouched; clients missing in the realm are reported, not created.
 // It also seeds the first administrators: every e-mail in SEED_USERS that has no user in the realm gets one (username =
@@ -64,6 +65,26 @@ async function login(base, username, password) {
   return t.access_token;
 }
 
+/** The realm display names the templates used to render before the product had a name: migrated once to the plain
+ * tenant name; a display name an administrator typed by hand is kept. */
+const STALE_DISPLAY_NAME = /( Security Platform| · Matelot)$/;
+
+/**
+ * Pure: the realm-level settings to PUT. Applied on every run like the URLs: sslRequired (scheme), and the themes
+ * (loginTheme / accountTheme / emailTheme — ours, so an upgrade that ships a new theme reaches existing cells).
+ * displayName / displayNameHtml are applied only while the realm still carries the old templated form (or none).
+ */
+function realmSettingsPatch(current, rendered) {
+  const patch = {};
+  if ('sslRequired' in rendered && current.sslRequired !== rendered.sslRequired) patch.sslRequired = rendered.sslRequired;
+  for (const k of ['loginTheme', 'accountTheme', 'emailTheme']) if (k in rendered && (current[k] ?? '') !== (rendered[k] ?? '')) patch[k] = rendered[k];
+  for (const k of ['displayName', 'displayNameHtml']) {
+    if (!(k in rendered) || current[k] === rendered[k]) continue;
+    if (!current[k] || STALE_DISPLAY_NAME.test(current[k])) patch[k] = rendered[k];
+  }
+  return Object.keys(patch).length ? patch : null;
+}
+
 /** Pure: what to PUT for one client given its current state and the rendered one; null when nothing differs. */
 function clientPatch(current, rendered) {
   const patch = {};
@@ -97,10 +118,11 @@ async function sync(base, realmFile, { username, password, timeoutSeconds = 300,
     log(`realm ${realm} not imported yet (${r.status}), waiting`);
     await new Promise((d) => setTimeout(d, 5000));
   }
-  if ('sslRequired' in rendered && current.sslRequired !== rendered.sslRequired) {
-    const r = await fetch(admin, { method: 'PUT', headers: h, body: JSON.stringify({ sslRequired: rendered.sslRequired }) });
+  const realmPatch = realmSettingsPatch(current, rendered);
+  if (realmPatch) {
+    const r = await fetch(admin, { method: 'PUT', headers: h, body: JSON.stringify(realmPatch) });
     if (!r.ok) throw new Error(`realm update: HTTP ${r.status}`);
-    changes.push(`realm sslRequired ${current.sslRequired} → ${rendered.sslRequired}`);
+    changes.push(...Object.keys(realmPatch).map((k) => `realm ${k} ${JSON.stringify(current[k] ?? null)} → ${JSON.stringify(realmPatch[k])}`));
   }
   const profileChange = await relaxUserProfile(admin, h);
   if (profileChange) changes.push(profileChange);
@@ -125,7 +147,7 @@ async function sync(base, realmFile, { username, password, timeoutSeconds = 300,
   return changes;
 }
 
-module.exports = { sync, clientPatch, namesFromEmail };
+module.exports = { sync, clientPatch, namesFromEmail, realmSettingsPatch };
 if (require.main === module) {
   const [base, file] = process.argv.slice(2);
   if (!base || !file) { console.error('usage: node realm-sync.js <keycloak base URL> <realm.json>'); process.exit(2); }

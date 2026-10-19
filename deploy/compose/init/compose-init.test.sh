@@ -37,15 +37,25 @@ python3 - "$M" "$NAME" "$PASS" "$EMAIL" <<'PY'
 import json, sys
 m, name, pw, email = sys.argv[1:]
 realm = json.load(open(f"{m}/keycloak/import/realm.json"))
-assert realm["displayName"] == f"{name} · Matelot", realm["displayName"]
+assert realm["displayName"] == name and realm["displayNameHtml"] == name and realm["loginTheme"] == "matelot", (realm["displayName"], realm.get("loginTheme"))
 u = realm["users"][0]; assert u["email"] == email and u["credentials"][0]["value"] == pw
 assert realm["clients"][1]["redirectUris"] == ["http://localhost/*"] and realm["sslRequired"] == "none"
 web = json.load(open(f"{m}/web/config.json")); assert web["productName"] == f"{name} · Matelot" and web["keycloakUrl"] == "http://localhost/auth"
 print("json ok")
 PY
+# the login theme is assembled into the config volume (keycloak copies it to /opt/keycloak/themes at start): the
+# chart's files plus cell.css from the branding variables — empty here, so only the defaults of matelot.css apply
+for f in theme.properties messages/messages_en.properties resources/css/matelot.css resources/css/cell.css resources/js/matelot.js resources/img/favicon.ico resources/img/logo.png resources/img/apple-touch-icon.png; do
+  [ -f "$M/keycloak/theme/matelot/login/$f" ] || { echo "FAIL: theme file missing: $f" >&2; exit 1; }
+done
+grep -q '^parent=keycloak.v2' "$M/keycloak/theme/matelot/login/theme.properties"
+grep -q -- '--matelot-logo' "$M/keycloak/theme/matelot/login/resources/css/cell.css" && { echo "FAIL: cell.css should carry no logo without MATELOT_THEME_LOGO" >&2; exit 1; }
 # secrets are generated once: a second run with a new domain keeps them and rewrites the derived files
 cp "$M/secrets/cell-key/CELL_ENCRYPTION_KEY" "$T/key1"; cp "$M/secrets/postgres/POSTGRES_PASSWORD" "$T/pg1"
-MATELOT_ORG_NAME="$NAME" MATELOT_DOMAIN=matelot.example.com MATELOT_ACME_EMAIL="$EMAIL" bash compose-init.sh > "$T/out2" 2>&1 || { cat "$T/out2"; exit 1; }
+MATELOT_ORG_NAME="$NAME" MATELOT_DOMAIN=matelot.example.com MATELOT_ACME_EMAIL="$EMAIL" MATELOT_THEME_LOGO='https://cdn.example.com/logo.png' MATELOT_THEME_PRIMARY_COLOR='#0f766e' bash compose-init.sh > "$T/out2" 2>&1 || { cat "$T/out2"; exit 1; }
+grep -q -- '--matelot-logo: url("https://cdn.example.com/logo.png");' "$M/keycloak/theme/matelot/login/resources/css/cell.css" || { echo "FAIL: cell.css logo override" >&2; exit 1; }
+grep -q -- '--matelot-primary: #0f766e;' "$M/keycloak/theme/matelot/login/resources/css/cell.css" || { echo "FAIL: cell.css colour override" >&2; exit 1; }
+grep -q -- '--matelot-primary-hover: #0f766e;' "$M/keycloak/theme/matelot/login/resources/css/cell.css" || { echo "FAIL: hover defaults to the primary colour" >&2; exit 1; }
 ! grep -q "generated" "$T/out2" || { echo "FAIL: secrets regenerated on the second run" >&2; cat "$T/out2"; exit 1; }
 cmp -s "$T/key1" "$M/secrets/cell-key/CELL_ENCRYPTION_KEY" && cmp -s "$T/pg1" "$M/secrets/postgres/POSTGRES_PASSWORD"
 check_env "$M/env/api.env" KEYCLOAK_ISSUER "https://matelot.example.com/auth/realms/platform"

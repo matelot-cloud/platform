@@ -48,6 +48,8 @@ jobs:
       - run: pnpm --filter @secops/runner build
       - run: pnpm --filter secops-platform-cli build && pnpm --filter secops-platform-cli test
       - run: pnpm --filter @secops/web test
+      - name: Icons are generated from favicon.svg / logo-512.png (favicon.ico frames, PNG sizes, the login theme's copies) — never resampled by hand
+        run: pnpm --filter @secops/icons test
       - name: Documentation renders and every link resolves
         run: node tools/docs-site/test.mjs && node tools/docs-site/build.mjs --check
 

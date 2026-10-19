@@ -76,11 +76,11 @@ grep -q '<title>[^<]*· Matelot</title>' <<< "$login_html" || { echo "the sign-i
 grep -q 'login/matelot/' <<< "$login_html" || { echo "the sign-in page does not use the matelot theme (loginTheme not applied?)" >&2; grep -o 'resources/[^"]*' <<< "$login_html" | head -3 >&2; exit 1; }
 theme_root="$(grep -o "[^\"']*/login/matelot/img/favicon.ico" <<< "$login_html" | head -1)"; theme_root="${theme_root%/img/favicon.ico}"
 [ -n "$theme_root" ] || { echo "the sign-in page does not link the theme's favicon.ico" >&2; exit 1; }
-for asset in img/favicon.ico img/apple-touch-icon.png img/logo.png css/matelot.css css/cell.css js/matelot.js; do   # logo.png is a CSS background, not linked
+for asset in img/favicon.svg img/favicon.ico img/favicon-32.png img/apple-touch-icon.png img/logo.png css/matelot.css css/cell.css js/matelot.js; do   # logo.png is a CSS background, not linked
   code="$(curl -sS -o /dev/null -w '%{http_code}' "$BASE$theme_root/$asset")"; [ "$code" = 200 ] || { echo "theme asset $theme_root/$asset → HTTP $code" >&2; exit 1; }
 done
 grep -q "$theme_root/css/matelot.css" <<< "$login_html" || { echo "matelot.css is not linked from the sign-in page" >&2; exit 1; }
-echo "   title: $(grep -o '<title>[^<]*</title>' <<< "$login_html" | sed 's/<[^>]*>//g') · favicon.ico, apple-touch-icon.png, logo.png, matelot.css, cell.css, matelot.js: 200"
+echo "   title: $(grep -o '<title>[^<]*</title>' <<< "$login_html" | sed 's/<[^>]*>//g') · favicon.svg, favicon.ico, favicon-32.png, apple-touch-icon.png, logo.png, matelot.css, cell.css, matelot.js: 200"
 log "matelot doctor (before login: the public checks)"
 export MATELOT_URL="$BASE"
 export MATELOT_CREDENTIALS="$PWD/.smoke-credentials.json"; rm -f "$MATELOT_CREDENTIALS"

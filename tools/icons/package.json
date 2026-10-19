@@ -1,0 +1,14 @@
+{
+  "name": "@secops/icons",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Regenerates every favicon / app icon of the web app (and the Keycloak login theme) from the SVG sources in apps/web/public \u2014 nobody resamples by hand.",
+  "type": "module",
+  "scripts": {
+    "icons": "node build.mjs",
+    "test": "node build.mjs --check"
+  },
+  "devDependencies": {
+    "sharp": "0.33.5"
+  }
+}

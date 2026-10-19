@@ -45,7 +45,7 @@ print("json ok")
 PY
 # the login theme is assembled into the config volume (keycloak copies it to /opt/keycloak/themes at start): the
 # chart's files plus cell.css from the branding variables — empty here, so only the defaults of matelot.css apply
-for f in theme.properties messages/messages_en.properties resources/css/matelot.css resources/css/cell.css resources/js/matelot.js resources/img/favicon.ico resources/img/logo.png resources/img/apple-touch-icon.png; do
+for f in theme.properties messages/messages_en.properties resources/css/matelot.css resources/css/cell.css resources/js/matelot.js resources/img/favicon.svg resources/img/favicon.ico resources/img/favicon-32.png resources/img/logo.png resources/img/apple-touch-icon.png; do
   [ -f "$M/keycloak/theme/matelot/login/$f" ] || { echo "FAIL: theme file missing: $f" >&2; exit 1; }
 done
 grep -q '^parent=keycloak.v2' "$M/keycloak/theme/matelot/login/theme.properties"

@@ -12,6 +12,7 @@
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
     "db:generate": "pnpm --filter @secops/api db:generate",
-    "db:migrate": "pnpm --filter @secops/api db:migrate"
+    "db:migrate": "pnpm --filter @secops/api db:migrate",
+    "icons:build": "pnpm --filter @secops/icons icons"
   }
 }

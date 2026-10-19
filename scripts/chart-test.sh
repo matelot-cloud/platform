@@ -127,6 +127,8 @@ PY
 for f in backup.sh restore-db.sh; do cmp -s "$CHART/files/$f" "deploy/compose/backup/$f" || { echo "deploy/compose/backup/$f differs from $CHART/files/$f (copy it over)" >&2; exit 1; }; done
 cmp -s "$CHART/files/realm-sync.js" deploy/compose/init/realm-sync.js || { echo "deploy/compose/init/realm-sync.js differs from $CHART/files/realm-sync.js (copy it over)" >&2; exit 1; }
 diff -r "$CHART/files/theme" deploy/compose/init/theme > /dev/null || { echo "deploy/compose/init/theme differs from $CHART/files/theme (cp -R it over)" >&2; diff -rq "$CHART/files/theme" deploy/compose/init/theme >&2; exit 1; }
+# the login theme's icons are the web app's (apps/web/public is the source; tools/icons/build.mjs writes both)
+for f in favicon.svg favicon.ico favicon-32.png apple-touch-icon.png; do cmp -s "apps/web/public/$f" "$CHART/files/theme/matelot/login/resources/img/$f" || { echo "login theme $f differs from apps/web/public/$f (run pnpm icons:build)" >&2; exit 1; }; done
 # the matelot login theme: one ConfigMap holding every theme file (images as binaryData), mounted at
 # /opt/keycloak/themes/matelot with the keys mapped back to paths; realm.json selects it and names the tenant;
 # keycloak.theme.enabled=false leaves the stock theme

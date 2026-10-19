@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!--
+    Matelot favicon: the anchor of the captain's cap alone, on a filled rounded square, so it reads at 16 px on light
+    and dark tab bars. Two flat colours; strokes are 3 units (3 px at 32 px, 1.5 px at 16 px; build.mjs thickens the
+    16 px frame with data-small-stroke and drops data-small="hide" details). The full cap stays on the large icons
+    (apple-touch-icon, icon-192/512). Regenerate every size with `pnpm icons:build`.
+  -->
+  <style>
+    .bg { fill: #0e3d55; }
+    .mark { stroke: #5cc8f5; }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #2b8fc2; }
+      .mark { stroke: #ffffff; }
+    }
+  </style>
+  <rect class="bg" x="0" y="0" width="32" height="32" rx="7"/>
+  <g class="mark" fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="3">
+    <circle cx="16" cy="8" r="3.2" data-small-stroke="3"/>
+    <path d="M16 11.2V26.4" data-small-stroke="3.6"/>
+    <path d="M9.8 15.6H22.2" data-small-stroke="3.6"/>
+    <path d="M7.2 20.4C7.9 24.6 11.4 27.4 16 27.4C20.6 27.4 24.1 24.6 24.8 20.4" data-small-stroke="3.6"/>
+    <path d="M7.2 20.4L5.4 18.9M24.8 20.4L26.6 18.9" data-small="hide"/>
+  </g>
+</svg>

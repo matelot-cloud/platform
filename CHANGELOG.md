@@ -4,6 +4,24 @@
 
 Images `ghcr.io/matelot-cloud/{api,web,worker,runner}` and the chart `oci://ghcr.io/matelot-cloud/charts/secops-cell`, signed, with SBOM attestations; install guide at https://matelot-cloud.github.io/website/docs/latest/install.html. The sections below are the drops that make up the release, newest first.
 
+### Favicon designed for small sizes; one icon set for the app and the sign-in page, generated from the SVG
+
+- The tab icon was the full captain's cap scaled to 16 px — a shapeless light blob on a dark tab bar. New mark:
+  the anchor alone, two flat colours on a filled rounded square (`apps/web/public/favicon.svg`, with a
+  `prefers-color-scheme` rule: navy square / sky anchor on light tab bars, sky square / white anchor on dark). Strokes
+  3 px at 32 px; the 16 px frame is rendered with thicker strokes and without the fluke tips, not resampled.
+- Shipped as `favicon.svg` (first in `index.html`), `favicon.ico` with 16 / 32 / 48 px frames each rendered at its own
+  size, `favicon-32.png`, `apple-touch-icon.png` (180, the full cap), `icon-192.png` / `icon-512.png` with
+  `manifest.webmanifest` (full cap). `favicon.png` is gone.
+- **`tools/icons/build.mjs`** (`pnpm icons:build`, workspace package `@secops/icons`, sharp) regenerates every size from
+  `favicon.svg` / `logo-512.png` into `apps/web/public` and the Keycloak login theme (chart source and compose copy);
+  `--check` (CI, `pnpm --filter @secops/icons test`) fails when a committed icon differs from what the sources render
+  (pixel comparison). `chart-test.sh` fails when the theme's favicon / apple-touch-icon differ from `apps/web/public`.
+- The login theme links the same set: its script puts `favicon.svg` before the stock `favicon.ico` link and adds the
+  apple-touch-icon; the smoke test fetches favicon.svg, favicon.ico and favicon-32.png from the sign-in page (200).
+- `docs/branding.md` shows the rendered 16 px and 32 px frames (light and dark) — `docs/branding/favicon-review.png`,
+  written by the build — and the rules the mark follows.
+
 ### Branded sign-in page: the `matelot` Keycloak login theme (Helm and Compose)
 
 - The sign-in pages rendered the stock `keycloak.v2` theme: Keycloak's favicon, "Sign in to <realm>" as tab title, no

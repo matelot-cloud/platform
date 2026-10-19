@@ -4,6 +4,52 @@
 
 Images `ghcr.io/matelot-cloud/{api,web,worker,runner}` and the chart `oci://ghcr.io/matelot-cloud/charts/secops-cell`, signed, with SBOM attestations; install guide at https://matelot-cloud.github.io/website/docs/latest/install.html. The sections below are the drops that make up the release, newest first.
 
+### Fix: the Helm chart mounted the login theme one level too high — Keycloak fell back to the stock theme
+
+- The theme ConfigMap was mounted at `/opt/keycloak/themes/matelot` with the items named relative to `login/`, so the
+  pod held `themes/matelot/theme.properties` while Keycloak resolves `themes/matelot/login/theme.properties`: one log
+  line (`Failed to find LOGIN theme matelot, using built-in themes`), the stock page, HTTP 200. The ConfigMap keys and
+  volume items now carry the `login/` prefix (`login__theme.properties` → `login/theme.properties` under the same
+  mount); rc.14 is harmless but unbranded, this is in the next release. Verified by projecting the rendered ConfigMap
+  through the rendered volume items exactly as kubelet does onto a real Keycloak 26.0.8: themed page, assets 200, no
+  log line; the rc.14 shape reproduces the report exactly.
+- `chart-test` asserts the paths the items RESOLVE to (`mountPath` + item path): every file under
+  `files/theme/matelot` lands at `/opt/keycloak/themes/matelot/<path>`, `login/theme.properties` included — not just
+  that a mount exists. CI's `chart` job additionally runs `scripts/chart-theme-kind-test.sh`: the chart's theme and
+  realm ConfigMaps plus one Keycloak pod with exactly the Deployment's theme volume and mount on the kind cluster, then
+  `test -f …/login/theme.properties` in the pod, the sign-in page check, and a grep of the pod log for
+  `Failed to find LOGIN theme` (not runnable in the drop's sandbox: no cluster; the pod-building step is).
+- Compose assembles the theme correctly (`theme/matelot/login/…`, copied as is to `/opt/keycloak/themes/matelot`; the
+  Keycloak service now refuses to start if `login/theme.properties` is not there, compose-init asserts the same, the
+  unit test spells the path out). The CI smoke failure had another cause, found by replaying the exact Compose start
+  sequence against a real Keycloak: besides the `:80` redirect, the `platform-web` client requires PKCE, so a request
+  without `code_challenge` never renders the sign-in page — Keycloak bounces to `redirect_uri` with
+  `error=invalid_request`, and the check read the web app's page. `login-page-check.sh` now sends a PKCE challenge,
+  requires the final URL to be the auth endpoint, and prints requested URL, final URL, status and body on failure;
+  `smoke.sh` fails on `Failed to find LOGIN theme` in the Keycloak log before and after the page check and lists
+  `/opt/keycloak/themes/matelot` from the container on failure.
+- The tab title is server-side: `loginTitle={0} \u00B7 Matelot` in the theme's `messages_en.properties`, rendered by
+  Keycloak's own template; nothing in JavaScript.
+
+### Fix: the sign-in page check in the Compose smoke test; verified against a real Keycloak 26
+
+- The smoke step asked Keycloak for the sign-in page with `redirect_uri=http://localhost:80/` while the client
+  registers `http://localhost/*` — Keycloak answers 400 for an unregistered redirect — and its one-line assertion
+  printed an empty title with nothing else to go on. The check is now `deploy/compose/login-page-check.sh <base>`:
+  it drops a default `:80` / `:443` from the base, follows redirects, and on any failure prints the requested URL,
+  the final URL, the HTTP status and the first 300 bytes of the body; `smoke.sh` calls it through Caddy and dumps
+  the Keycloak log when it fails.
+- The title is server-side: the theme's `messages_en.properties` sets `loginTitle={0} \u00B7 Matelot` (escaped
+  middle dot, so every properties reader agrees) and Keycloak's template renders it — no script involved
+  (`matelot.js` only sets the card heading and the icon links). Checked here against **Keycloak 26.0.8** from the
+  GitHub release tarball, in dev mode and in production mode (`start`, theme cache on), with a realm importing
+  `loginTheme=matelot`: tab title "Globex Corporation · Matelot", heading "Sign in to Globex Corporation", every
+  theme asset 200, screenshots in light and dark. The full Compose smoke (Caddy, the images) cannot run in this
+  sandbox (no registry access); the check itself is what CI runs.
+- `apply`'s server-side validation uses server-side apply (`--server-side --dry-run=server --force-conflicts` with
+  its own field manager): no more kubectl warning about the hook Job's missing last-applied-configuration; the CI
+  kind dry-run does the same.
+
 ### Fix: Helm upgrade rejected the theme ConfigMap (favicon.svg in both data and binaryData); API-server validation before every apply
 
 - `helm upgrade` on kind failed with `data[resources__img__favicon.svg]: Invalid value: duplicate of key present in

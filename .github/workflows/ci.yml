@@ -104,9 +104,11 @@ jobs:
           kubectl create namespace tenant-acme
           for cfg in "" "--set ingress.tls=true" "--set tenant.name=Globex --set keycloak.theme.logo=https://cdn.example.com/logo.png --set keycloak.theme.primaryColor=#0f766e" "--set backup.enabled=true"; do
             # shellcheck disable=SC2086
-            helm template acme deploy/helm/secops-cell --namespace tenant-acme $cfg | kubectl apply --dry-run=server --namespace tenant-acme -f - > /dev/null || { echo "server-side validation failed for: ${cfg:-defaults}" >&2; exit 1; }
+            helm template acme deploy/helm/secops-cell --namespace tenant-acme $cfg | kubectl apply --server-side --dry-run=server --field-manager=ci-check --namespace tenant-acme -f - > /dev/null || { echo "server-side validation failed for: ${cfg:-defaults}" >&2; exit 1; }
             echo "server dry-run ok: ${cfg:-defaults}"
           done
+      - name: Login theme on a real Keycloak pod (the chart's theme volume + mount as kubelet projects it; about 90 s)
+        run: bash scripts/chart-theme-kind-test.sh
       - name: Operator scripts parse
         run: for f in scripts/*.sh scripts/lib/*.sh deploy/helm/secops-cell/files/*.sh; do bash -n "$f"; done
       - run: python3 scripts/lib/cellwait_test.py

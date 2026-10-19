@@ -129,7 +129,9 @@ mirror this layout exactly — nothing at the root that is not in the repository
   stack (`deploy/compose`) mirrors the chart: same env names, same generated-secret layout (`secrets/<name>/<KEY>`),
   same backup/restore scripts (`backup/*.sh` are copies of the chart's files — chart-test fails when they differ),
   the same Keycloak login theme (`deploy/helm/secops-cell/files/theme` is the source, `deploy/compose/init/theme` the
-  copy — chart-test diffs them; `realm-sync.js` likewise); icons come from `apps/web/public/favicon.svg` and
+  copy — chart-test diffs them; `realm-sync.js` likewise; Keycloak resolves `themes/matelot/login/theme.properties`, so
+  the chart's ConfigMap items keep the `login/` prefix under the `/opt/keycloak/themes/matelot` mount — chart-test asserts
+  the resolved paths, CI starts a Keycloak pod with them (`scripts/chart-theme-kind-test.sh`)); icons come from `apps/web/public/favicon.svg` and
   `logo-512.png` through `pnpm icons:build` (`tools/icons/build.mjs`, also writes the theme's copies; CI checks);
   a new API setting goes into `api-configmap.yaml` **and** `compose-init.sh` (`env/api.env`).
 

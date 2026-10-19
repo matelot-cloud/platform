@@ -144,6 +144,8 @@ rm -rf "$M/keycloak/theme"; mkdir -p "$M/keycloak/theme"; cp -R "$THEME_SRC" "$M
   [ -n "${MATELOT_THEME_PRIMARY_COLOR:-}" ] && echo "  --matelot-primary: $MATELOT_THEME_PRIMARY_COLOR;" && echo "  --matelot-primary-hover: ${MATELOT_THEME_PRIMARY_COLOR_HOVER:-$MATELOT_THEME_PRIMARY_COLOR};"
   echo "}"
 } > "$M/keycloak/theme/matelot/login/resources/css/cell.css"
+# the layout Keycloak resolves: themes/matelot/login/theme.properties (the keycloak service copies theme/matelot as is)
+[ -f "$M/keycloak/theme/matelot/login/theme.properties" ] || { echo "login theme source $THEME_SRC has no login/theme.properties" >&2; exit 1; }
 SEED_PASSWORD="$(cat "$M/secrets/keycloak/SEED_ADMIN_PASSWORD")"
 cat > "$M/keycloak/import/realm.json" <<REALM
 {

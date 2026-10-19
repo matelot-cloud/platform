@@ -175,9 +175,11 @@ cmd_apply() {
   if [ "$existed" = 1 ]; then
     release_recoverable || exit 1
     # what `helm --dry-run` cannot see, the API server can: validate the rendered chart server-side before touching
-    # the release (a ConfigMap key in both data and binaryData, a schema error) — the upgrade starts only when it passes
+    # the release (a ConfigMap key in both data and binaryData, a schema error) — the upgrade starts only when it passes.
+    # Server-side apply: no last-applied-configuration annotation needed (helm's hook Jobs have none, client-side apply
+    # warns about every one); --force-conflicts because helm owns the fields and a dry run persists nothing
     say "server-side validation of the rendered chart (kubectl apply --dry-run=server)"
-    if ! helm template "$RELEASE" "$CHART" --namespace "$NAMESPACE" -f "$filled" --set "tenant.slug=$SLUG" ${EXTRA[@]+"${EXTRA[@]}"} ${TAG:+--set "image.tag=$TAG" --set "worker.image.tag=$TAG" --set "web.image.tag=$TAG" --set "managedRunners.image.tag=$TAG"} | "${K[@]}" apply --dry-run=server -f - > /dev/null; then
+    if ! helm template "$RELEASE" "$CHART" --namespace "$NAMESPACE" -f "$filled" --set "tenant.slug=$SLUG" ${EXTRA[@]+"${EXTRA[@]}"} ${TAG:+--set "image.tag=$TAG" --set "worker.image.tag=$TAG" --set "web.image.tag=$TAG" --set "managedRunners.image.tag=$TAG"} | "${K[@]}" apply --server-side --dry-run=server --field-manager=cell-provision-check --force-conflicts -f - > /dev/null; then
       echo "the API server rejects the rendered chart (see above) — nothing was changed; fix the chart or the values and apply again" >&2; exit 1
     fi
     echo "   ok"

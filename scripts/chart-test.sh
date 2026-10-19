@@ -153,7 +153,7 @@ diff -r "$CHART/files/theme" deploy/compose/init/theme > /dev/null || { echo "de
 # the login theme's icons are the web app's (apps/web/public is the source; tools/icons/build.mjs writes both)
 for f in favicon.svg favicon.ico favicon-32.png apple-touch-icon.png; do cmp -s "apps/web/public/$f" "$CHART/files/theme/matelot/login/resources/img/$f" || { echo "login theme $f differs from apps/web/public/$f (run pnpm icons:build)" >&2; exit 1; }; done
 # the matelot login theme: one ConfigMap holding every theme file (images as binaryData), mounted at
-# /opt/keycloak/themes/matelot with the keys mapped back to paths; realm.json selects it and names the tenant;
+# /opt/keycloak/themes/matelot with the keys mapped back to login/… paths; realm.json selects it and names the tenant;
 # keycloak.theme.enabled=false leaves the stock theme
 run theme-branded --set tenant.name="Globex Corporation" --set keycloak.theme.logo=https://cdn.globex.test/logo.png --set keycloak.theme.primaryColor="#0f766e"
 run theme-off --set keycloak.theme.enabled=false
@@ -162,8 +162,14 @@ import base64, json, os, sys, yaml
 out, chart = sys.argv[1:]
 def docs(name): return [d for d in yaml.safe_load_all(open(f"{out}/{name}.yaml")) if d]
 def by(ds, kind, name): return next(d for d in ds if d["kind"] == kind and d["metadata"]["name"] == name)
-root = f"{chart}/files/theme/matelot/login"
-files = sorted(os.path.relpath(os.path.join(d, f), root) for d, _, fs in os.walk(root) for f in fs)
+# Keycloak resolves a theme as themes/<name>/<type>/theme.properties: what matters is the path a file RESOLVES to
+# (mountPath + item path), not that a mount exists. rc.14 mounted login/'s contents at themes/matelot (one level too
+# high): "Failed to find LOGIN theme matelot", stock page. Every file under files/theme/matelot must land at
+# /opt/keycloak/themes/matelot/<its path>, and themes/matelot/login/theme.properties must be among them.
+THEMES = "/opt/keycloak/themes"
+root = f"{chart}/files/theme/matelot"
+files = sorted(os.path.relpath(os.path.join(d, f), root) for d, _, fs in os.walk(root) for f in fs)   # login/theme.properties, …
+assert "login/theme.properties" in files and "login/resources/css/cell.css" in files, files
 for name, logo in (("defaults", None), ("theme-branded", "https://cdn.globex.test/logo.png")):
     ds = docs(name)
     cm = by(ds, "ConfigMap", "acme-keycloak-theme")
@@ -172,16 +178,26 @@ for name, logo in (("defaults", None), ("theme-branded", "https://cdn.globex.tes
     for f in files:
         if f.endswith((".png", ".ico")):
             assert base64.b64decode(cm["binaryData"][f.replace("/", "__")]) == open(f"{root}/{f}", "rb").read(), f"{f} binaryData differs"
-        elif f != "resources/css/cell.css":
+        elif f != "login/resources/css/cell.css":
             assert cm["data"][f.replace("/", "__")].strip() == open(f"{root}/{f}").read().strip(), f"{f} data differs"
-    assert "parent=keycloak.v2" in cm["data"]["theme.properties"]
-    cell = cm["data"]["resources__css__cell.css"]
+    assert "parent=keycloak.v2" in cm["data"]["login__theme.properties"]
+    cell = cm["data"]["login__resources__css__cell.css"]
     assert ("--matelot-logo" in cell) == bool(logo) and ("--matelot-primary: #0f766e" in cell) == bool(logo), cell
     dep = by(ds, "Deployment", "acme-keycloak"); pod = dep["spec"]["template"]["spec"]
     vol = next(v for v in pod["volumes"] if v["name"] == "theme")["configMap"]
-    assert vol["name"] == "acme-keycloak-theme" and {(i["key"], i["path"]) for i in vol["items"]} == {(f.replace("/", "__"), f) for f in files}, vol
+    assert vol["name"] == "acme-keycloak-theme", vol
     kc = next(c for c in pod["containers"] if c["name"] == "keycloak")
-    assert any(m["name"] == "theme" and m["mountPath"] == "/opt/keycloak/themes/matelot" and m.get("readOnly") for m in kc["volumeMounts"])
+    mount = next(m for m in kc["volumeMounts"] if m["name"] == "theme")
+    assert mount.get("readOnly") and not mount.get("subPath"), mount
+    # the resolved paths, as kubelet projects them: mountPath joined with each item's path
+    resolved = {}
+    for i in vol["items"]:
+        assert i["key"] in keys, f"volume item {i} names a key the ConfigMap does not hold"
+        assert not i["path"].startswith("/") and ".." not in i["path"].split("/"), i
+        resolved[i["key"]] = os.path.normpath(os.path.join(mount["mountPath"], i["path"]))
+    assert len(resolved) == len(vol["items"]) == len(files), (len(resolved), len(vol["items"]), len(files))
+    assert resolved["login__theme.properties"] == f"{THEMES}/matelot/login/theme.properties", resolved["login__theme.properties"]
+    assert set(resolved.values()) == {f"{THEMES}/matelot/{f}" for f in files}, sorted(set(resolved.values()) ^ {f"{THEMES}/matelot/{f}" for f in files})
     assert "checksum/theme" in dep["spec"]["template"]["metadata"]["annotations"]
     realm = json.loads(by(ds, "ConfigMap", "acme-keycloak-realm")["data"]["realm.json"])
     assert realm["loginTheme"] == "matelot" and realm["displayName"] == realm["displayNameHtml"], (realm["displayName"], realm.get("loginTheme"))
@@ -191,7 +207,7 @@ off = docs("theme-off")
 assert not any(d["kind"] == "ConfigMap" and d["metadata"]["name"] == "acme-keycloak-theme" for d in off)
 assert "loginTheme" not in json.loads(by(off, "ConfigMap", "acme-keycloak-realm")["data"]["realm.json"])
 assert not any(v["name"] == "theme" for v in by(off, "Deployment", "acme-keycloak")["spec"]["template"]["spec"]["volumes"])
-print("   login theme: ConfigMap holds every file (images binary, cell.css from values), mounted at /opt/keycloak/themes/matelot; realm selects it; theme.enabled=false is stock")
+print("   login theme: ConfigMap holds every file (images binary, cell.css from values); every item resolves to /opt/keycloak/themes/matelot/<path>, login/theme.properties included; realm selects it; theme.enabled=false is stock")
 PY
 # the realm-sync hook: post-install + post-upgrade, mounts the realm ConfigMap, runs the shared script; Keycloak's import
 # directory gets realm.json only (the script must not land in /opt/keycloak/data/import)

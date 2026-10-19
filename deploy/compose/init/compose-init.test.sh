@@ -49,6 +49,9 @@ for f in theme.properties messages/messages_en.properties resources/css/matelot.
   [ -f "$M/keycloak/theme/matelot/login/$f" ] || { echo "FAIL: theme file missing: $f" >&2; exit 1; }
 done
 grep -q '^parent=keycloak.v2' "$M/keycloak/theme/matelot/login/theme.properties"
+# compose.yaml copies theme/matelot to /opt/keycloak/themes/matelot: the file Keycloak looks up is themes/matelot/login/theme.properties
+[ -f "$M/keycloak/theme/matelot/login/theme.properties" ] && [ ! -e "$M/keycloak/theme/matelot/theme.properties" ] || { echo "FAIL: theme must be laid out as theme/matelot/login/theme.properties (one level too high = stock theme)" >&2; exit 1; }
+grep -q 'test -f /opt/keycloak/themes/matelot/login/theme.properties' ../compose.yaml || { echo "FAIL: compose.yaml must refuse to start keycloak without themes/matelot/login/theme.properties" >&2; exit 1; }
 grep -q -- '--matelot-logo' "$M/keycloak/theme/matelot/login/resources/css/cell.css" && { echo "FAIL: cell.css should carry no logo without MATELOT_THEME_LOGO" >&2; exit 1; }
 # secrets are generated once: a second run with a new domain keeps them and rewrites the derived files
 cp "$M/secrets/cell-key/CELL_ENCRYPTION_KEY" "$T/key1"; cp "$M/secrets/postgres/POSTGRES_PASSWORD" "$T/pg1"

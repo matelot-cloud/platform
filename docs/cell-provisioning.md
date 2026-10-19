@@ -175,6 +175,15 @@ is migrated once, and a name typed by hand in the Keycloak console is kept. The 
 without internet access falls back to the system font. The Docker Compose stack has the same theme, with
 `MATELOT_THEME_LOGO` and `MATELOT_THEME_PRIMARY_COLOR` in `.env`.
 
+If the sign-in page comes up unbranded (stock title "Sign in to <tenant>"), Keycloak could not load the theme — it
+says so in exactly one log line, `Failed to find LOGIN theme matelot, using built-in themes`, and otherwise serves the
+stock page with HTTP 200. Keycloak resolves a theme as `themes/<name>/<type>/theme.properties`, so the file must be at
+`/opt/keycloak/themes/matelot/login/theme.properties` in the pod: `kubectl -n tenant-<slug> exec deploy/<slug>-keycloak
+-- find /opt/keycloak/themes/matelot -maxdepth 2` shows what the mount holds. (0.1.0-rc.14 mounted the `login/`
+directory's contents one level too high and fell back to the stock theme; the chart test asserts the resolved paths and
+CI starts a Keycloak pod with the chart's mount — `scripts/chart-theme-kind-test.sh` — since.) `deploy/compose/
+login-page-check.sh <base URL>` checks a running cell's page from outside: title, theme, every asset.
+
 ## 7. Decommission
 
 ```

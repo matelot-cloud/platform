@@ -30,8 +30,12 @@ data:
 {{- if .Values.keycloak.theme.enabled }}
 ---
 # The "matelot" login theme (files/theme/matelot/login: the stock keycloak.v2 layout with our favicon, logo, palette
-# and font). Mounted at /opt/keycloak/themes/matelot: keys are the file paths with "/" → "__" (a ConfigMap key cannot
-# hold a slash), the volume maps them back. ONE rule decides data vs binaryData — the file extension (png / ico / jpg /
+# and font). Keycloak resolves a theme as themes/<name>/<type>/theme.properties, so the volume is mounted at
+# /opt/keycloak/themes/matelot and every item path keeps its "login/" prefix — the file must land at
+# /opt/keycloak/themes/matelot/login/theme.properties (rc.14 mounted the login/ directory's contents one level too
+# high: Keycloak logged "Failed to find LOGIN theme matelot" and fell back to the stock theme; chart-test now asserts
+# the resolved path). Keys are the paths relative to files/theme/matelot with "/" → "__" (a ConfigMap key cannot hold
+# a slash), the volume maps them back. ONE rule decides data vs binaryData — the file extension (png / ico / jpg /
 # gif / woff / ttf are binary, everything else text) — because a key present in both is rejected by the API server
 # ("duplicate of key present in binaryData"), which `helm template` cannot see. css/cell.css carries this cell's
 # overrides (keycloak.theme.logo / colours) and is rendered here, not read from the files.
@@ -42,14 +46,14 @@ metadata:
   labels:
     {{- include "cell.labels" . | nindent 4 }}
 data:
-{{- range $path, $_ := .Files.Glob "files/theme/matelot/login/**" }}
-{{- $rel := trimPrefix "files/theme/matelot/login/" $path }}
-{{- if and (not (regexMatch "\\.(png|ico|jpe?g|gif|woff2?|ttf)$" $path)) (ne $rel "resources/css/cell.css") }}
+{{- range $path, $_ := .Files.Glob "files/theme/matelot/**" }}
+{{- $rel := trimPrefix "files/theme/matelot/" $path }}
+{{- if and (not (regexMatch "\\.(png|ico|jpe?g|gif|woff2?|ttf)$" $path)) (ne $rel "login/resources/css/cell.css") }}
   {{ $rel | replace "/" "__" }}: |-
 {{ $.Files.Get $path | indent 4 }}
 {{- end }}
 {{- end }}
-  resources__css__cell.css: |-
+  login__resources__css__cell.css: |-
     /* rendered by the chart from keycloak.theme.* */
     :root {
     {{- with .Values.keycloak.theme.logo }}
@@ -61,9 +65,9 @@ data:
     {{- end }}
     }
 binaryData:
-{{- range $path, $_ := .Files.Glob "files/theme/matelot/login/**" }}
+{{- range $path, $_ := .Files.Glob "files/theme/matelot/**" }}
 {{- if regexMatch "\\.(png|ico|jpe?g|gif|woff2?|ttf)$" $path }}
-  {{ trimPrefix "files/theme/matelot/login/" $path | replace "/" "__" }}: {{ $.Files.Get $path | b64enc }}
+  {{ trimPrefix "files/theme/matelot/" $path | replace "/" "__" }}: {{ $.Files.Get $path | b64enc }}
 {{- end }}
 {{- end }}
 {{- end }}
@@ -179,7 +183,7 @@ spec:
       annotations:
         checksum/realm: {{ tpl (.Files.Get "files/realm.json.tpl") . | sha256sum }}
 {{- if .Values.keycloak.theme.enabled }}
-        checksum/theme: {{ print (toJson .Values.keycloak.theme) (.Files.Glob "files/theme/matelot/login/**" | toJson | sha256sum) | sha256sum }}
+        checksum/theme: {{ print (toJson .Values.keycloak.theme) (.Files.Glob "files/theme/matelot/**" | toJson | sha256sum) | sha256sum }}
 {{- end }}
     spec:
       {{- if .Values.postgres.bundled }}
@@ -232,7 +236,7 @@ spec:
               readOnly: true
 {{- if .Values.keycloak.theme.enabled }}
             - name: theme
-              mountPath: /opt/keycloak/themes/matelot
+              mountPath: /opt/keycloak/themes/matelot   # items are login/…: themes/matelot/login/theme.properties
               readOnly: true
 {{- end }}
           startupProbe:
@@ -263,8 +267,8 @@ spec:
           configMap:
             name: {{ .Release.Name }}-keycloak-theme
             items:
-{{- range $path, $_ := .Files.Glob "files/theme/matelot/login/**" }}
-{{- $rel := trimPrefix "files/theme/matelot/login/" $path }}
+{{- range $path, $_ := .Files.Glob "files/theme/matelot/**" }}
+{{- $rel := trimPrefix "files/theme/matelot/" $path }}
               - { key: {{ $rel | replace "/" "__" | quote }}, path: {{ $rel | quote }} }
 {{- end }}
 {{- end }}

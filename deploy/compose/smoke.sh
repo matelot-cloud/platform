@@ -69,18 +69,17 @@ docker compose up -d || { echo "docker compose up failed" >&2; diagnose; exit 1;
 log "waiting for $BASE"; wait_ready
 docker compose logs welcome | tail -12
 docker compose logs realm-sync | grep -q "realm platform synced\|realm platform: already in sync" || { echo "realm-sync did not run (docker compose logs realm-sync):" >&2; docker compose logs realm-sync >&2; exit 1; }
-log "sign-in page: the matelot login theme (favicon, logo, tenant name, our CSS)"
-# the realm's login page as a browser gets it: our title, the theme's favicon and stylesheet linked — and both served
-login_html="$(curl -fsS "$BASE/auth/realms/platform/protocol/openid-connect/auth?client_id=platform-web&response_type=code&scope=openid&redirect_uri=$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "$BASE/")")" || { echo "the sign-in page did not load" >&2; docker compose logs --tail 30 keycloak >&2; exit 1; }
-grep -q '<title>[^<]*· Matelot</title>' <<< "$login_html" || { echo "the sign-in page title is not '<tenant> · Matelot': $(grep -o '<title>[^<]*</title>' <<< "$login_html")" >&2; exit 1; }
-grep -q 'login/matelot/' <<< "$login_html" || { echo "the sign-in page does not use the matelot theme (loginTheme not applied?)" >&2; grep -o 'resources/[^"]*' <<< "$login_html" | head -3 >&2; exit 1; }
-theme_root="$(grep -o "[^\"']*/login/matelot/img/favicon.ico" <<< "$login_html" | head -1)"; theme_root="${theme_root%/img/favicon.ico}"
-[ -n "$theme_root" ] || { echo "the sign-in page does not link the theme's favicon.ico" >&2; exit 1; }
-for asset in img/favicon.svg img/favicon.ico img/favicon-32.png img/apple-touch-icon.png img/logo.png css/matelot.css css/cell.css js/matelot.js; do   # logo.png is a CSS background, not linked
-  code="$(curl -sS -o /dev/null -w '%{http_code}' "$BASE$theme_root/$asset")"; [ "$code" = 200 ] || { echo "theme asset $theme_root/$asset → HTTP $code" >&2; exit 1; }
-done
-grep -q "$theme_root/css/matelot.css" <<< "$login_html" || { echo "matelot.css is not linked from the sign-in page" >&2; exit 1; }
-echo "   title: $(grep -o '<title>[^<]*</title>' <<< "$login_html" | sed 's/<[^>]*>//g') · favicon.svg, favicon.ico, favicon-32.png, apple-touch-icon.png, logo.png, matelot.css, cell.css, matelot.js: 200"
+log "sign-in page: the matelot login theme (title, favicon, logo, our CSS) through Caddy"
+# a theme Keycloak cannot find is silent apart from ONE log line (it falls back to the stock theme, HTTP 200): fail on
+# that line, then on the page itself; on failure show what the container holds under /opt/keycloak/themes/matelot
+theme_failed() { docker compose logs keycloak 2>/dev/null | grep -q "Failed to find LOGIN theme"; }
+if theme_failed; then
+  echo "Keycloak could not load the matelot theme (themes/matelot/login/theme.properties missing?):" >&2
+  docker compose logs keycloak 2>/dev/null | grep "Failed to find" >&2; docker compose exec -T keycloak find /opt/keycloak/themes/matelot -maxdepth 2 >&2 || true; exit 1
+fi
+bash "$(dirname "$0")/login-page-check.sh" "$BASE" || { docker compose logs --tail 30 keycloak >&2; docker compose exec -T keycloak find /opt/keycloak/themes/matelot -maxdepth 2 >&2 || true; exit 1; }
+theme_failed && { echo "the page rendered but Keycloak logged 'Failed to find LOGIN theme' meanwhile" >&2; exit 1; }
+echo "   keycloak log: no 'Failed to find LOGIN theme'"
 log "matelot doctor (before login: the public checks)"
 export MATELOT_URL="$BASE"
 export MATELOT_CREDENTIALS="$PWD/.smoke-credentials.json"; rm -f "$MATELOT_CREDENTIALS"

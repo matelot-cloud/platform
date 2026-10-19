@@ -94,6 +94,8 @@ services:
         set -e; set -a; . /matelot/keycloak/keycloak.env; set +a
         mkdir -p /opt/keycloak/data/import && cp /matelot/keycloak/import/realm.json /opt/keycloak/data/import/realm.json
         rm -rf /opt/keycloak/themes/matelot && cp -R /matelot/keycloak/theme/matelot /opt/keycloak/themes/matelot
+        # Keycloak resolves themes/<name>/<type>/theme.properties; a wrong layout is silent (stock theme, one log line)
+        test -f /opt/keycloak/themes/matelot/login/theme.properties || { echo "login theme not assembled: /opt/keycloak/themes/matelot/login/theme.properties missing (compose-init writes /matelot/keycloak/theme/matelot/login)" >&2; exit 1; }
         exec /opt/keycloak/bin/kc.sh start --import-realm
     environment:
       JAVA_OPTS_KC_HEAP: "-XX:MaxRAMPercentage=70"

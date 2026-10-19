@@ -123,6 +123,29 @@ for k in ("StatefulSet/acme-postgres", "Deployment/acme-redis", "StatefulSet/acm
     assert k in ra and ra[k] == rb[k], f"{k} pod template changes on a domain change (it must not restart): rolled={rolled}"
 print("   a domain change rolls only", ", ".join(rolled))
 PY
+# What `helm template` cannot catch but the API server rejects: a ConfigMap / Secret key present in BOTH data and
+# binaryData ("duplicate of key present in binaryData" — the theme's favicon.svg once matched a text rule and an img/
+# rule), an invalid key ([-._a-zA-Z0-9]+, at most 253 characters), a duplicate resource (kind/namespace/name twice).
+# CI additionally runs `kubectl apply --dry-run=server` on a kind cluster (ci.yml, chart job); `apply` does the same
+# against the cell's cluster before every upgrade.
+python3 - "$OUT" <<'PY'
+import glob, re, sys, yaml
+out = sys.argv[1]
+KEY = re.compile(r"^[-._a-zA-Z0-9]+$")
+for f in sorted(glob.glob(f"{out}/*.yaml")):
+    seen = set()
+    for d in yaml.safe_load_all(open(f)):
+        if not d or "kind" not in d: continue
+        ident = (d["kind"], d["metadata"].get("namespace", ""), d["metadata"]["name"])
+        assert ident not in seen, f"{f}: {ident} rendered twice"
+        seen.add(ident)
+        if d["kind"] in ("ConfigMap", "Secret"):
+            data, binary = set(d.get("data") or {}), set(d.get("binaryData") or {})
+            assert not (data & binary), f"{f}: {ident} has keys in both data and binaryData: {sorted(data & binary)}"
+            bad = [k for k in data | binary if not KEY.match(k) or len(k) > 253]
+            assert not bad, f"{f}: {ident} has invalid keys: {bad}"
+print("   no ConfigMap / Secret key in both data and binaryData; keys valid; no resource rendered twice")
+PY
 # the Docker Compose stack ships copies of the chart's backup scripts: they must be identical (release.yml publishes both)
 for f in backup.sh restore-db.sh; do cmp -s "$CHART/files/$f" "deploy/compose/backup/$f" || { echo "deploy/compose/backup/$f differs from $CHART/files/$f (copy it over)" >&2; exit 1; }; done
 cmp -s "$CHART/files/realm-sync.js" deploy/compose/init/realm-sync.js || { echo "deploy/compose/init/realm-sync.js differs from $CHART/files/realm-sync.js (copy it over)" >&2; exit 1; }

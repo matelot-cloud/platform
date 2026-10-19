@@ -31,7 +31,10 @@ data:
 ---
 # The "matelot" login theme (files/theme/matelot/login: the stock keycloak.v2 layout with our favicon, logo, palette
 # and font). Mounted at /opt/keycloak/themes/matelot: keys are the file paths with "/" → "__" (a ConfigMap key cannot
-# hold a slash), the volume maps them back. css/cell.css carries this cell's overrides (keycloak.theme.logo / colours).
+# hold a slash), the volume maps them back. ONE rule decides data vs binaryData — the file extension (png / ico / jpg /
+# gif / woff / ttf are binary, everything else text) — because a key present in both is rejected by the API server
+# ("duplicate of key present in binaryData"), which `helm template` cannot see. css/cell.css carries this cell's
+# overrides (keycloak.theme.logo / colours) and is rendered here, not read from the files.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -41,7 +44,7 @@ metadata:
 data:
 {{- range $path, $_ := .Files.Glob "files/theme/matelot/login/**" }}
 {{- $rel := trimPrefix "files/theme/matelot/login/" $path }}
-{{- if and (not (hasSuffix ".png" $path)) (not (hasSuffix ".ico" $path)) (ne $rel "resources/css/cell.css") }}
+{{- if and (not (regexMatch "\\.(png|ico|jpe?g|gif|woff2?|ttf)$" $path)) (ne $rel "resources/css/cell.css") }}
   {{ $rel | replace "/" "__" }}: |-
 {{ $.Files.Get $path | indent 4 }}
 {{- end }}
@@ -58,8 +61,10 @@ data:
     {{- end }}
     }
 binaryData:
-{{- range $path, $_ := .Files.Glob "files/theme/matelot/login/resources/img/*" }}
+{{- range $path, $_ := .Files.Glob "files/theme/matelot/login/**" }}
+{{- if regexMatch "\\.(png|ico|jpe?g|gif|woff2?|ttf)$" $path }}
   {{ trimPrefix "files/theme/matelot/login/" $path | replace "/" "__" }}: {{ $.Files.Get $path | b64enc }}
+{{- end }}
 {{- end }}
 {{- end }}
 ---

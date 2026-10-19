@@ -88,4 +88,32 @@ if readiness_report http://x "$out" 2> "$T/report.err"; then echo "FAIL: report 
 grep -q 'no 200 in [0-9]*s ([0-9]* attempts); last: HTTP 000' "$T/report.err" || { echo "FAIL: failure report: $(cat "$T/report.err")" >&2; exit 1; }
 grep -q 'Connection refused' "$T/report.err" || { echo "FAIL: the last error is not shown" >&2; exit 1; }
 
-echo "cell-provision ok (new picks the issuer per context; values_get reads the generated file with PyYAML and without; checks skip terminating and replaced pods; readiness probe retries with backoff and reports the last status)"
+# 5. release_recoverable: what apply does with a release an earlier apply left failed / pending (fake helm on PATH)
+sed -n '/^release_recoverable()/,/^}/p' scripts/cell-provision.sh > "$T/recover.sh"
+# shellcheck disable=SC1091
+source "$T/recover.sh"
+export RELEASE=globex NAMESPACE=tenant-globex   # read by the sourced release_recoverable
+cat > "$T/bin/helm" <<'FAKE'
+#!/usr/bin/env bash
+# fake helm: status → HELM_STATUS; history → HELM_HISTORY (tab-separated rows like the real one); rollback → recorded
+case "$1" in
+  status) printf '{"name":"globex","info":{"status":"%s"}}\n' "$HELM_STATUS";;
+  history) printf '%b\n' "REVISION\tUPDATED\tSTATUS\tCHART\tAPP VERSION\tDESCRIPTION\n$HELM_HISTORY";;
+  rollback) echo "rollback $*" >> "$HELM_LOG";;
+esac
+FAKE
+chmod +x "$T/bin/helm"
+export HELM_LOG="$T/helm.log"; : > "$HELM_LOG"
+# history rows as `helm history` prints them: 7th field is the status
+good_then_failed='1\tMon Oct 13 10:00:00 2026\tsuperseded\tsecops-cell-0.1.0\t0.1.0-rc.12\tUpgrade complete\n2\tMon Oct 19 09:30:00 2026\tfailed\tsecops-cell-0.1.0\t0.1.0-rc.13\tUpgrade "globex" failed'
+HELM_STATUS=deployed HELM_HISTORY="$good_then_failed" release_recoverable > "$T/r.out" || { echo "FAIL: deployed must pass" >&2; exit 1; }
+HELM_STATUS=failed HELM_HISTORY="$good_then_failed" release_recoverable > "$T/r.out" || { echo "FAIL: failed with a good revision must be upgradable" >&2; exit 1; }
+grep -q "is 'failed' from an earlier apply (a good revision exists): upgrading over it" "$T/r.out" || { echo "FAIL: $(cat "$T/r.out")" >&2; exit 1; }
+only_failed='1\tMon Oct 19 09:30:00 2026\tfailed\tsecops-cell-0.1.0\t0.1.0-rc.13\tInstall "globex" failed'
+if HELM_STATUS=failed HELM_HISTORY="$only_failed" release_recoverable > "$T/r.out" 2> "$T/r.err"; then echo "FAIL: failed without any good revision must stop" >&2; exit 1; fi
+grep -q "no revision ever deployed" "$T/r.err" || { echo "FAIL: $(cat "$T/r.err")" >&2; exit 1; }
+pending='1\tMon Oct 13 10:00:00 2026\tsuperseded\tsecops-cell-0.1.0\t0.1.0-rc.11\tInstall complete\n2\tMon Oct 14 10:00:00 2026\tdeployed\tsecops-cell-0.1.0\t0.1.0-rc.12\tUpgrade complete\n3\tMon Oct 19 09:30:00 2026\tpending-upgrade\tsecops-cell-0.1.0\t0.1.0-rc.13\tPreparing upgrade'
+HELM_STATUS=pending-upgrade HELM_HISTORY="$pending" release_recoverable > "$T/r.out" || { echo "FAIL: pending-upgrade with a good revision must roll back and pass" >&2; exit 1; }
+grep -q "rollback globex 2 -n tenant-globex --wait --timeout 5m" "$HELM_LOG" || { echo "FAIL: expected a rollback to revision 2: $(cat "$HELM_LOG")" >&2; exit 1; }
+
+echo "cell-provision ok (new picks the issuer per context; values_get reads the generated file with PyYAML and without; checks skip terminating and replaced pods; readiness probe retries with backoff and reports the last status; failed / pending releases are recovered or explained)"

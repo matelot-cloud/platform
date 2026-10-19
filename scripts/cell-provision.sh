@@ -172,6 +172,16 @@ cmd_apply() {
   # an existing cell gets a backup BEFORE the upgrade: the safety net for the rollout (migrations included)
   local existed=0
   helm status "$RELEASE" -n "$NAMESPACE" > /dev/null 2>&1 && existed=1
+  if [ "$existed" = 1 ]; then
+    release_recoverable || exit 1
+    # what `helm --dry-run` cannot see, the API server can: validate the rendered chart server-side before touching
+    # the release (a ConfigMap key in both data and binaryData, a schema error) — the upgrade starts only when it passes
+    say "server-side validation of the rendered chart (kubectl apply --dry-run=server)"
+    if ! helm template "$RELEASE" "$CHART" --namespace "$NAMESPACE" -f "$filled" --set "tenant.slug=$SLUG" ${EXTRA[@]+"${EXTRA[@]}"} ${TAG:+--set "image.tag=$TAG" --set "worker.image.tag=$TAG" --set "web.image.tag=$TAG" --set "managedRunners.image.tag=$TAG"} | "${K[@]}" apply --dry-run=server -f - > /dev/null; then
+      echo "the API server rejects the rendered chart (see above) — nothing was changed; fix the chart or the values and apply again" >&2; exit 1
+    fi
+    echo "   ok"
+  fi
   if [ "$existed" = 1 ] && [ "$FIRST_BACKUP" = 1 ] && "${K[@]}" get cronjob "$RELEASE-backup" > /dev/null 2>&1; then
     say "pre-upgrade backup"
     bash scripts/cell-backup.sh -r "$RELEASE" -n "$NAMESPACE" || { echo "the pre-upgrade backup failed; not upgrading (--no-backup to skip it)" >&2; exit 1; }
@@ -240,6 +250,29 @@ readiness_report() {
     *)
       echo "   api:      GET $url → the probe pod gave no verdict: $(printf '%s' "$out" | tail -3 | tr '\n' ' ' | head -c 300)" >&2
       return 1;;
+  esac
+}
+
+# release_recoverable — a release left failed / pending by an earlier apply: helm upgrades over `failed` when a good
+# revision exists; `pending-*` (an interrupted helm) is rolled back to the last good revision first; a release whose
+# every revision failed cannot be upgraded ("has no deployed releases") — say what to do instead of failing inside helm.
+release_recoverable() {
+  local st; st="$(helm status "$RELEASE" -n "$NAMESPACE" -o json 2>/dev/null | sed -n 's/.*"status":"\([a-z-]*\)".*/\1/p' | head -1)"
+  case "$st" in
+    deployed) return 0;;
+    failed)
+      if helm history "$RELEASE" -n "$NAMESPACE" 2>/dev/null | grep -qE '(deployed|superseded)'; then
+        echo "   release $RELEASE is 'failed' from an earlier apply (a good revision exists): upgrading over it"; return 0
+      fi
+      echo "release $RELEASE is 'failed' and no revision ever deployed: helm cannot upgrade it. Look at 'helm history $RELEASE -n $NAMESPACE' and 'kubectl -n $NAMESPACE get pods'; a first install that never came up is removed with 'helm uninstall $RELEASE -n $NAMESPACE' (the namespace and its volumes stay) and applied again" >&2
+      return 1;;
+    pending-install|pending-upgrade|pending-rollback)
+      local last; last="$(helm history "$RELEASE" -n "$NAMESPACE" 2>/dev/null | awk '$7 == "deployed" || $7 == "superseded" { r = $1 } END { print r }')"
+      echo "   release $RELEASE is '$st' (an earlier helm was interrupted)${last:+; rolling back to revision $last first}"
+      [ -n "$last" ] || { echo "no good revision to roll back to: helm history $RELEASE -n $NAMESPACE" >&2; return 1; }
+      helm rollback "$RELEASE" "$last" -n "$NAMESPACE" --wait --timeout 5m || { echo "rollback failed" >&2; return 1; }
+      return 0;;
+    *) echo "   release $RELEASE is '${st:-unknown}'"; return 0;;
   esac
 }
 

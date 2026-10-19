@@ -96,6 +96,17 @@ jobs:
       - run: python3 -c 'import yaml' 2>/dev/null || pip install pyyaml
       - name: helm lint + render in every supported configuration
         run: bash scripts/chart-test.sh
+      - name: kind cluster for API-server validation (about 40 s)
+        uses: helm/kind-action@v1
+        with: { cluster_name: chart-dry-run, wait: 60s }
+      - name: Rendered chart passes `kubectl apply --dry-run=server` (what helm template cannot see - duplicate ConfigMap keys, schema errors)
+        run: |
+          kubectl create namespace tenant-acme
+          for cfg in "" "--set ingress.tls=true" "--set tenant.name=Globex --set keycloak.theme.logo=https://cdn.example.com/logo.png --set keycloak.theme.primaryColor=#0f766e" "--set backup.enabled=true"; do
+            # shellcheck disable=SC2086
+            helm template acme deploy/helm/secops-cell --namespace tenant-acme $cfg | kubectl apply --dry-run=server --namespace tenant-acme -f - > /dev/null || { echo "server-side validation failed for: ${cfg:-defaults}" >&2; exit 1; }
+            echo "server dry-run ok: ${cfg:-defaults}"
+          done
       - name: Operator scripts parse
         run: for f in scripts/*.sh scripts/lib/*.sh deploy/helm/secops-cell/files/*.sh; do bash -n "$f"; done
       - run: python3 scripts/lib/cellwait_test.py

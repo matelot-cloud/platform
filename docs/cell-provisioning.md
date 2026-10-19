@@ -144,6 +144,11 @@ modified; `keycloak.seedAdmins: false` leaves user creation to the operator or t
 * **Rotate the Keycloak admin password:** change it in Keycloak, update the secret manager; the chart value is only
   the bootstrap value.
 * **Restore:** docs/backup-restore.md.
+* **A release left `failed` or `pending-*`** by an interrupted or rejected apply: just run `apply` again. It upgrades
+  over `failed` when a good revision exists, rolls `pending-*` back to the last good revision first, and validates the
+  rendered chart with `kubectl apply --dry-run=server` before helm touches the release — a chart the API server rejects
+  changes nothing. Only a first install whose every revision failed must be removed (`helm uninstall`; the namespace
+  and its volumes stay) before applying again.
 
 ### Branding the sign-in page
 

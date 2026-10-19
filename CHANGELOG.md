@@ -4,6 +4,23 @@
 
 Images `ghcr.io/matelot-cloud/{api,web,worker,runner}` and the chart `oci://ghcr.io/matelot-cloud/charts/secops-cell`, signed, with SBOM attestations; install guide at https://matelot-cloud.github.io/website/docs/latest/install.html. The sections below are the drops that make up the release, newest first.
 
+### Fix: Helm upgrade rejected the theme ConfigMap (favicon.svg in both data and binaryData); API-server validation before every apply
+
+- `helm upgrade` on kind failed with `data[resources__img__favicon.svg]: Invalid value: duplicate of key present in
+  binaryData`: the theme ConfigMap put every `img/*` file in `binaryData` and every non-png/ico file in `data`, so
+  the new favicon.svg landed in both — which `helm template` renders happily and only the API server rejects. One rule
+  now: the file **extension** decides (png / ico / jpg / gif / woff / ttf → `binaryData`, everything else → `data`).
+- **Guards for what `helm template` cannot see.** `chart-test.sh` asserts, for every rendered ConfigMap and Secret, that
+  no key is in both `data` and `binaryData`, every key is `[-._a-zA-Z0-9]+` and ≤ 253 characters, and no resource is
+  rendered twice. The CI `chart` job now starts a kind cluster (helm/kind-action, about 40 s) and runs
+  `kubectl apply --dry-run=server` on the rendered chart in four configurations (defaults, TLS, branded theme,
+  backups), so API-server validation runs before a tag.
+- **`cell-provision.sh apply`** validates the rendered chart with `kubectl apply --dry-run=server` against the cell's
+  own cluster before touching an existing release — nothing is changed when the server rejects it — and handles a
+  release an earlier apply left behind: `failed` with a good revision is upgraded over (globex's state on kind),
+  `pending-*` (an interrupted helm) is rolled back to the last good revision first, and `failed` with no revision ever
+  deployed stops with what to do (helm cannot upgrade that). Tested with a fake helm in `cell-provision.test.sh`.
+
 ### Favicon designed for small sizes; one icon set for the app and the sign-in page, generated from the SVG
 
 - The tab icon was the full captain's cap scaled to 16 px — a shapeless light blob on a dark tab bar. New mark:

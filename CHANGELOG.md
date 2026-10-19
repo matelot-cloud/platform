@@ -4,6 +4,25 @@
 
 Images `ghcr.io/matelot-cloud/{api,web,worker,runner}` and the chart `oci://ghcr.io/matelot-cloud/charts/secops-cell`, signed, with SBOM attestations; install guide at https://matelot-cloud.github.io/website/docs/latest/install.html. The sections below are the drops that make up the release, newest first.
 
+### Fix: service summary counted no vulnerabilities for an undeployed service; SAST fingerprints; CLI times with offset
+
+- **`GET /services/:id/summary` reported "0 open"** next to a gate line saying "1 open critical": it filtered on
+  `findings.running`, which is false for every finding of a service that has no deployment yet. It now counts what the
+  gate counts — the open findings linked to the newest SBOM, one per (advisory, source package) — and returns that
+  SBOM's id. Spec (`service-summary.spec.ts`, database): a service with no deployment, two open findings of which
+  one is in the newest SBOM → `open.total = 1`, `kev = 1`.
+- **SAST: one finding per issue across runs.** Ingest already matched by fingerprint and closed what a scan no longer
+  reports (the spec proves it: three ingests with the same fingerprint → 1 open; a changed fingerprint → 1 open,
+  1 fixed). What can vary per run is the fingerprint's path when semgrep prints the checkout under another prefix
+  (symlinked temp dir) or relative to the runner's cwd (`../job-abc123/repo/app/run.py`): the per-job workspace then
+  lands in the fingerprint. The runner now reduces every form to the repository path (`relativeToRepo`), folds
+  whitespace in the matched lines, and a test fixes the fingerprint across five path forms. The summary also lists
+  the open code findings **per rule**, and `matelot service show` prints them — "3 code (eval-detected ×3)" is the
+  same issue re-opened per run, "3 code (eval-detected, dangerous-eval, …)" is three rules on one line — so the next
+  run on kind tells which it was; after it, 1 open and 2 fixed is the expected state.
+- **CLI 2.24.1:** timestamps in `service show` and in every table are local time with the UTC offset
+  ("2026-10-18 10:52+03:00", "…07:52Z"), never bare UTC that reads as local.
+
 ### From the end-to-end pipeline test: connect with a write token, explicit policy rules, service summary, job names, secret detectors
 
 - **`integration:connect` is day-to-day work.** It left the sudo-only set: a developer's / team lead's `write` token

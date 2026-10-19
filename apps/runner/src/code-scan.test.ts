@@ -21,6 +21,29 @@ test('parseSemgrep: severity from security-severity/impact/level, repo-relative 
   assert.notEqual(f[0]!.fingerprint, f[1]!.fingerprint);
 });
 
+test('parseSemgrep: the fingerprint survives a different workspace per run — absolute, symlinked or cwd-relative paths all reduce to the repo path', async () => {
+  const { relativeToRepo } = await import('./code-scan');
+  const result = (path: string) => ({ check_id: 'python.lang.security.audit.eval-detected', path, start: { line: 3 }, extra: { message: 'eval', severity: 'WARNING', lines: '  return eval(x)' } });
+  const base = parseSemgrep({ results: [result('/tmp/job-aaa111/repo/app/run.py')] }, '/tmp/job-aaa111/repo')[0]!;
+  assert.equal(base.file, 'app/run.py');
+  for (const [path, root] of [
+    ['/tmp/job-bbb222/repo/app/run.py', '/tmp/job-bbb222/repo'],          // next run, another workspace
+    ['/private/tmp/job-ccc333/repo/app/run.py', '/tmp/job-ccc333/repo'],  // checkout reached through a symlink
+    ['../job-ddd444/repo/app/run.py', '/tmp/job-ddd444/repo'],            // relative to the runner's cwd
+    ['tmp/job-eee555/repo/app/run.py', '/tmp/job-eee555/repo'],
+    ['app/run.py', '/tmp/job-fff666/repo'],                                // already relative
+  ] as const) {
+    const f = parseSemgrep({ results: [result(path)] }, root)[0]!;
+    assert.equal(f.file, 'app/run.py', path);
+    assert.equal(f.fingerprint, base.fingerprint, path);
+  }
+  // whitespace in the matched lines does not change it; a different rule or file does
+  assert.equal(parseSemgrep({ results: [{ ...result('/w/repo/app/run.py'), extra: { message: 'eval', severity: 'WARNING', lines: 'return   eval(x)\n' } }] }, '/w/repo')[0]!.fingerprint, base.fingerprint);
+  assert.notEqual(parseSemgrep({ results: [result('/w/repo/app/other.py')] }, '/w/repo')[0]!.fingerprint, base.fingerprint);
+  assert.equal(relativeToRepo('/x/repo/../repo/app/run.py', '/x/repo'), 'app/run.py');
+  assert.equal(relativeToRepo('docs/repo/readme.md', '/x/repo'), 'docs/repo/readme.md');  // a relative path with "repo" inside stays
+});
+
 test('title truncates at a word boundary; a bare autofix token is rendered in context or omitted', async () => {
   const { truncate, suggestedFix } = await import('./code-scan');
   const long = 'Detected subprocess with shell=True which can lead to command injection when the input is not sanitized properly before use'.repeat(3);

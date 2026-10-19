@@ -79,7 +79,7 @@ Form: `matelot <resource> <verb> [flags]`.
 
 | Command | API | Does |
 |---|---|---|
-| `matelot service show` | `GET /services/:service/summary` | The service with its latest pipeline (jobs), open findings by severity (+ KEV), open code findings and newest SBOM — one call for CI scripts (`--json`) |
+| `matelot service show` | `GET /services/:service/summary` | The service with its latest pipeline (jobs), open findings by severity (+ KEV) as the gate counts them (the newest SBOM), open code findings by kind and rule, and the newest SBOM — one call for CI scripts (`--json`) |
 
 ### envs
 

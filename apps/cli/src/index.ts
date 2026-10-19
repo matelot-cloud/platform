@@ -8,6 +8,7 @@ import { readZip } from './zip-read';
 import { registryInfoText, type RegistryInfo } from './registry-info';
 import { membersSummary } from './members-text';
 import { serviceText, type ServiceSummary } from './service-text';
+import { when } from './format';
 import { credentialsPath, discoveryMismatch, freshToken, listCells, login, logout, normalizeCellUrl, resolveCellUrl, setCurrentCell } from './login';
 import { FIELD_FLAGS, PARAM_FLAGS, policyRulesFromFlags, RESOURCES, RULE_FLAGS, RULE_NO_FLAGS, rulesSummary, SCOPE_SEGMENTS, slaDaysFromFlags } from './resources';
 
@@ -475,7 +476,7 @@ function loadConfigFile(file: string): unknown {
 
 // ---- declarative resource commands ------------------------------------------------------------
 const get = (o: unknown, path: string): unknown => path.split('.').reduce<unknown>((v, k) => (v && typeof v === 'object' ? (v as Record<string, unknown>)[k] : undefined), o);
-const cell = (v: unknown): string => (v === null || v === undefined ? '—' : Array.isArray(v) ? v.map(cell).join(',') : typeof v === 'object' ? JSON.stringify(v) : typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(v) ? v.slice(0, 16).replace('T', ' ') : String(v));
+const cell = (v: unknown): string => (v === null || v === undefined ? '—' : Array.isArray(v) ? v.map(cell).join(',') : typeof v === 'object' ? JSON.stringify(v) : typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(v) ? when(v) : String(v));
 function table(rows: Record<string, unknown>[], columns?: string[]) {
   if (!rows.length) { console.log('(empty)'); return; }
   const cols = columns ?? Object.keys(rows[0]).filter((k) => typeof rows[0][k] !== 'object').slice(0, 7);

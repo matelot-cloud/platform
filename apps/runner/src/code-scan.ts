@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { normalize } from 'node:path';
 
 /** Normalised code finding sent to the cell (never contains a secret value in clear). */
 export interface CodeFindingInput {
@@ -87,10 +88,27 @@ export function suggestedFix(fix: string | undefined, lines: string | undefined)
   return f.length <= 24 && !line ? null : `Suggested fix: ${truncate(f, 400)}`;
 }
 
+/**
+ * The path inside the repository, whatever form semgrep printed it in: absolute under the checkout (the usual case),
+ * the checkout reached through a symlink (`/private/tmp/…` for `/tmp/…`), or relative to the runner's cwd
+ * (`../job-abc123/repo/app/run.py`). The per-job workspace name must never end up in the fingerprint, or every run
+ * opens a new finding and closes the previous one instead of matching it.
+ */
+export function relativeToRepo(path: string, repoRoot: string): string {
+  const root = repoRoot.replace(/\/+$/, '');
+  const normalized = path.startsWith('/') ? normalize(path) : path;
+  if (normalized.startsWith(`${root}/`)) return normalized.slice(root.length + 1);
+  // the checkout seen through another prefix (symlink) or relative to the runner's cwd: cut at the last "/<repo dir>/"
+  const marker = `/${root.split('/').filter(Boolean).pop() ?? 'repo'}/`;
+  const i = normalized.lastIndexOf(marker);
+  if (i >= 0 && (normalized.startsWith('/') || normalized.startsWith('.') || /(^|\/)job-[^/]+\//.test(normalized))) return normalized.slice(i + marker.length);
+  return normalized.replace(/^\.\//, '');
+}
+
 export function parseSemgrep(report: SemgrepReport, repoRoot: string): CodeFindingInput[] {
   const out: CodeFindingInput[] = [];
   for (const r of report.results ?? []) {
-    const file = r.path.startsWith(`${repoRoot}/`) ? r.path.slice(repoRoot.length + 1) : r.path;
+    const file = relativeToRepo(r.path, repoRoot);
     const meta = r.extra?.metadata ?? {};
     const cwe = ([] as string[]).concat(meta.cwe ?? []);
     const title = truncate((r.extra?.message ?? r.check_id).split('\n')[0]!, 200);
@@ -99,7 +117,8 @@ export function parseSemgrep(report: SemgrepReport, repoRoot: string): CodeFindi
       kind: 'sast', ruleId: r.check_id, title, severity: semgrepSeverity(r), file, startLine: r.start?.line ?? null, endLine: r.end?.line ?? null,
       evidence, resolution: suggestedFix(r.extra?.fix, r.extra?.lines),
       references: [...(meta.references ?? []), ...cwe.map((c) => `https://cwe.mitre.org/data/definitions/${c.replace(/\D/g, '')}.html`)].slice(0, 8),
-      fingerprint: hash(`sast|${r.check_id}|${file}|${(r.extra?.lines ?? '').trim()}`),
+      // rule + path + matched lines (whitespace folded): stable across runs and line shifts; never the workspace path
+      fingerprint: hash(`sast|${r.check_id}|${file}|${(r.extra?.lines ?? '').replace(/\s+/g, ' ').trim()}`),
       category: cwe[0] ?? meta.category ?? null,
     });
   }

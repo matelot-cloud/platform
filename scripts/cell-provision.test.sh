@@ -56,4 +56,36 @@ grep -q "acme-api-old" <<< "$report" && { echo "FAIL: terminating / replaced pod
 grep -q "(2 terminating or replaced pods not counted)" <<< "$report" || { echo "FAIL: skipped pods not mentioned: $report" >&2; exit 1; }
 grep -q "postgres" <<< "$report" && { echo "FAIL: a pod without restarts reported" >&2; exit 1; }
 
-echo "cell-provision ok (new picks the issuer per context; values_get reads the generated file with PyYAML and without; checks skip terminating and replaced pods)"
+# 4. the readiness probe: the sh loop the curl pod runs, with a fake curl that refuses twice then answers 200, and one
+#    that never answers; then the report lines built from that output
+sed -n '/^readiness_script()/,/^}/p; /^readiness_report()/,/^}/p' scripts/cell-provision.sh > "$T/readiness.sh"
+# shellcheck disable=SC1091
+source "$T/readiness.sh"
+mkdir -p "$T/probe"; printf '0' > "$T/probe/calls"
+cat > "$T/bin/curl" <<'FAKE'
+#!/usr/bin/env bash
+# fake curl: -o FILE -w FORMAT URL; the first PROBE_FAILS calls refuse the connection (exit 7, status 000), then 200
+n=$(cat "$PROBE_DIR/calls"); n=$((n+1)); printf '%s' "$n" > "$PROBE_DIR/calls"
+out=""; while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift;; esac; shift; done
+if [ "$n" -le "${PROBE_FAILS:-0}" ]; then echo "curl: (7) Failed to connect to globex-api port 80: Connection refused" >&2; printf '000'; exit 7; fi
+printf '{"status":"ok"}' > "$out"; printf '200'
+FAKE
+chmod +x "$T/bin/curl"
+export PROBE_DIR="$T/probe"
+out="$(PROBE_FAILS=2 sh -c "$(readiness_script)" probe http://globex-api:80/api/v1/health/ready 60)"
+grep -q '^attempt 1 (0s): HTTP 000 curl: (7) Failed to connect' <<< "$out" || { echo "FAIL: first attempt not reported: $out" >&2; exit 1; }
+grep -qE '^READY 3 [0-9]+$' <<< "$out" || { echo "FAIL: no READY after two refusals: $out" >&2; exit 1; }
+report="$(readiness_report http://globex-api:80/api/v1/health/ready "$out")" || { echo "FAIL: report should pass" >&2; exit 1; }
+grep -q '→ 200 after [0-9]*s and 3 attempts (the first 2 got no answer' <<< "$report" || { echo "FAIL: report: $report" >&2; exit 1; }
+printf '0' > "$T/probe/calls"
+out="$(PROBE_FAILS=0 sh -c "$(readiness_script)" probe http://globex-api:80/api/v1/health/ready 60)"
+grep -qE '^READY 1 [0-9]+$' <<< "$out" || { echo "FAIL: immediate 200: $out" >&2; exit 1; }
+grep -q '→ 200 (ready in [0-9]*s)' <<< "$(readiness_report http://x "$out")" || { echo "FAIL: ready-in line" >&2; exit 1; }
+printf '0' > "$T/probe/calls"
+out="$(PROBE_FAILS=99 sh -c "$(readiness_script)" probe http://globex-api:80/api/v1/health/ready 3 || true)"
+grep -qE '^FAILED [0-9]+ [0-9]+ 000$' <<< "$out" || { echo "FAIL: no FAILED after the timeout: $out" >&2; exit 1; }
+if readiness_report http://x "$out" 2> "$T/report.err"; then echo "FAIL: report should fail" >&2; exit 1; fi
+grep -q 'no 200 in [0-9]*s ([0-9]* attempts); last: HTTP 000' "$T/report.err" || { echo "FAIL: failure report: $(cat "$T/report.err")" >&2; exit 1; }
+grep -q 'Connection refused' "$T/report.err" || { echo "FAIL: the last error is not shown" >&2; exit 1; }
+
+echo "cell-provision ok (new picks the issuer per context; values_get reads the generated file with PyYAML and without; checks skip terminating and replaced pods; readiness probe retries with backoff and reports the last status)"

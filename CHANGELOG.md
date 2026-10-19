@@ -4,6 +4,18 @@
 
 Images `ghcr.io/matelot-cloud/{api,web,worker,runner}` and the chart `oci://ghcr.io/matelot-cloud/charts/secops-cell`, signed, with SBOM attestations; install guide at https://matelot-cloud.github.io/website/docs/latest/install.html. The sections below are the drops that make up the release, newest first.
 
+### Fix: cell-provision `checks` declared the cell unhealthy in the endpoint-switch window after a rollout
+
+- Right after "all workloads rolled out", the in-cluster probe (`GET http://<release>-api/api/v1/health/ready` from a
+  curl pod) made one request, hit the moment the Service endpoints switched to the new pod, printed "→ no answer:"
+  with nothing after it and exited 1 — while `matelot doctor` through the ingress answered seconds later. The probe
+  pod now retries with backoff (2, 4, 8, 10, 10 … s) for up to `READY_TIMEOUT` seconds (default 60), the api line
+  says how long readiness took ("→ 200 (ready in 1s)", or "→ 200 after 9s and 3 attempts (the first 2 got no answer:
+  the Service endpoints were still switching)" with the attempts listed), and only after the retries is the cell
+  unhealthy — then with the last HTTP status and the start of the error / body, never an empty "no answer:".
+  `cell-provision.test.sh` runs the probe loop with a fake curl (refuses twice then 200; immediate 200; never) and
+  checks the report lines.
+
 ### Fix: service summary counted no vulnerabilities for an undeployed service; SAST fingerprints; CLI times with offset
 
 - **`GET /services/:id/summary` reported "0 open"** next to a gate line saying "1 open critical": it filtered on

@@ -201,6 +201,48 @@ cmd_apply() {
 }
 
 # ---- check + handover ---------------------------------------------------------------------------
+# readiness_script — the sh loop the probe pod runs: `sh -c "$(readiness_script)" probe <url> <timeout-seconds>`.
+#   GET until 200, retrying with backoff (2, 4, 8, 10, 10 … s) up to the timeout; prints one line per failed attempt
+#   with the HTTP status (000 = no connection) and the start of the error / body, then "READY <attempts> <seconds>"
+#   or "FAILED <attempts> <seconds> <status>" followed by the last body.
+readiness_script() {
+  cat <<'SH'
+url="$1"; limit="${2:-60}"; start=$(date +%s); delay=2; n=0
+while :; do
+  n=$((n+1))
+  code=$(curl -sS --max-time 10 -o /tmp/body -w '%{http_code}' "$url" 2>/tmp/err) || code=000
+  now=$(date +%s); elapsed=$((now-start))
+  if [ "$code" = 200 ]; then echo "READY $n $elapsed"; exit 0; fi
+  echo "attempt $n (${elapsed}s): HTTP $code $(cat /tmp/err /tmp/body 2>/dev/null | tr '\n' ' ' | head -c 160)"
+  if [ "$elapsed" -ge "$limit" ]; then echo "FAILED $n $elapsed $code"; head -c 300 /tmp/body 2>/dev/null; echo; exit 1; fi
+  sleep "$delay"; [ "$delay" -lt 10 ] && delay=$((delay*2)); [ "$delay" -gt 10 ] && delay=10
+done
+SH
+}
+
+# readiness_report <url> <probe output> — prints the api line; returns 1 when the probe never got a 200
+readiness_report() {
+  local url="$1" out="$2" verdict
+  verdict="$(printf '%s\n' "$out" | grep -E '^(READY|FAILED) ' | tail -1)"
+  case "$verdict" in
+    READY*)
+      set -- $verdict
+      if [ "$2" -gt 1 ]; then
+        echo "   api:      GET $url → 200 after ${3}s and $2 attempts (the first $(($2 - 1)) got no answer: the Service endpoints were still switching)"
+        printf '%s\n' "$out" | grep '^attempt ' | sed 's/^/             /'
+      else echo "   api:      GET $url → 200 (ready in ${3}s)"; fi
+      return 0;;
+    FAILED*)
+      set -- $verdict
+      echo "   api:      GET $url → no 200 in ${3}s ($2 attempts); last: HTTP $4 $(printf '%s\n' "$out" | sed -n '/^FAILED /,$p' | tail -n +2 | tr '\n' ' ' | head -c 300)" >&2
+      printf '%s\n' "$out" | grep '^attempt ' | tail -3 | sed 's/^/             /' >&2
+      return 1;;
+    *)
+      echo "   api:      GET $url → the probe pod gave no verdict: $(printf '%s' "$out" | tail -3 | tr '\n' ' ' | head -c 300)" >&2
+      return 1;;
+  esac
+}
+
 # restart_report <old-replicasets,comma-separated> < pods.tsv
 #   pods.tsv: name, restartCounts, last reason, last finishedAt, startTime, deletionTimestamp, owner kind, owner name.
 #   Prints one line per pod whose containers restarted, skipping terminating pods and pods of scaled-down ReplicaSets.
@@ -230,10 +272,12 @@ cmd_check() {
   [ -n "$restarts" ] && echo "$restarts"
   # the API answers through its Service (no DNS needed yet); the port comes from the Service, never hard-coded
   local port; port="$("${K[@]}" get service "$RELEASE-api" -o jsonpath='{.spec.ports[?(@.name=="http")].port}' 2>/dev/null)"; port="${port:-80}"
-  local url="http://$RELEASE-api:$port/api/v1/health/ready" out ready
-  out="$("${K[@]}" run "$RELEASE-check-$$" --rm -i --restart=Never --quiet --image=curlimages/curl:8.11.1 -- -sS --max-time 10 -o /dev/null -w '%{http_code}' "$url" 2>&1 || true)"
-  ready="$(printf '%s' "$out" | grep -oE '[0-9]{3}$' || true)"
-  if [ "$ready" = 200 ]; then echo "   api:      GET $url → 200"; else echo "   api:      GET $url → ${ready:-no answer}: $(printf '%s' "$out" | grep -v '^[0-9]*$' | tail -2 | tr '\n' ' ')" >&2; bad=1; fi
+  # Probed from inside the cluster by one short-lived curl pod that retries with backoff for up to READY_TIMEOUT
+  # seconds: right after a rollout the Service endpoints have just switched and the first request can hit nothing
+  # (or the pod being removed) — that is a window, not an unhealthy cell. The last failure keeps its status and body.
+  local url="http://$RELEASE-api:$port/api/v1/health/ready" out
+  out="$("${K[@]}" run "$RELEASE-check-$$" --rm -i --restart=Never --quiet --image=curlimages/curl:8.11.1 -- sh -c "$(readiness_script)" probe "$url" "${READY_TIMEOUT:-60}" 2>&1 || true)"
+  if ! readiness_report "$url" "$out"; then bad=1; fi
   if "${K[@]}" get cronjob "$RELEASE-backup" > /dev/null 2>&1; then echo "   backups:  CronJob $RELEASE-backup ($("${K[@]}" get cronjob "$RELEASE-backup" -o jsonpath='{.spec.schedule}') UTC)"; else echo "   backups:  OFF — set backup.enabled=true before this cell holds real data" >&2; fi
   helm get notes "$RELEASE" -n "$NAMESPACE" 2>/dev/null | sed 's/^/   /'
   [ "$bad" = 0 ] || { echo "cell $SLUG is not healthy" >&2; exit 1; }

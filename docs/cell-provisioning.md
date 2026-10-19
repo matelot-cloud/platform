@@ -88,8 +88,10 @@ the three hostnames resolve yet), fills the placeholders into a temporary copy o
 `helm upgrade --install`, **waits for the workloads** with a progress line every 15 s (what is not ready yet, and a
 warning the moment something is stuck: ImagePullBackOff, CrashLoopBackOff, a pod Pending for minutes), on a new cell runs the
 **first backup** (an existing cell is backed up *before* the upgrade instead), then the **checks**: API and worker rolled out, no restarting pods, the API answers
-`/api/v1/health/ready` from inside the cluster, the backup CronJob exists; it prints the chart's notes and the
-handover pointers. `make provision TENANT=globex` is the same thing.
+`/api/v1/health/ready` from inside the cluster (one curl pod retrying with backoff for up to `READY_TIMEOUT` seconds,
+default 60 — right after a rollout the Service endpoints are still switching, so the first request may get nothing;
+the line says how long readiness took and, on failure, the last HTTP status and body), the backup CronJob exists; it
+prints the chart's notes and the handover pointers. `make provision TENANT=globex` is the same thing.
 
 `apply` deliberately does not use helm's own `--wait`. With backups on a PVC and a StorageClass whose
 `volumeBindingMode` is `WaitForFirstConsumer` (kind's `standard`, EKS gp3, GKE `standard-rwo`, AKS `managed-csi`),

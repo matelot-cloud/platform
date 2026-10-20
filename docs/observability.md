@@ -87,10 +87,15 @@ ends: ioredis housekeeping (`rl:` / `bull:` keys, `multi` / `exec` / `pexpire` /
 any other Redis command under 5 ms; `pg-pool.connect` / `pg.connect` always and `pg.query:*` under 5 ms — a slow
 query or command stays, and that is what the trace is for. The runner's log batches (`/logs`, dozens per job) are
 sent with the trace's id but the sampled flag off, so the cell records no span for them; each batch is an event
-`logs shipped` on the job span. `apps/api/test/span-budget.mjs` (CI, api job) runs a security pipeline through the
+`logs shipped` on the job span. The runners' claim long-poll (one request every 20 s per runner, with or without
+work) is never a trace of its own: its request span is dropped by the same rules and the polling loop runs with
+instrumentation suppressed, so an empty poll leaves nothing; a poll that hands out a job leaves one `claim` span in
+the pipeline's trace under the job's span (`matelot.claim.polls`, `matelot.claim.waited_ms`, runner, pool). `apps/api/test/span-budget.mjs` (CI, api job) runs a security pipeline through the
 built api and worker with the real instrumentation and a fake runner, and fails above **150 spans** in the trace,
-on any `/logs` span, or when the root is not `pipeline Security pipeline` under `matelot-pipeline` — today the trace
-holds 28 spans from the cell plus the runner's own (about 35 for the real one).
+on any `/logs` span, when the root is not `pipeline Security pipeline` under `matelot-pipeline`, when any job of the
+template lacks its `job <kind>`, `claim`, `/start` and `/complete` spans in the pipeline's trace (or has them in
+another), or when empty claim polls add a span — today the trace holds 35 spans from the cell plus the runner's
+own (about 25 for the real one).
 
 ### Metrics
 
@@ -192,7 +197,10 @@ monitoring CRDs unless asked. Drop 1 renders the parts that need no CRD: the met
 runners), `MATELOT_METRICS_*` / `DEPLOYMENT_ENVIRONMENT` in the api ConfigMap, the `OTEL_*` variables on every
 component once `otlp.endpoint` is set (headers in a Secret `<release>-otel`), and a NetworkPolicy admitting the
 metrics ports from `metrics.scrapeFromNamespaces` (default `monitoring`, `observability`). `make kind-jaeger
-TENANT=acme` puts a Jaeger all-in-one on the kind cluster and points the cell at it. The rest (ServiceMonitors,
+TENANT=acme` puts a Jaeger all-in-one on the kind cluster and writes its endpoint into
+`deploy/cells/acme.values.yaml` (`scripts/lib/values-observability.py`), then applies the cell — the values file
+is the source of truth for `apply`, so the setting survives upgrades like every other cell setting; a cell deployed
+without a values file (`make deploy`) is upgraded in place with `--reuse-values` instead. The rest (ServiceMonitors,
 PrometheusRule, dashboards) is drop 2:
 
 ```yaml

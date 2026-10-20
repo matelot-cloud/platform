@@ -30,6 +30,9 @@ export function shouldDrop(span: ReadableSpan): boolean {
     if (HOUSEKEEPING_COMMANDS.has(command) || HOUSEKEEPING_KEYS.test(statement)) return true;
     return durationMs(span) < MIN_MS;
   }
+  // the runners' claim long-poll: one request every 20 s per runner, with or without a job — never a trace of its own
+  // (a successful claim leaves a `claim` span in the pipeline's trace instead; runner.controller.ts)
+  if (scope === '@opentelemetry/instrumentation-http' && /\/runner\/jobs\/claim$/.test(String(span.attributes['http.route'] ?? span.attributes['url.path'] ?? span.name))) return true;
   if (scope === '@opentelemetry/instrumentation-pg') {
     if (span.name === 'pg-pool.connect' || span.name === 'pg.connect') return true;
     return durationMs(span) < MIN_MS;

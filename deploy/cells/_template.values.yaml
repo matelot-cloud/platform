@@ -50,3 +50,8 @@ backup:
     enabled: false              # recommended: enabled, bucket, prefix: cells/__SLUG__, region, credentialsSecret or pod identity
     bucket: ""
     prefix: cells/__SLUG__
+
+observability:                  # docs/observability.md — metrics are always on (port 9464, never on the ingress)
+  otlp:
+    endpoint: ""                # OTLP traces: the customer's collector / Tempo / Grafana Cloud, or make kind-jaeger writes Jaeger's here; empty = off
+    protocol: http/protobuf

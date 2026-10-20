@@ -1,5 +1,19 @@
 import { CorrelationService } from '../vulnerabilities/correlation.service';
 import { getMetrics } from '../telemetry/metrics';
+import { context as otelContext, SpanKind } from '@opentelemetry/api';
+import { suppressTracing } from '@opentelemetry/core';
+import { contextFromTraceparent, tracer } from '../telemetry/spans';
+import type { Job } from '../database/schema';
+
+/** The one span a successful claim leaves: in the pipeline's trace, under the job's span (never under the poll's). */
+function emitClaimSpan(job: Job, principal: RunnerPrincipal, startedMs: number, polls: number): void {
+  if (!job.traceParent) return;
+  const span = tracer().startSpan('claim', {
+    kind: SpanKind.INTERNAL, startTime: new Date(startedMs),
+    attributes: { 'matelot.job.id': job.id, 'matelot.job.kind': job.type, 'matelot.pipeline.id': job.pipelineId ?? '', 'matelot.runner.name': principal.runner.name, 'matelot.pool': principal.pool.slug, 'matelot.claim.polls': polls, 'matelot.claim.waited_ms': Date.now() - startedMs, 'matelot.claim.result': 'job' },
+  }, contextFromTraceparent(job.traceParent));
+  span.end();
+}
 import { BadRequestException, Body, Controller, HttpCode, Inject, Param, ParseUUIDPipe, Post, Res, UnauthorizedException, forwardRef } from '@nestjs/common';
 import { ApiExcludeController } from '@nestjs/swagger';
 import type { Response } from 'express';
@@ -77,33 +91,43 @@ export class RunnerController {
   @Post('jobs/claim')
   @RunnerAuth()
   async claim(@CurrentRunner() principal: RunnerPrincipal, @Body() dto: ClaimDto, @Res({ passthrough: true }) res: Response) {
-    const deadline = Date.now() + Math.min(dto.waitSeconds ?? 20, 25) * 1000;
+    const started = Date.now();
+    const deadline = started + Math.min(dto.waitSeconds ?? 20, 25) * 1000;
     let gone = false;
+    let polls = 0;
     const onClose = () => { gone = true; };
     res.once('close', onClose);
+    // Tracing: a runner polls every 20 s whether or not there is work, so the poll's own span is dropped by the trimming
+    // rules and the loop runs with instrumentation suppressed (no query spans) — an empty poll leaves nothing. A poll
+    // that hands out a job leaves ONE span, `claim`, in the pipeline's trace under the job's span (how long the job
+    // waited, how many polls), so the pipeline trace shows the claim without a root of its own per poll.
     try {
-      for (;;) {
-        if (gone) return;
-        const job = await this.jobs.claim(principal);
-        if (job) {
-          if (gone) {
-            getMetrics().counterAdd(getMetrics().runnerClaims, 1, { result: 'disconnected' });
-            await this.jobs.unclaim(job.id, principal.runner.id, `runner ${principal.runner.name} disconnected while claiming; back in the queue`);
+      return await otelContext.with(suppressTracing(otelContext.active()), async () => {
+        for (;;) {
+          if (gone) return;
+          polls++;
+          const job = await this.jobs.claim(principal);
+          if (job) {
+            if (gone) {
+              getMetrics().counterAdd(getMetrics().runnerClaims, 1, { result: 'disconnected' });
+              await this.jobs.unclaim(job.id, principal.runner.id, `runner ${principal.runner.name} disconnected while claiming; back in the queue`);
+              return;
+            }
+            // delivered or not: if the connection closes before the response is fully written, hand the job back
+            res.once('close', () => {
+              if (!res.writableFinished) void this.jobs.unclaim(job.id, principal.runner.id, `runner ${principal.runner.name} went away before receiving the job; back in the queue`);
+            });
+            emitClaimSpan(job, principal, started, polls);
+            return job;
+          }
+          if (Date.now() >= deadline) {
+            getMetrics().counterAdd(getMetrics().runnerClaims, 1, { result: 'empty' });
+            res.status(204);
             return;
           }
-          // delivered or not: if the connection closes before the response is fully written, hand the job back
-          res.once('close', () => {
-            if (!res.writableFinished) void this.jobs.unclaim(job.id, principal.runner.id, `runner ${principal.runner.name} went away before receiving the job; back in the queue`);
-          });
-          return job;
+          await new Promise((r) => setTimeout(r, 1500));
         }
-        if (Date.now() >= deadline) {
-          getMetrics().counterAdd(getMetrics().runnerClaims, 1, { result: 'empty' });
-          res.status(204);
-          return;
-        }
-        await new Promise((r) => setTimeout(r, 1500));
-      }
+      });
     } finally {
       res.off('close', onClose);
     }

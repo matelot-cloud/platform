@@ -64,7 +64,8 @@ async function api(path, body, auth = token, headers = {}) {
 let orgId;
 try {
   // 1. the fake identity provider, the api and the worker (their spans go to one file each)
-  start('fake-idp', ['test/fake-idp.js', 'serve'], { FAKE_IDP_PORT: String(IDP_PORT) });
+  const idpUp = await fetch(`http://127.0.0.1:${IDP_PORT}/realms/platform/protocol/openid-connect/certs`).then((r) => r.ok).catch(() => false);
+  if (!idpUp) start('fake-idp', ['test/fake-idp.js', 'serve'], { FAKE_IDP_PORT: String(IDP_PORT) });   // a developer's own instance is reused
   await waitFor(() => fetch(`http://127.0.0.1:${IDP_PORT}/realms/platform/protocol/openid-connect/certs`).then((r) => r.ok), 'fake idp');
   const env = {
     NODE_ENV: 'production', DATABASE_URL, REDIS_URL, PORT: String(PORT), KEYCLOAK_ISSUER: `http://localhost:${IDP_PORT}/realms/platform`, KEYCLOAK_AUDIENCE: 'platform-api',
@@ -125,6 +126,10 @@ try {
   const final = (await db.query('select status from pipelines where id = $1', [pipeline.id])).rows[0].status;
   log(`${done} runner jobs completed; pipeline ${final} (the policy_eval job runs on the worker)`);
   if (!['succeeded', 'failed'].includes(final)) throw new Error(`pipeline did not finish: ${final}`);
+  // empty polls: a runner asks for work every 20 s whether or not there is any; nothing is queued now, so these must
+  // leave no span at all (the poll's own span is trimmed, the loop runs with instrumentation suppressed)
+  const EMPTY_POLLS = 6;
+  for (let i = 0; i < EMPTY_POLLS; i++) await runnerCall('/runner/jobs/claim', { waitSeconds: 0 });
 
   // 4. flush (SIGTERM → the 5 s-capped shutdown flush) and count
   for (const c of children.slice(1)) await stop(c);
@@ -146,6 +151,23 @@ try {
   }
   const jobSpans = trace.filter((x) => x.service === 'matelot-pipeline' && x.name.startsWith('job '));
   if (jobSpans.length !== 7) problems.push(`${jobSpans.length} job spans, expected 7 (one per job of the security template)`);
+  // every runner job: its job span, the claim, /start and /complete — all in the pipeline's trace, none elsewhere
+  const runnerKinds = ['repository_check', 'sbom', 'secrets', 'sca', 'sast', 'iac'];
+  for (const kind of runnerKinds) {
+    const jobSpan = jobSpans.find((x) => x.name === `job ${kind}`);
+    if (!jobSpan) { problems.push(`job ${kind}: no job span in the pipeline trace`); continue; }
+    const claim = trace.filter((x) => x.name === 'claim' && x.attributes['matelot.job.kind'] === kind);
+    if (claim.length !== 1) problems.push(`job ${kind}: ${claim.length} claim span(s) in the pipeline trace, expected 1`);
+    else if (claim[0].parentSpanId !== jobSpan.spanId) problems.push(`job ${kind}: the claim span is not under the job span`);
+  }
+  const startsInTrace = trace.filter((x) => x.name.endsWith('/:jobId/start')).length;
+  const completesInTrace = trace.filter((x) => x.name.endsWith('/:jobId/complete')).length;
+  if (startsInTrace !== runnerKinds.length || completesInTrace !== runnerKinds.length) problems.push(`${startsInTrace} /start and ${completesInTrace} /complete spans in the pipeline trace, expected ${runnerKinds.length} each`);
+  const strays = spans.filter((x) => x.traceId !== traceId && (x.name.endsWith('/:jobId/start') || x.name.endsWith('/:jobId/complete') || x.name === 'claim') && (x.attributes['matelot.job.id'] ? jobSpans.some((j) => j.attributes['matelot.job.id'] === x.attributes['matelot.job.id']) : true));
+  if (strays.length) problems.push(`${strays.length} /start, /complete or claim span(s) of this pipeline's jobs landed in another trace`);
+  // the empty polls: zero spans — no root named after the claim route, no span at all after the pipeline finished
+  const pollRoots = spans.filter((x) => /\/runner\/jobs\/claim$/.test(x.name));
+  if (pollRoots.length) problems.push(`${pollRoots.length} claim poll span(s) exported (${EMPTY_POLLS} empty polls must add 0 spans)`);
   if (!trace.some((x) => x.name === 'gate evaluate' && x.service === 'matelot-worker')) problems.push('the worker\'s gate evaluation is not in the trace');
   const redis = trace.filter((x) => x.scope === '@opentelemetry/instrumentation-ioredis');
   if (redis.some((x) => x.durationMs < 5)) problems.push(`${redis.filter((x) => x.durationMs < 5).length} sub-5 ms Redis span(s) survived the trimming`);

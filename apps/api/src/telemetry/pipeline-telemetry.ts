@@ -35,14 +35,11 @@ export class PipelineTelemetry {
     const finishedAt = job.finishedAt ?? new Date();
     const started = job.startedAt ?? job.assignedAt ?? null;
     const status = job.status;
-    if (status === 'skipped' || status === 'pending' || status === 'queued' || status === 'assigned' || status === 'running') {
-      if (status === 'skipped') this.metrics.counterAdd(this.metrics.pipelineJobs, 1, { kind: job.type, status });
-      return;
-    }
+    if (status === 'pending' || status === 'queued' || status === 'assigned' || status === 'running') return;
     this.metrics.counterAdd(this.metrics.pipelineJobs, 1, { kind: job.type, status });
     const ids = parseTraceparent(job.traceParent);
     const exemplar = ids ? { traceId: ids.traceId, spanId: ids.spanId } : null;
-    if (started) {
+    if (started && status !== 'skipped') {
       this.metrics.pipelineJobDuration.record(Math.max(0, (finishedAt.getTime() - started.getTime()) / 1000), { kind: job.type }, exemplar);
       this.metrics.pipelineJobQueueWait.record(Math.max(0, (started.getTime() - job.createdAt.getTime()) / 1000), { kind: job.type }, exemplar);
     }
@@ -55,7 +52,8 @@ export class PipelineTelemetry {
     const events = [];
     if (job.assignedAt) events.push({ name: 'claimed', time: job.assignedAt });
     if (job.startedAt) events.push({ name: 'started', time: job.startedAt });
-    emitCompletedSpan({ name: `job ${job.type}`, traceId: ids.traceId, spanId: ids.spanId, parentTraceparent: pipeline?.traceParent, startTime: job.createdAt, endTime: finishedAt, attributes, events, error: status === 'succeeded' ? null : job.error ?? status, kind: SpanKind.INTERNAL });
+    // a skipped job (an earlier stage failed) is a span too, so the pipeline trace shows every job of the template
+    emitCompletedSpan({ name: `job ${job.type}`, traceId: ids.traceId, spanId: ids.spanId, parentTraceparent: pipeline?.traceParent, startTime: job.createdAt, endTime: finishedAt, attributes, events, error: status === 'succeeded' || status === 'skipped' ? null : job.error ?? status, kind: SpanKind.INTERNAL });
   }
 
   /** The pipeline reached a terminal status. */

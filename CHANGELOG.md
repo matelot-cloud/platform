@@ -4,6 +4,29 @@
 
 Images `ghcr.io/matelot-cloud/{api,web,worker,runner}` and the chart `oci://ghcr.io/matelot-cloud/charts/secops-cell`, signed, with SBOM attestations; install guide at https://matelot-cloud.github.io/website/docs/latest/install.html. The sections below are the drops that make up the release, newest first.
 
+### Observability drop 1 fix-up 2: claim polls leave no trace, every job's claim / start / complete in the pipeline trace, `make kind-jaeger` writes the values file
+
+- Verified on kind (rc.17): the pipeline trace is 42 spans, the root under `matelot-pipeline`. Left over: every
+  runner claim poll was a root trace of its own (67 spans, eight identical traces in 15 minutes with no job), and in
+  one trace four of six jobs had their `job <kind>`, `/start` and `/complete` spans outside the pipeline's trace.
+- Claim polls: the request span of `POST /runner/jobs/claim` is dropped by the trimming rules and the polling loop
+  runs with instrumentation suppressed (`suppressTracing`), so an empty poll leaves nothing; a poll that hands out a
+  job leaves ONE `claim` span, started from the job's stored traceparent (never the request's context) in the
+  pipeline's trace under the job's span, with `matelot.claim.polls`, `matelot.claim.waited_ms`, runner and pool.
+- The misparenting could not be reproduced here: with the real runner against the built api and worker (file
+  exporter), all six runner jobs had their `job <kind>`, `/start` and `/complete` spans in the pipeline's trace
+  (30 spans); the runner sends the job's traceparent on `/start` (its job span is started from `job.traceParent`).
+  The span-budget test now pins what rc.17 showed broken: for every job of the security template its `job <kind>`
+  span, exactly one `claim` under it, `/start` and `/complete` in the pipeline's trace and none in another, and six
+  empty polls adding zero spans — if it recurs on rc.18, the file exporter (`OTEL_TRACES_EXPORTER=file`) on the
+  api pod gives the span-level evidence. Skipped jobs (an earlier stage failed) now get a span too, so the trace shows
+  every job of the template.
+- `make kind-jaeger TENANT=<slug>` writes `observability.otlp.endpoint` into `deploy/cells/<slug>.values.yaml`
+  (`scripts/lib/values-observability.py`, standard library, replaces or appends the `observability:` block; tested)
+  and runs `cell-provision.sh apply`, so the setting survives upgrades like every other cell setting; a cell without
+  a values file (`make deploy`) is upgraded in place with `--reuse-values` and told so. The cell template carries the
+  block.
+
 ### Observability drop 1 fix-up: the pipeline trace trimmed from 1 824 spans to a budget of 150; pipeline spans under one service
 
 - Verified on kind (rc.16): one trace per pipeline across api / runner / worker, metrics on all three — and 1 824

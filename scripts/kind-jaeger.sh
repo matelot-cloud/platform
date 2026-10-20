@@ -3,8 +3,10 @@
 # installing Tempo: `make kind-jaeger TENANT=acme`, run a pipeline, open http://localhost:16686 (port-forward below).
 #   scripts/kind-jaeger.sh <tenant slug>   (the cell must be deployed: make deploy TENANT=<slug>)
 # Jaeger listens for OTLP on 4318 (http/protobuf) and 4317 (grpc); the cell's api, worker and managed runners get
-# OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger.observability:4318 through observability.otlp.endpoint (restarted by the
-# upgrade: the configmap is part of their pod checksum). Remove with: helm upgrade … --set observability.otlp.endpoint=""
+# OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger.observability:4318 through observability.otlp.endpoint, written into
+# deploy/cells/<slug>.values.yaml (the source of truth for `apply`) and applied; a cell without a values file (make
+# deploy) is upgraded with --reuse-values. Turn it off by emptying the endpoint in the values file and applying again
+# (scripts/lib/values-observability.py <file> "").
 set -euo pipefail
 cd "$(dirname "$0")/.."
 TENANT="${1:?tenant slug}"; NS="observability"
@@ -33,7 +35,19 @@ spec:
   ports: [{ name: ui, port: 16686 }, { name: otlp-grpc, port: 4317 }, { name: otlp-http, port: 4318 }]
 YAML
 kubectl -n "$NS" rollout status deployment/jaeger --timeout=180s
-helm upgrade "$TENANT" deploy/helm/secops-cell --namespace "tenant-$TENANT" --reuse-values --set "observability.otlp.endpoint=http://jaeger.$NS:4318" --set observability.otlp.protocol=http/protobuf --wait --timeout 10m
+ENDPOINT="http://jaeger.$NS:4318"
+VALUES="deploy/cells/$TENANT.values.yaml"
+if [ -f "$VALUES" ]; then
+  # the cell's values file is the source of truth for `apply` (docs/cell-provisioning.md): the endpoint goes there and
+  # survives every later upgrade, like any other cell setting; apply rolls the api / worker / runners (configmap checksum)
+  python3 scripts/lib/values-observability.py "$VALUES" "$ENDPOINT" http/protobuf
+  echo "   written to $VALUES (commit it); applying the cell"
+  bash scripts/cell-provision.sh apply --slug "$TENANT"
+else
+  # no values file (a `make deploy` cell): the chart is upgraded in place — a later `apply` would need the values file
+  echo "   $VALUES does not exist (a make deploy cell): setting the endpoint on the release with --reuse-values; a cell provisioned with apply keeps it in its values file instead" >&2
+  helm upgrade "$TENANT" deploy/helm/secops-cell --namespace "tenant-$TENANT" --reuse-values --set "observability.otlp.endpoint=$ENDPOINT" --set observability.otlp.protocol=http/protobuf --wait --timeout 10m
+fi
 cat <<EOT
 
 Jaeger is up and the cell "$TENANT" exports traces to it. To look:

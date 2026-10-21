@@ -253,9 +253,50 @@ readiness_report() {
       printf '%s\n' "$out" | grep '^attempt ' | tail -3 | sed 's/^/             /' >&2
       return 1;;
     *)
-      echo "   api:      GET $url → the probe pod gave no verdict: $(printf '%s' "$out" | tail -3 | tr '\n' ' ' | head -c 300)" >&2
-      return 1;;
+      # no READY / FAILED line: the probe POD itself did not run to completion (kubectl run lost its attach right after
+      # a rollout, the pod was evicted, the image was not there yet) — not a verdict on the cell: the caller retries
+      return 2;;
   esac
+}
+
+# probe_run <url> <seconds> [pod name] — one probe pod; prints its output. Overridden by the unit test.
+probe_run() {
+  local url="$1" seconds="$2" name="${3:-$RELEASE-check-$$-$RANDOM}" rm="--rm"
+  [ -n "${3:-}" ] && rm=""   # a named pod is kept for the diagnostics below
+  # shellcheck disable=SC2086
+  "${K[@]}" run "$name" $rm -i --restart=Never --quiet --image=curlimages/curl:8.11.1 -- sh -c "$(readiness_script)" probe "$url" "$seconds" 2>&1 || true
+}
+
+# probe_cell <url> <budget seconds> — the readiness probe with the budget shared between the curl loop and the probe
+# pod itself: a pod that gives no verdict (empty output, no READY / FAILED) is one more retry inside the budget, never
+# "unhealthy" by itself; when that persists, the last pod is kept and its phase, last event and logs are printed.
+probe_cell() {
+  local url="$1" budget="${2:-60}" start now left out rc attempt=0
+  start=$(date +%s)
+  while :; do
+    attempt=$((attempt + 1))
+    now=$(date +%s); left=$((budget - (now - start)))
+    [ "$left" -ge 5 ] || left=5
+    out="$(probe_run "$url" "$left")"
+    readiness_report "$url" "$out"; rc=$?
+    [ "$rc" = 2 ] || { [ "$attempt" -gt 1 ] && echo "             (the first $((attempt - 1)) probe pod(s) gave no verdict)"; return "$rc"; }
+    now=$(date +%s)
+    if [ $((now - start + 8)) -ge "$budget" ]; then
+      # a kept pod for the evidence: what the cluster did with it
+      local name="$RELEASE-check-$$-last"
+      out="$(probe_run "$url" 5 "$name")"
+      readiness_report "$url" "$out"; rc=$?
+      if [ "$rc" = 2 ]; then
+        echo "   api:      GET $url → the probe pod gave no verdict $attempt times in ${budget}s (its output: $(printf '%s' "$out" | tr '\n' ' ' | head -c 200))" >&2
+        echo "             pod $name: phase $("${K[@]}" get pod "$name" -o jsonpath='{.status.phase}' 2>/dev/null || echo unknown); last event: $("${K[@]}" get events --field-selector "involvedObject.name=$name" -o jsonpath='{.items[-1:].reason}{\": \"}{.items[-1:].message}' 2>/dev/null | head -c 200)" >&2
+        "${K[@]}" logs "$name" 2>/dev/null | tail -5 | sed 's/^/             log: /' >&2
+      fi
+      "${K[@]}" delete pod "$name" --wait=false > /dev/null 2>&1 || true
+      [ "$rc" = 2 ] && return 1
+      return "$rc"
+    fi
+    sleep 3
+  done
 }
 
 # dry_run_rendered <rendered.yaml> — the server-side dry run of a rendered chart, hooks apart (see apply):
@@ -327,9 +368,8 @@ cmd_check() {
   # Probed from inside the cluster by one short-lived curl pod that retries with backoff for up to READY_TIMEOUT
   # seconds: right after a rollout the Service endpoints have just switched and the first request can hit nothing
   # (or the pod being removed) — that is a window, not an unhealthy cell. The last failure keeps its status and body.
-  local url="http://$RELEASE-api:$port/api/v1/health/ready" out
-  out="$("${K[@]}" run "$RELEASE-check-$$" --rm -i --restart=Never --quiet --image=curlimages/curl:8.11.1 -- sh -c "$(readiness_script)" probe "$url" "${READY_TIMEOUT:-60}" 2>&1 || true)"
-  if ! readiness_report "$url" "$out"; then bad=1; fi
+  local url="http://$RELEASE-api:$port/api/v1/health/ready"
+  if ! probe_cell "$url" "${READY_TIMEOUT:-60}"; then bad=1; fi
   if "${K[@]}" get cronjob "$RELEASE-backup" > /dev/null 2>&1; then echo "   backups:  CronJob $RELEASE-backup ($("${K[@]}" get cronjob "$RELEASE-backup" -o jsonpath='{.spec.schedule}') UTC)"; else echo "   backups:  OFF — set backup.enabled=true before this cell holds real data" >&2; fi
   helm get notes "$RELEASE" -n "$NAMESPACE" 2>/dev/null | sed 's/^/   /'
   [ "$bad" = 0 ] || { echo "cell $SLUG is not healthy" >&2; exit 1; }

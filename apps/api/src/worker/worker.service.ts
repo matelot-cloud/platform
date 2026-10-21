@@ -24,8 +24,10 @@ import { RiskService } from '../risk/risk.service';
 import { GithubSyncJob, GithubWebhookJob, QUEUES } from '../jobs/queues';
 import { WorkerGauges } from '../telemetry/worker-gauges';
 import { Metrics } from '../telemetry/metrics';
-import { contextFromTraceparent, inSpan } from '../telemetry/spans';
+import { contextFromTraceparent, emitCompletedSpan, inSpan } from '../telemetry/spans';
+import { newSpanId, newTraceId } from '../telemetry/ids';
 import { context as otelContext } from '@opentelemetry/api';
+import { suppressTracing } from '@opentelemetry/core';
 
 @Injectable()
 export class WorkerService implements OnModuleInit, OnApplicationShutdown {
@@ -67,6 +69,16 @@ export class WorkerService implements OnModuleInit, OnApplicationShutdown {
   }
   private gaugeTick?: NodeJS.Timeout;
 
+  /** A loop pass as one root span `worker <name>` (docs/observability.md): a slow run is one trace, never orphan query spans. */
+  private loop<T>(name: string, fn: () => Promise<T>): Promise<T> {
+    return inSpan(`worker ${name}`, fn);
+  }
+  /** Housekeeping that runs every few seconds (sweeper, gauges, heartbeat): no span unless it did something — its
+   *  queries are never recorded (an orphan `pg.query` root span was one of these, started outside any span). */
+  private quiet<T>(fn: () => Promise<T>): Promise<T> {
+    return otelContext.with(suppressTracing(otelContext.active()), fn);
+  }
+
   onModuleInit(): void {
     this.workers = [
       new Worker<GithubSyncJob>(QUEUES.githubSync, (job) => this.handleSync(job), { connection: this.connection, concurrency: 2 }),
@@ -78,12 +90,17 @@ export class WorkerService implements OnModuleInit, OnApplicationShutdown {
     }
     // the gauges a scrape cannot compute: queue depth, pipeline queue, runners (15 s); open findings with correlation
     this.gauges.attach(this.connection);
-    void this.gauges.refresh();
-    void this.gauges.refreshFindings();
-    this.gaugeTick = setInterval(() => void this.gauges.refresh(), 15_000);
-    this.sweeper = setInterval(() => void this.jobs.sweep().catch((e: Error) => this.logger.error(`sweep failed: ${e.message}`)), 15_000);
+    void this.quiet(() => this.gauges.refresh());
+    void this.quiet(() => this.gauges.refreshFindings());
+    this.gaugeTick = setInterval(() => void this.quiet(() => this.gauges.refresh()), 15_000);
+    // the sweeper every 15 s: silent, and a `worker sweep` span (emitted after the fact) only when it changed something
+    this.sweeper = setInterval(() => void this.quiet(async () => {
+      const started = new Date();
+      const r = await this.jobs.sweep();
+      if (r.requeued || r.failed || r.offline) emitCompletedSpan({ name: 'worker sweep', traceId: newTraceId(), spanId: newSpanId(), startTime: started, endTime: new Date(), attributes: { 'matelot.sweep.requeued': r.requeued, 'matelot.sweep.failed': r.failed, 'matelot.sweep.offline': r.offline } });
+    }).catch((e: Error) => this.logger.error(`sweep failed: ${e.message}`)), 15_000);
     if (this.registry.available) {
-      const run = () => void this.registry.reconcile().then((r) => r.newTags && this.logger.log(`registry reconcile: ${r.newTags} new tags across ${r.repositories} repositories`)).catch((e: Error) => this.logger.warn(`registry reconcile failed: ${e.message}`));
+      const run = () => void this.loop('registry reconcile', () => this.registry.reconcile()).then((r) => r.newTags && this.logger.log(`registry reconcile: ${r.newTags} new tags across ${r.repositories} repositories`)).catch((e: Error) => this.logger.warn(`registry reconcile failed: ${e.message}`));
       setTimeout(run, 10_000);
       this.registryReconcile = setInterval(run, 2 * 60_000);
     }
@@ -96,26 +113,28 @@ export class WorkerService implements OnModuleInit, OnApplicationShutdown {
       await this.gauges.refreshFindings();
     }).catch((e: Error) => this.logger.warn(`correlation failed: ${e.message}`));
     // Pipeline "evaluate" stage: policy_eval jobs are executed here, not by runners.
-    const exceptionsTick = () => this.exceptionsService.tick().then((r) => { if (r.expired || r.applied) this.logger.log(`exceptions: ${r.expired} expired, ${r.applied} finding(s) covered`); }).catch((e: Error) => this.logger.warn(`exceptions tick failed: ${e.message}`));
-    this.exceptionsLoop = setInterval(() => { void exceptionsTick(); void this.digest.tick().then((r) => { if (r.overdue || r.kev || r.expiring) this.logger.log(`notifications: ${r.overdue} SLA, ${r.kev} KEV, ${r.expiring} expiring`); }).catch((e: Error) => this.logger.warn(`digest failed: ${e.message}`)); void this.remediationService.reconcile().then((r) => { if (r.closed) this.logger.log(`remediations: ${r.closed} closed (findings resolved)`); }).then(() => this.remediationService.syncFromTrackers()).then((r) => { if (r.closed || r.reopened) this.logger.log(`trackers: ${r.closed} remediation(s) closed, ${r.reopened} reopened from Jira/GitHub/GitLab`); }).catch((e: Error) => this.logger.warn(`remediation reconcile failed: ${e.message}`)); }, 60 * 60_000);
+    const exceptionsTick = () => this.loop('exceptions', () => this.exceptionsService.tick()).then((r) => { if (r.expired || r.applied) this.logger.log(`exceptions: ${r.expired} expired, ${r.applied} finding(s) covered`); }).catch((e: Error) => this.logger.warn(`exceptions tick failed: ${e.message}`));
+    const digestTick = () => this.loop('digest', () => this.digest.tick()).then((r) => { if (r.overdue || r.kev || r.expiring) this.logger.log(`notifications: ${r.overdue} SLA, ${r.kev} KEV, ${r.expiring} expiring`); }).catch((e: Error) => this.logger.warn(`digest failed: ${e.message}`));
+    const remediationTick = () => this.loop('remediation reconcile', async () => { const r = await this.remediationService.reconcile(); if (r.closed) this.logger.log(`remediations: ${r.closed} closed (findings resolved)`); const t = await this.remediationService.syncFromTrackers(); if (t.closed || t.reopened) this.logger.log(`trackers: ${t.closed} remediation(s) closed, ${t.reopened} reopened from Jira/GitHub/GitLab`); }).catch((e: Error) => this.logger.warn(`remediation reconcile failed: ${e.message}`));
+    this.exceptionsLoop = setInterval(() => { void exceptionsTick(); void digestTick(); void remediationTick(); }, 60 * 60_000);
     setTimeout(() => void exceptionsTick(), 30_000);
-    setTimeout(() => void this.digest.tick().catch(() => undefined), 60_000);
+    setTimeout(() => void digestTick().catch(() => undefined), 60_000);
     // Platform jobs (policy_eval, tags __platform__) run here, not on runners: first pass right away (jobs queued while
     // the worker was down), then every 5 s, never overlapping, every failure logged.
     void this.runPlatformJobsOnce();
     this.gateLoop = setInterval(() => void this.runPlatformJobsOnce(), 5_000);
     this.logger.log('platform job loop: policy_eval every 5 s');
     setTimeout(correlate, 20_000);
-    setTimeout(() => void this.snapshots.backfill(90).then(() => this.snapshots.snapshotToday()).catch((e: Error) => this.logger.warn(`snapshot backfill failed: ${e.message}`)), 40_000);
-    this.snapshotDaily = setInterval(() => void this.snapshots.snapshotToday().then(() => this.risk.computeAll()).catch((e: Error) => this.logger.warn(`snapshot failed: ${e.message}`)), 6 * 3600_000);
-    setTimeout(() => void this.risk.computeAll().then((n) => this.logger.log(`risk scores computed for ${n} services`)).catch((e: Error) => this.logger.warn(`risk failed: ${e.message}`)), 60_000);
+    setTimeout(() => void this.loop('snapshot backfill', () => this.snapshots.backfill(90).then(() => this.snapshots.snapshotToday())).catch((e: Error) => this.logger.warn(`snapshot backfill failed: ${e.message}`)), 40_000);
+    this.snapshotDaily = setInterval(() => void this.loop('snapshot', () => this.snapshots.snapshotToday().then(() => this.risk.computeAll())).catch((e: Error) => this.logger.warn(`snapshot failed: ${e.message}`)), 6 * 3600_000);
+    setTimeout(() => void this.loop('risk', () => this.risk.computeAll()).then((n) => this.logger.log(`risk scores computed for ${n} services`)).catch((e: Error) => this.logger.warn(`risk failed: ${e.message}`)), 60_000);
     this.correlate = setInterval(correlate, 10 * 60_000);
-    this.enrich = setInterval(() => void this.correlation.refreshEnrichment().then((n) => n && this.logger.log(`advisory enrichment refreshed for ${n} advisories`)).catch((e: Error) => this.logger.warn(`enrichment failed: ${e.message}`)), 24 * 3600_000);
+    this.enrich = setInterval(() => void this.loop('advisory enrichment', () => this.correlation.refreshEnrichment()).then((n) => n && this.logger.log(`advisory enrichment refreshed for ${n} advisories`)).catch((e: Error) => this.logger.warn(`enrichment failed: ${e.message}`)), 24 * 3600_000);
     // usage metering: current month of every organization hourly; last month is finalised on the first pass after it ends
-    const usageTick = () => void this.poolsService.pruneManagedRunners().then((n) => n && this.logger.log(`managed runners: ${n} gone for a day removed`)).catch((e: Error) => this.logger.warn(`managed runner prune failed: ${e.message}`)).then(() => this.usage.snapshotAll()).then((r) => r.finalised && this.logger.log(`usage: ${r.organizations} organization(s), ${r.finalised} previous-month snapshot(s) written`)).catch((e: Error) => this.logger.warn(`usage snapshot failed: ${e.message}`));
+    const usageTick = () => void this.loop('usage', async () => { const n = await this.poolsService.pruneManagedRunners().catch((e: Error) => { this.logger.warn(`managed runner prune failed: ${e.message}`); return 0; }); if (n) this.logger.log(`managed runners: ${n} gone for a day removed`); return this.usage.snapshotAll(); }).then((r) => r.finalised && this.logger.log(`usage: ${r.organizations} organization(s), ${r.finalised} previous-month snapshot(s) written`)).catch((e: Error) => this.logger.warn(`usage snapshot failed: ${e.message}`));
     setTimeout(usageTick, 45_000);
     this.usageLoop = setInterval(usageTick, 60 * 60_000);
-    this.imageSync = setInterval(() => void this.inventory.syncStaleImages(15).then((n) => n && this.logger.log(`image tags refreshed for ${n} images`)).catch((e: Error) => this.logger.error(`image sync failed: ${e.message}`)), 5 * 60_000);
+    this.imageSync = setInterval(() => void this.loop('image sync', () => this.inventory.syncStaleImages(15)).then((n) => n && this.logger.log(`image tags refreshed for ${n} images`)).catch((e: Error) => this.logger.error(`image sync failed: ${e.message}`)), 5 * 60_000);
     this.logger.log(`Worker started: ${this.workers.map((w) => w.name).join(', ')} + job sweeper`);
   }
 
@@ -126,6 +145,11 @@ export class WorkerService implements OnModuleInit, OnApplicationShutdown {
     const out = { claimed: 0, succeeded: 0, failed: 0, skipped: 0 };
     if (this.platformBusy) return out; // a previous pass is still evaluating: do not pile up
     this.platformBusy = true;
+    // every 5 s: the heartbeat and the queue query are silent; an evaluation runs under its job's trace (below)
+    return this.quiet(() => this.runPlatformJobsPass(out)).finally(() => { this.platformBusy = false; });
+  }
+
+  private async runPlatformJobsPass(out: { claimed: number; succeeded: number; failed: number; skipped: number }) {
     try {
       await this.jobs.platformHeartbeat().catch(() => undefined);
       const queued = await this.db.select().from(jobs).where(and(eq(jobs.type, 'policy_eval'), eq(jobs.status, 'queued'))).orderBy(jobs.createdAt).limit(20);
@@ -154,8 +178,6 @@ export class WorkerService implements OnModuleInit, OnApplicationShutdown {
       }
     } catch (e) {
       this.logger.error(`platform job loop failed: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      this.platformBusy = false;
     }
     return out;
   }

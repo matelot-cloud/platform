@@ -115,13 +115,14 @@ export function startTracing(env: NodeJS.ProcessEnv = process.env): TracingHandl
   const { PinnedIdGenerator } = require('./ids') as typeof import('./ids');
 
   const { TrimmingSpanProcessor } = require('./trim') as typeof import('./trim');
+  const { MatelotSampler } = require('./sampler') as typeof import('./sampler');
   const exporterName = (env.OTEL_TRACES_EXPORTER ?? 'otlp').trim().toLowerCase();
   const makeExporter = () => exporterName === 'console' ? new traceBase.ConsoleSpanExporter() : exporterName === 'file' ? new (require('./file-exporter').FileSpanExporter)(env.OTEL_TRACES_FILE ?? 'traces.jsonl') : exporterName === 'none' ? null : otlpExporter(env);
   const batch = (exporter: import('@opentelemetry/sdk-trace-base').SpanExporter) => new traceBase.BatchSpanProcessor(exporter, { maxQueueSize: 2048, maxExportBatchSize: 512, scheduledDelayMillis: 2000, exportTimeoutMillis: 5000 });
   const exporter = makeExporter();
   // the process's own provider: its spans are trimmed (telemetry/trim.ts) before they are queued
   const trimmed = exporter ? new TrimmingSpanProcessor(batch(exporter)) : null;
-  const provider = new NodeTracerProvider({ resource: resourceFromAttributes(resourceAttributes(env)), sampler: sampler(env, traceBase), spanProcessors: trimmed ? [trimmed] : [], idGenerator: new PinnedIdGenerator() });
+  const provider = new NodeTracerProvider({ resource: resourceFromAttributes(resourceAttributes(env)), sampler: new MatelotSampler(sampler(env, traceBase)), spanProcessors: trimmed ? [trimmed] : [], idGenerator: new PinnedIdGenerator() });
   provider.register();
   // the pipeline-level spans (pipeline root, job spans) are emitted by whichever process finishes the work — the api
   // on a runner's /complete, the worker after a gate — so they carry a resource of their own, service.name

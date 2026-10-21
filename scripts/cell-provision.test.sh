@@ -87,6 +87,37 @@ grep -qE '^FAILED [0-9]+ [0-9]+ 000$' <<< "$out" || { echo "FAIL: no FAILED afte
 if readiness_report http://x "$out" 2> "$T/report.err"; then echo "FAIL: report should fail" >&2; exit 1; fi
 grep -q 'no 200 in [0-9]*s ([0-9]* attempts); last: HTTP 000' "$T/report.err" || { echo "FAIL: failure report: $(cat "$T/report.err")" >&2; exit 1; }
 grep -q 'Connection refused' "$T/report.err" || { echo "FAIL: the last error is not shown" >&2; exit 1; }
+# a probe pod that gives NO verdict (empty output: kubectl run lost its attach right after a rollout) is a retry inside
+# the budget, not "unhealthy"; when it persists, the last pod's phase, last event and logs are printed
+sed -n '/^probe_cell()/,/^}/p' scripts/cell-provision.sh > "$T/probe_cell.sh"
+# shellcheck disable=SC1091
+source "$T/probe_cell.sh"
+RELEASE=globex
+printf '0' > "$T/probe/runs"
+probe_run() { # stub: NO_VERDICT_RUNS empty outputs, then READY
+  local n; n=$(cat "$T/probe/runs"); n=$((n+1)); printf '%s' "$n" > "$T/probe/runs"
+  if [ "$n" -le "${NO_VERDICT_RUNS:-0}" ]; then printf ''; else printf 'READY 1 0\n'; fi
+}
+report="$(NO_VERDICT_RUNS=2 probe_cell http://globex-api:80/api/v1/health/ready 60 2>&1)" || { echo "FAIL: two empty probe pods then READY must pass: $report" >&2; exit 1; }
+grep -q '→ 200 (ready in 0s)' <<< "$report" && grep -q 'the first 2 probe pod(s) gave no verdict' <<< "$report" || { echo "FAIL: $report" >&2; exit 1; }
+[ "$(cat "$T/probe/runs")" = 3 ] || { echo "FAIL: expected 3 probe runs, got $(cat "$T/probe/runs")" >&2; exit 1; }
+# persisting: a fake kubectl answers the diagnostics (phase, event, logs) for the kept pod
+printf '0' > "$T/probe/runs"
+cat > "$T/bin/kubectl" <<'FAKE'
+#!/usr/bin/env bash
+case "$*" in
+  *"get pod"*jsonpath*) printf 'Pending';;
+  *"get events"*) printf 'FailedScheduling: 0/3 nodes are available: insufficient memory';;
+  *logs*) printf 'probe never started\n';;
+  *delete*) :;;
+esac
+FAKE
+chmod +x "$T/bin/kubectl"
+K=(kubectl -n tenant-globex)
+if NO_VERDICT_RUNS=99 probe_cell http://globex-api:80/api/v1/health/ready 10 > "$T/probe.out" 2> "$T/probe.err"; then echo "FAIL: persisting no-verdict must fail" >&2; exit 1; fi
+grep -q 'the probe pod gave no verdict [0-9]* times in 10s' "$T/probe.err" || { echo "FAIL: $(cat "$T/probe.err")" >&2; exit 1; }
+grep -q 'phase Pending; last event: FailedScheduling: 0/3 nodes' "$T/probe.err" || { echo "FAIL: diagnostics: $(cat "$T/probe.err")" >&2; exit 1; }
+grep -q 'log: probe never started' "$T/probe.err" || { echo "FAIL: logs missing: $(cat "$T/probe.err")" >&2; exit 1; }
 
 # 5. release_recoverable: what apply does with a release an earlier apply left failed / pending (fake helm on PATH)
 sed -n '/^release_recoverable()/,/^}/p' scripts/cell-provision.sh > "$T/recover.sh"
@@ -188,4 +219,4 @@ grep -q "^kind: ConfigMap" "$T/rest.yaml" || { echo "FAIL: the ConfigMap is miss
 grep -q "^  name: globex-realm-sync-dryrun-7$" "$T/hooks.yaml" && grep -q "helm.sh/hook: post-install" "$T/hooks.yaml" || { echo "FAIL: hook not renamed: $(cat "$T/hooks.yaml")" >&2; exit 1; }
 unset EXISTING_JOBS
 
-echo "cell-provision ok (new picks the issuer per context; values_get reads the generated file with PyYAML and without; checks skip terminating and replaced pods; readiness probe retries with backoff and reports the last status; failed / pending releases are recovered or explained; the server-side dry run passes over an existing hook Job)"
+echo "cell-provision ok (new picks the issuer per context; values_get reads the generated file with PyYAML and without; checks skip terminating and replaced pods; readiness probe retries with backoff and reports the last status; failed / pending releases are recovered or explained; the server-side dry run passes over an existing hook Job; a probe pod without a verdict is retried inside the budget, with diagnostics when it persists)"

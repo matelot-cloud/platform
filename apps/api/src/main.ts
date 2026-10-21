@@ -7,6 +7,8 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { McpService } from './mcp/mcp.service';
 import helmet from 'helmet';
 import { Logger } from 'nestjs-pino';
+import { context as otelContext } from '@opentelemetry/api';
+import { suppressTracing } from '@opentelemetry/core';
 import { AppModule } from './app.module';
 import { DatabaseExceptionFilter } from './common/database-exception.filter';
 import { listenWithRetry } from './common/listen';
@@ -16,7 +18,8 @@ import { requestContextMiddleware } from './common/request-context';
 import { AppConfig, parseList } from './config/env';
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: true, rawBody: true });
+  // module initialisation (signing keys, caches) runs outside any request: its queries are not spans (telemetry/trim.ts)
+  const app = await otelContext.with(suppressTracing(otelContext.active()), () => NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: true, rawBody: true }));
   app.useLogger(app.get(Logger));
 
   const config = app.get<AppConfig>(ConfigService);
@@ -54,6 +57,9 @@ async function bootstrap(): Promise<void> {
 
   const port = config.get('PORT', { infer: true });
   app.get(McpService).load(document, port);
+  // onModuleInit hooks (signing keys, caches) run here, outside any request: not spans. Listening starts OUTSIDE the
+  // suppressed context — the server's handlers inherit the context `listen` is called in, and requests must be traced.
+  await otelContext.with(suppressTracing(otelContext.active()), () => app.init());
   await listenWithRetry(app, port, '0.0.0.0', { log: (m) => app.get(Logger).warn(m) });
 }
 

@@ -4,6 +4,29 @@
 
 Images `ghcr.io/matelot-cloud/{api,web,worker,runner}` and the chart `oci://ghcr.io/matelot-cloud/charts/secops-cell`, signed, with SBOM attestations; install guide at https://matelot-cloud.github.io/website/docs/latest/install.html. The sections below are the drops that make up the release, newest first.
 
+### Observability drop 1 fix-up 3: probe pods without a verdict are retried, client polls and worker timers leave no traces of their own (CLI 2.24.2)
+
+- `checks`: "the probe pod gave no verdict" right after a rollout (the curl pod's output empty while the API answered
+  seconds later) is no longer a failure: `probe_cell` shares the 60 s budget between the curl loop and the pod
+  itself and retries an empty verdict; when it persists the last pod is kept and its phase, last event and logs are
+  printed. `cell-provision.test.sh` covers two empty pods then READY (passes, says so) and a persisting one (fails
+  with the diagnostics).
+- `matelot pipeline --wait` (and the correlation wait) send each poll with an unsampled W3C traceparent, like the
+  runner's log batches, and the cell's sampler (`telemetry/sampler.ts`) records no root trace for `GET
+  /pipelines/:id`, `/pipelines/:id/jobs`, `/jobs/:id`, `/jobs/:id/logs` and the correlation job endpoint from any
+  client that sends nothing; a poll inside a traced request stays its child. 69 root traces in 20 minutes → 0.
+- The orphan `pg.query:SELECT platform` root span was the worker's signing-keys load at module initialisation (320
+  ms, the first connection). Both the api's and the worker's module initialisation now run with instrumentation
+  suppressed (the api starts listening outside that context, so requests stay traced); every worker timer is a root
+  span `worker <loop>` (registry reconcile, exceptions, digest, remediation reconcile, snapshots, risk, usage, image
+  sync, enrichment — correlation already was), the every-few-seconds housekeeping (sweeper, gauges, platform
+  heartbeat, the policy_eval queue query) is suppressed, and the sweeper emits a `worker sweep` span only when it
+  requeued, failed or marked something offline.
+- `span-budget.mjs`: 8 `--wait`-style polls (half with the CLI's unsampled header, half with none) must add 0 spans;
+  every root span in both processes must be a request, a `worker <loop>` or a pipeline — the orphan query failed it
+  before the fix; the stray check now matches this pipeline's job ids only (a development database's stale jobs no
+  longer trip it).
+
 ### Observability drop 1 fix-up 2: claim polls leave no trace, every job's claim / start / complete in the pipeline trace, `make kind-jaeger` writes the values file
 
 - Verified on kind (rc.17): the pipeline trace is 42 spans, the root under `matelot-pipeline`. Left over: every

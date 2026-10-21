@@ -130,6 +130,14 @@ try {
   // leave no span at all (the poll's own span is trimmed, the loop runs with instrumentation suppressed)
   const EMPTY_POLLS = 6;
   for (let i = 0; i < EMPTY_POLLS; i++) await runnerCall('/runner/jobs/claim', { waitSeconds: 0 });
+  // `matelot pipeline --wait` polls GET /pipelines/:id every 5 s: the CLI sends an unsampled traceparent, and the
+  // cell's sampler drops the route for a client that sends nothing — either way, N polls add 0 spans
+  const WAIT_POLLS = 8;
+  const unsampled = () => `00-${randomUUID().replace(/-/g, '')}-${randomUUID().replace(/-/g, '').slice(0, 16)}-00`;
+  for (let i = 0; i < WAIT_POLLS; i++) {
+    await api(`/pipelines/${pipeline.id}`, undefined, token, i % 2 ? { traceparent: unsampled() } : {});
+    await api(`/pipelines/${pipeline.id}/jobs`, undefined, token, i % 2 ? {} : { traceparent: unsampled() }).catch(() => undefined);
+  }
 
   // 4. flush (SIGTERM → the 5 s-capped shutdown flush) and count
   for (const c of children.slice(1)) await stop(c);
@@ -163,17 +171,25 @@ try {
   const startsInTrace = trace.filter((x) => x.name.endsWith('/:jobId/start')).length;
   const completesInTrace = trace.filter((x) => x.name.endsWith('/:jobId/complete')).length;
   if (startsInTrace !== runnerKinds.length || completesInTrace !== runnerKinds.length) problems.push(`${startsInTrace} /start and ${completesInTrace} /complete spans in the pipeline trace, expected ${runnerKinds.length} each`);
-  const strays = spans.filter((x) => x.traceId !== traceId && (x.name.endsWith('/:jobId/start') || x.name.endsWith('/:jobId/complete') || x.name === 'claim') && (x.attributes['matelot.job.id'] ? jobSpans.some((j) => j.attributes['matelot.job.id'] === x.attributes['matelot.job.id']) : true));
+  const ourJobIds = new Set(jobSpans.map((j) => j.attributes['matelot.job.id']));
+  const strays = spans.filter((x) => x.traceId !== traceId && (x.name.endsWith('/:jobId/start') || x.name.endsWith('/:jobId/complete') || x.name === 'claim') && (ourJobIds.has(x.attributes['matelot.job.id']) || [...ourJobIds].some((id) => String(x.attributes['url.path'] ?? '').includes(id))));
   if (strays.length) problems.push(`${strays.length} /start, /complete or claim span(s) of this pipeline's jobs landed in another trace`);
   // the empty polls: zero spans — no root named after the claim route, no span at all after the pipeline finished
   const pollRoots = spans.filter((x) => /\/runner\/jobs\/claim$/.test(x.name));
   if (pollRoots.length) problems.push(`${pollRoots.length} claim poll span(s) exported (${EMPTY_POLLS} empty polls must add 0 spans)`);
+  const waitPolls = spans.filter((x) => /^GET \/api\/v1\/pipelines\/:pipelineId(\/jobs)?$/.test(x.name) || (x.name.startsWith('GET') && /\/pipelines\/[0-9a-f-]{36}(\/jobs)?$/.test(String(x.attributes['url.path'] ?? ''))));
+  if (waitPolls.length) problems.push(`${waitPolls.length} span(s) from ${WAIT_POLLS} --wait polls (must be 0: unsampled by the CLI, dropped by the sampler)`);
+  // every root span is a request, a worker loop or the pipeline's root — an orphan `pg.query` root was a worker timer
+  // running outside any span
+  const ROOT_OK = /^((GET|POST|PUT|PATCH|DELETE) |worker |pipeline )/;
+  const badRoots = spans.filter((x) => !x.parentSpanId && !ROOT_OK.test(x.name));
+  if (badRoots.length) problems.push(`${badRoots.length} orphan root span(s): ${[...new Set(badRoots.map((x) => `${x.service} · ${x.name}`))].slice(0, 6).join(', ')}`);
   if (!trace.some((x) => x.name === 'gate evaluate' && x.service === 'matelot-worker')) problems.push('the worker\'s gate evaluation is not in the trace');
   const redis = trace.filter((x) => x.scope === '@opentelemetry/instrumentation-ioredis');
   if (redis.some((x) => x.durationMs < 5)) problems.push(`${redis.filter((x) => x.durationMs < 5).length} sub-5 ms Redis span(s) survived the trimming`);
   if (trace.some((x) => x.name === 'pg-pool.connect')) problems.push('pg-pool.connect spans survived the trimming');
   if (problems.length) { console.error(`\nspan budget FAILED:\n  ${problems.join('\n  ')}`); process.exitCode = 1; }
-  else log(`\nspan budget ok: ${trace.length} ≤ ${BUDGET}; root "${root.name}" under ${root.service}; ${jobSpans.length} job spans; no /logs spans`);
+  else log(`\nspan budget ok: ${trace.length} ≤ ${BUDGET}; root "${root.name}" under ${root.service}; ${jobSpans.length} job spans; no /logs, claim-poll or --wait-poll spans; ${spans.filter((x) => !x.parentSpanId).length} root spans, all requests / worker loops / the pipeline`);
 } finally {
   for (const c of children) await stop(c);
   if (orgId) await db.query('delete from organizations where id = $1', [orgId]).catch(() => undefined);

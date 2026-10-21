@@ -90,12 +90,21 @@ sent with the trace's id but the sampled flag off, so the cell records no span f
 `logs shipped` on the job span. The runners' claim long-poll (one request every 20 s per runner, with or without
 work) is never a trace of its own: its request span is dropped by the same rules and the polling loop runs with
 instrumentation suppressed, so an empty poll leaves nothing; a poll that hands out a job leaves one `claim` span in
-the pipeline's trace under the job's span (`matelot.claim.polls`, `matelot.claim.waited_ms`, runner, pool). `apps/api/test/span-budget.mjs` (CI, api job) runs a security pipeline through the
+the pipeline's trace under the job's span (`matelot.claim.polls`, `matelot.claim.waited_ms`, runner, pool). The
+same for client polls: `matelot pipeline --wait` (and the correlation wait) sends each poll with a traceparent whose
+sampled flag is off, and the cell's sampler (`telemetry/sampler.ts`) records no root trace for `GET
+/pipelines/:id`, `/pipelines/:id/jobs`, `/jobs/:id`, `/jobs/:id/logs` and the correlation job endpoint from a client
+that sends nothing — a poll inside a traced request stays a child of it. Worker timers are root spans named `worker
+<loop>` (correlation, registry reconcile, exceptions, digest, remediation reconcile, snapshots, risk, usage, image
+sync, enrichment); the every-few-seconds housekeeping (sweeper, gauges, platform heartbeat and the policy_eval queue
+query) runs with instrumentation suppressed and the sweeper emits a `worker sweep` span only when it changed
+something; module initialisation of the api and the worker (signing keys, caches) runs suppressed too — so every root
+span is a request, a worker loop or a pipeline (the budget test fails on any other). `apps/api/test/span-budget.mjs` (CI, api job) runs a security pipeline through the
 built api and worker with the real instrumentation and a fake runner, and fails above **150 spans** in the trace,
 on any `/logs` span, when the root is not `pipeline Security pipeline` under `matelot-pipeline`, when any job of the
 template lacks its `job <kind>`, `claim`, `/start` and `/complete` spans in the pipeline's trace (or has them in
-another), or when empty claim polls add a span — today the trace holds 35 spans from the cell plus the runner's
-own (about 25 for the real one).
+another), when empty claim polls or `--wait` polls add a span, or when any root span is not a request, a `worker <loop>` or a
+pipeline — today the trace holds 34 spans from the cell plus the runner's own (about 25 for the real one).
 
 ### Metrics
 

@@ -49,10 +49,21 @@ export class CliError extends Error {
  * Over the platform's rate limit (429) the request was refused before anything ran, so it is safe to repeat — also for
  * writes. Waits for Retry-After (at most 60 s, at most 3 times; progress on stderr) and gives up with the API's message.
  */
-export async function request<T = unknown>(config: Config, method: string, path: string, body?: unknown, timeoutMs = 60_000): Promise<T> {
+export interface RequestOptions {
+  /** A poll (`--wait` loops): sent with a W3C traceparent whose sampled flag is off, so the cell records no trace for it. */
+  poll?: boolean;
+}
+
+/** `00-<random trace>-<random span>-00`: tells the cell "do not trace this request" (docs/observability.md). */
+export function unsampledTraceparent(): string {
+  const hex = (n: number) => Array.from(crypto.getRandomValues(new Uint8Array(n)), (b) => b.toString(16).padStart(2, '0')).join('');
+  return `00-${hex(16)}-${hex(8)}-00`;
+}
+
+export async function request<T = unknown>(config: Config, method: string, path: string, body?: unknown, timeoutMs = 60_000, options: RequestOptions = {}): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     try {
-      return await requestOnce<T>(config, method, path, body, timeoutMs);
+      return await requestOnce<T>(config, method, path, body, timeoutMs, options);
     } catch (error) {
       const wait = error instanceof CliError && error.status === 429 ? error.retryAfterSeconds : undefined;
       if (wait === undefined || wait > 60 || attempt >= 3) throw error;
@@ -62,7 +73,7 @@ export async function request<T = unknown>(config: Config, method: string, path:
   }
 }
 
-async function requestOnce<T = unknown>(config: Config, method: string, path: string, body?: unknown, timeoutMs = 60_000): Promise<T> {
+async function requestOnce<T = unknown>(config: Config, method: string, path: string, body?: unknown, timeoutMs = 60_000, options: RequestOptions = {}): Promise<T> {
   const raw = body === undefined ? Buffer.alloc(0) : Buffer.from(JSON.stringify(body));
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -71,7 +82,7 @@ async function requestOnce<T = unknown>(config: Config, method: string, path: st
     try {
       response = await fetch(`${config.url}${path}`, {
         method,
-        headers: { ...(config.anonymous ? {} : { Authorization: config.token ? `Bearer ${config.token}` : signatureHeader(config.keyId, config.secret, method, path, raw) }), 'Content-Type': 'application/json', 'User-Agent': `secops-cli/${VERSION}` },
+        headers: { ...(config.anonymous ? {} : { Authorization: config.token ? `Bearer ${config.token}` : signatureHeader(config.keyId, config.secret, method, path, raw) }), 'Content-Type': 'application/json', 'User-Agent': `secops-cli/${VERSION}`, ...(options.poll ? { traceparent: unsampledTraceparent() } : {}) },
         body: raw.length ? raw : undefined,
         signal: controller.signal,
       });
@@ -98,4 +109,4 @@ async function requestOnce<T = unknown>(config: Config, method: string, path: st
   }
 }
 
-export const VERSION = '2.24.1';
+export const VERSION = '2.24.2';

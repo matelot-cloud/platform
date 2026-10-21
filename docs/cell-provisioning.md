@@ -186,6 +186,11 @@ directory's contents one level too high and fell back to the stock theme; the ch
 CI starts a Keycloak pod with the chart's mount — `scripts/chart-theme-kind-test.sh` — since.) `deploy/compose/
 login-page-check.sh <base URL>` checks a running cell's page from outside: title, theme, every asset.
 
+`checks` probes the API from inside the cluster with a short-lived curl pod and a 60 s budget shared between the
+curl retries and the pod itself: a pod that gives no verdict (no output — `kubectl run` lost its attach right after
+a rollout, the pod was evicted) is one more retry inside the budget, never "unhealthy" by itself; when that
+persists for the whole budget the last pod is kept for a moment and its phase, last event and logs are printed.
+
 ## 7. Decommission
 
 ```

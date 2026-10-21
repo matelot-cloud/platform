@@ -50,3 +50,8 @@ backup:
     enabled: false              # recommended: enabled, bucket, prefix: cells/globex, region, credentialsSecret or pod identity
     bucket: ""
     prefix: cells/globex
+
+observability:
+  otlp:
+    endpoint: "http://jaeger.observability:4318"   # OTLP traces (docs/observability.md); empty = tracing off
+    protocol: http/protobuf

@@ -43,6 +43,7 @@ spec:
           env:
             - name: MATELOT_COMPONENT
               value: worker
+            {{- include "cell.otlpHeadersEnv" . | nindent 12 }}
           envFrom:
             - configMapRef:
                 name: {{ .Release.Name }}-api-config
@@ -50,10 +51,6 @@ spec:
                 name: {{ .Release.Name }}-api-secrets
             - secretRef:
                 name: {{ .Release.Name }}-cell-key
-            {{- if .Values.observability.otlp.headers }}
-            - secretRef:
-                name: {{ .Release.Name }}-otel
-            {{- end }}
           resources:
             {{- toYaml .Values.worker.resources | nindent 12 }}
           securityContext:

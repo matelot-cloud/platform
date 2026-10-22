@@ -1,0 +1,18 @@
+# grafana/tempo 1.24.4 (Tempo 2.9.0, single binary) for Matelot on kind: OTLP in on 4317 / 4318 (the cell's
+# observability.otlp.endpoint = http://tempo.monitoring:4318), queried by Grafana on 3200. Local storage, 2 days.
+#   helm upgrade --install tempo grafana/tempo --version 1.24.4 -n monitoring -f deploy/observability/kind/tempo.values.yaml
+tempo:
+  retention: 48h
+  reportingEnabled: false
+  receivers:
+    otlp:
+      protocols:
+        grpc: { endpoint: "0.0.0.0:4317" }
+        http: { endpoint: "0.0.0.0:4318" }
+  resources: { requests: { cpu: 50m, memory: 256Mi }, limits: { memory: 1Gi } }
+persistence:
+  enabled: true
+  size: 5Gi
+serviceMonitor:
+  enabled: true
+  additionalLabels: { release: kube-prometheus-stack }

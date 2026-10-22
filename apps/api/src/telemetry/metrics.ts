@@ -146,6 +146,7 @@ export class Metrics {
   readonly webhookLag: TracedHistogram;
   readonly backupLastSuccess: GaugeSet;
   readonly backupLastDuration: GaugeSet;
+  readonly backupLastFailure: GaugeSet;
   readonly buildInfo: GaugeSet;
   private readonly gaugeSets: GaugeSet[] = [];
 
@@ -188,7 +189,8 @@ export class Metrics {
     this.integrationSyncFailures = m.createCounter('matelot.integration.sync.failures', { description: 'Integration sync failures by kind' });
     this.webhookLag = hist('matelot.webhook.lag', 'Delivery → processed lag of inbound webhooks by provider');
     this.backupLastSuccess = gauge('matelot.backup.last_success.timestamp', 'Unix time of the last successful backup', 's');
-    this.backupLastDuration = gauge('matelot.backup.last.duration', 'Duration of the last backup', 's');
+    this.backupLastDuration = gauge('matelot.backup.last.duration', 'Duration of the last successful backup', 's');
+    this.backupLastFailure = gauge('matelot.backup.last_failure.timestamp', 'Unix time of the last failed backup', 's');
     this.buildInfo = gauge('matelot.build.info', 'Always 1; the version labels identify the build');
     this.buildInfo.set(1, { version: this.env.APP_VERSION ?? '0.0.0', commit: this.env.APP_COMMIT ?? 'unknown', node_version: process.version, component: String(resourceAttributes(this.env)['matelot.component']) });
   }

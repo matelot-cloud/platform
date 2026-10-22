@@ -99,6 +99,8 @@ function clientPatch(current, rendered) {
     if (rendered.attributes && a in rendered.attributes && (current.attributes ?? {})[a] !== rendered.attributes[a]) attrs[a] = rendered.attributes[a];
   }
   if (Object.keys(attrs).length) patch.attributes = { ...(current.attributes ?? {}), ...attrs };
+  // a rendered secret is the one the consumer (Grafana's env) was given: keep Keycloak's copy equal to it
+  if (typeof rendered.secret === 'string' && rendered.secret && current.secret !== rendered.secret) patch.secret = rendered.secret;
   return Object.keys(patch).length ? patch : null;
 }
 
@@ -128,12 +130,20 @@ async function sync(base, realmFile, { username, password, timeoutSeconds = 300,
   if (profileChange) changes.push(profileChange);
   for (const want of rendered.clients ?? []) {
     const [have] = await (await fetch(`${admin}/clients?clientId=${encodeURIComponent(want.clientId)}`, { headers: h })).json();
-    if (!have) { log(`client ${want.clientId}: not in the realm (created by hand? import skipped?) — not created`); continue; }
+    if (!have) {
+      // clients added after the first import (an optional component turned on later, e.g. Grafana with the
+      // observability profile) say so; the product's own clients are never re-created behind an administrator's back
+      if ((want.attributes ?? {})['matelot.createIfMissing'] !== 'true') { log(`client ${want.clientId}: not in the realm (created by hand? import skipped?) — not created`); continue; }
+      const r = await fetch(`${admin}/clients`, { method: 'POST', headers: h, body: JSON.stringify(want) });
+      if (!r.ok && r.status !== 409) throw new Error(`client ${want.clientId} create: HTTP ${r.status} ${await r.text().catch(() => '')}`.trim());
+      if (r.ok) changes.push(`client ${want.clientId} created`);
+      continue;
+    }
     const patch = clientPatch(have, want);
     if (!patch) continue;
     const r = await fetch(`${admin}/clients/${have.id}`, { method: 'PUT', headers: h, body: JSON.stringify({ ...have, ...patch }) });
     if (!r.ok) throw new Error(`client ${want.clientId} update: HTTP ${r.status}`);
-    changes.push(`client ${want.clientId}: ${Object.keys(patch).join(', ')}${patch.redirectUris ? ` → ${patch.redirectUris.join(' ')}` : ''}`);
+    changes.push(`client ${want.clientId}: ${Object.keys(patch).map((k) => (k === 'secret' ? 'secret (rotated to the rendered one)' : k)).join(', ')}${patch.redirectUris ? ` → ${patch.redirectUris.join(' ')}` : ''}`);
   }
   for (const email of seedUsers.map((e) => e.trim().toLowerCase()).filter(Boolean)) {
     const found = await (await fetch(`${admin}/users?email=${encodeURIComponent(email)}&exact=true`, { headers: h })).json();

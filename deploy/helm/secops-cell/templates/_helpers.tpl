@@ -159,3 +159,23 @@ checksums agree, and an install renders exactly what the next upgrade renders (n
 {{- define "cell.runnerImage" -}}
 {{- printf "%s:%s" .Values.managedRunners.image.repository (.Values.managedRunners.image.tag | default .Chart.AppVersion) -}}
 {{- end -}}
+
+{{/* Shared secret the backup job presents to POST /api/v1/internal/backup-reports (generated once, kept in api-secrets). */}}
+{{- define "cell.backupReportToken" -}}
+{{- include "cell.generated" (dict "ctx" . "name" "backupReportToken" "value" "" "secret" "api-secrets" "key" "BACKUP_REPORT_TOKEN" "gen" (randAlphaNum 48)) -}}
+{{- end -}}
+
+{{/* OTEL_EXPORTER_OTLP_HEADERS from the Secret observability.otlp.headersSecret (env list entry, indented by the caller).
+     The old `observability.otlp.headers` map put tokens into values: it is refused. */}}
+{{- define "cell.otlpHeadersEnv" -}}
+{{- if .Values.observability.otlp.headers }}
+{{- fail "observability.otlp.headers was removed (tokens do not belong in values): create a Secret with the key OTEL_EXPORTER_OTLP_HEADERS (e.g. Authorization=Basic%20…) and set observability.otlp.headersSecret to its name" }}
+{{- end }}
+{{- with .Values.observability.otlp.headersSecret }}
+- name: OTEL_EXPORTER_OTLP_HEADERS
+  valueFrom:
+    secretKeyRef:
+      name: {{ . | quote }}
+      key: {{ $.Values.observability.otlp.headersSecretKey | default "OTEL_EXPORTER_OTLP_HEADERS" | quote }}
+{{- end }}
+{{- end -}}

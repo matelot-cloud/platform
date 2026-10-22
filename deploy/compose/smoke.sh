@@ -4,11 +4,14 @@
 #   workspace/team/project → backup (--compose) → destroy everything (down -v) → restore → the project is back.
 #   deploy/compose/smoke.sh [--keep]          (env: MATELOT_CLI="node ../../apps/cli/dist/index.js" to use a checkout)
 #   deploy/compose/smoke.sh --check           only resolves the CLI and prints its version (no Docker): CI's self-test
+#   deploy/compose/smoke.sh --observability   the second pass: the cell with COMPOSE_PROFILES=observability — every
+#                                             Prometheus target up, a pipeline's trace in Tempo, its logs in Loki by
+#                                             trace_id, the backup gauge (all asked through Caddy → Grafana's proxy)
 # Needs: docker compose v2, curl, python3 (JSON), the matelot CLI (or MATELOT_CLI), and ports 80/5000 free.
 set -euo pipefail
 cd "$(dirname "$0")"
-KEEP=0; CHECK=0
-case "${1:-}" in --keep) KEEP=1 ;; --check) CHECK=1 ;; '') ;; *) echo "usage: smoke.sh [--keep|--check]" >&2; exit 2 ;; esac
+KEEP=0; CHECK=0; OBS=0
+for a in "$@"; do case "$a" in --keep) KEEP=1 ;; --check) CHECK=1 ;; --observability) OBS=1 ;; *) echo "usage: smoke.sh [--keep] [--observability] | --check" >&2; exit 2 ;; esac; done
 # The CLI command is a word list, never one string: MATELOT_CLI="node ../../apps/cli/dist/index.js" has a space, and
 # "$MATELOT_CLI" would look for a program named `node ../../apps/cli/dist/index.js` (exit 127). Split on purpose, once.
 read -ra CLI <<< "${MATELOT_CLI:-matelot}"
@@ -25,8 +28,10 @@ SCRIPTS="${CELL_SCRIPTS:-}"; [ -n "$SCRIPTS" ] || { if [ -f ../../scripts/cell-b
     [ -z "${MATELOT_REGISTRY_PREFIX:-}" ] || echo "MATELOT_REGISTRY_PREFIX=$MATELOT_REGISTRY_PREFIX"
     echo "MATELOT_ORG_NAME='Acme Corp (EU) #1'"
     echo "MATELOT_ADMIN_PASSWORD='Sm0ke#pass\$1 ok'"
+    [ "$OBS" = 0 ] || echo "COMPOSE_PROFILES=observability"
   } > .env.smoke
   export COMPOSE_ENV_FILES="$PWD/.env.smoke"
+  [ "$OBS" = 0 ] || export COMPOSE_PROFILES=observability   # also in the env file (as a user would set it); exported so every compose call agrees
 }
 BASE="http://localhost:${MATELOT_HTTP_PORT:-80}"
 log() { printf '\n== %s\n' "$*"; }
@@ -80,6 +85,7 @@ fi
 bash "$(dirname "$0")/login-page-check.sh" "$BASE" || { docker compose logs --tail 30 keycloak >&2; docker compose exec -T keycloak find /opt/keycloak/themes/matelot -maxdepth 2 >&2 || true; exit 1; }
 theme_failed && { echo "the page rendered but Keycloak logged 'Failed to find LOGIN theme' meanwhile" >&2; exit 1; }
 echo "   keycloak log: no 'Failed to find LOGIN theme'"
+if [ "$OBS" = 1 ]; then . "$(dirname "$0")/smoke-observability.sh"; exit 0; fi
 log "matelot doctor (before login: the public checks)"
 export MATELOT_URL="$BASE"
 export MATELOT_CREDENTIALS="$PWD/.smoke-credentials.json"; rm -f "$MATELOT_CREDENTIALS"

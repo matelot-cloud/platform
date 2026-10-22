@@ -225,6 +225,11 @@ spec:
               value: xforwarded
             - name: KC_HEALTH_ENABLED
               value: "true"
+            {{- if and .Values.observability.metrics.enabled .Values.observability.metrics.exporters.enabled }}
+            # /metrics on the management port (9000, never on the ingress; Service <release>-keycloak-metrics)
+            - name: KC_METRICS_ENABLED
+              value: "true"
+            {{- end }}
           ports:
             - name: http
               containerPort: 8080

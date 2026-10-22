@@ -1,0 +1,32 @@
+# OpenTelemetry Collector of the Compose `observability` profile (docs/observability.md): the cell's api, worker and
+# runner send OTLP here (MATELOT_OTLP_ENDPOINT defaults to http://otel-collector:4318 with the profile); traces go on
+# to Tempo. Rendered by compose-init into the config volume (__CELL__ is the organization slug).
+receivers:
+  otlp:
+    protocols:
+      grpc: { endpoint: 0.0.0.0:4317 }
+      http: { endpoint: 0.0.0.0:4318 }
+processors:
+  memory_limiter: { check_interval: 1s, limit_mib: 200, spike_limit_mib: 50 }
+  batch: {}
+  resource:
+    attributes:
+      - { key: matelot.cell, value: "__CELL__", action: insert }
+exporters:
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls: { insecure: true }
+extensions:
+  health_check: { endpoint: 0.0.0.0:13133 }
+service:
+  extensions: [health_check]
+  telemetry:
+    logs: { level: warn }
+    metrics:
+      readers:
+        - pull: { exporter: { prometheus: { host: 0.0.0.0, port: 8888 } } }
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlp/tempo]

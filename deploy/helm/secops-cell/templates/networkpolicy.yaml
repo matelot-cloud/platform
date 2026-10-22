@@ -61,5 +61,11 @@ spec:
         {{- end }}
       ports:
         - port: {{ .Values.observability.metrics.port }}
+        {{- if .Values.observability.metrics.exporters.enabled }}
+        - port: {{ .Values.observability.metrics.exporters.postgres.port }}
+        - port: {{ .Values.observability.metrics.exporters.redis.port }}
+        - port: 9000   # Keycloak management (health + metrics)
+        - port: {{ .Values.observability.metrics.exporters.registryPort }}
+        {{- end }}
 {{- end }}
 {{- end }}

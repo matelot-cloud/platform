@@ -69,7 +69,11 @@ spec:
       containers:
         - name: registry
           image: {{ .Values.registry.image | quote }}
-          ports: [{ containerPort: 5000, name: http }]
+          ports:
+            - { containerPort: 5000, name: http }
+            {{- if and .Values.observability.metrics.enabled .Values.observability.metrics.exporters.enabled }}
+            - { containerPort: {{ .Values.observability.metrics.exporters.registryPort }}, name: metrics }   # the debug listener: /metrics, pod network only
+            {{- end }}
           volumeMounts:
             - { name: config, mountPath: /etc/docker/registry/config.yml, subPath: config.yml }
             - { name: certs, mountPath: /certs }

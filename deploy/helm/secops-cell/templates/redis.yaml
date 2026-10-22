@@ -55,4 +55,23 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
+        {{- if and .Values.observability.metrics.enabled .Values.observability.metrics.exporters.enabled }}
+        # redis_exporter (docs/observability.md): redis_* metrics on the pod network only (Service <release>-redis-metrics)
+        - name: metrics
+          image: {{ .Values.observability.metrics.exporters.redis.image | quote }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.observability.metrics.exporters.redis.port }}
+          args: ["-redis.addr=redis://localhost:6379", {{ printf "-web.listen-address=:%v" .Values.observability.metrics.exporters.redis.port | quote }}]
+          readinessProbe:
+            httpGet: { path: /metrics, port: metrics }
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.observability.metrics.exporters.redis.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+        {{- end }}
 {{- end }}

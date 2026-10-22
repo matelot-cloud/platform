@@ -1,0 +1,73 @@
+{{- /*
+Metrics delivery (docs/observability.md, drop 2): one headless Service per scrape target, every one with the port
+named `metrics`, the label matelot.cloud/metrics=true and the job name in matelot.cloud/job — so ONE ServiceMonitor
+covers the cell, Prometheus' `job` label is matelot-api / matelot-worker / … whatever the release is called, and a
+scraper without the operator can use the same Services. Never on the ingress; the NetworkPolicy admits the monitoring
+namespaces to these ports only.
+*/ -}}
+{{- if .Values.observability.metrics.enabled }}
+{{- $port := .Values.observability.metrics.port }}
+{{- $ex := .Values.observability.metrics.exporters }}
+{{- $targets := list (dict "name" "api" "selector" "api" "port" $port "targetPort" "metrics") (dict "name" "worker" "selector" "worker" "port" $port "targetPort" "metrics") }}
+{{- if .Values.managedRunners.enabled }}{{- $targets = append $targets (dict "name" "runner" "selector" "runner" "port" $port "targetPort" "metrics") }}{{- end }}
+{{- if $ex.enabled }}
+{{- if .Values.postgres.bundled }}{{- $targets = append $targets (dict "name" "postgres" "selector" "postgres" "port" $ex.postgres.port "targetPort" "metrics") }}{{- end }}
+{{- if .Values.redis.bundled }}{{- $targets = append $targets (dict "name" "redis" "selector" "redis" "port" $ex.redis.port "targetPort" "metrics") }}{{- end }}
+{{- if .Values.keycloak.bundled }}{{- $targets = append $targets (dict "name" "keycloak" "selector" "keycloak" "port" 9000 "targetPort" "management") }}{{- end }}
+{{- if and .Values.registry.enabled .Values.ingress.enabled }}{{- $targets = append $targets (dict "name" "registry" "selector" "registry" "port" $ex.registryPort "targetPort" "metrics") }}{{- end }}
+{{- end }}
+{{- range $targets }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ printf "%s-%s-metrics" $.Release.Name .name }}
+  labels:
+    {{- include "cell.labels" $ | nindent 4 }}
+    app.kubernetes.io/name: {{ .selector }}
+    app.kubernetes.io/component: metrics
+    matelot.cloud/metrics: "true"
+    matelot.cloud/job: {{ printf "matelot-%s" .name }}
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+    app.kubernetes.io/name: {{ .selector }}
+  ports:
+    - name: metrics
+      port: {{ .port }}
+      targetPort: {{ .targetPort }}
+{{- end }}
+{{- if .Values.observability.metrics.serviceMonitor.enabled }}
+---
+# prometheus-operator (kube-prometheus-stack): every metrics Service of the cell, /metrics on the port named `metrics`.
+# OpenMetrics is negotiated, so trace exemplars arrive (Prometheus needs --enable-feature=exemplar-storage).
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    {{- include "cell.labels" . | nindent 4 }}
+    {{- with .Values.observability.metrics.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  jobLabel: matelot.cloud/job
+  namespaceSelector:
+    matchNames: [{{ .Release.Namespace | quote }}]
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      matelot.cloud/metrics: "true"
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: {{ .Values.observability.metrics.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.observability.metrics.serviceMonitor.scrapeTimeout }}
+      relabelings:
+        - targetLabel: cell
+          replacement: {{ .Values.tenant.slug | quote }}
+{{- end }}
+{{- else if .Values.observability.metrics.serviceMonitor.enabled }}
+{{- fail "observability.metrics.serviceMonitor.enabled needs observability.metrics.enabled" }}
+{{- end }}

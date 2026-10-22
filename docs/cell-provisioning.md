@@ -144,6 +144,10 @@ modified; `keycloak.seedAdmins: false` leaves user creation to the operator or t
 * **Rotate the Keycloak admin password:** change it in Keycloak, update the secret manager; the chart value is only
   the bootstrap value.
 * **Restore:** docs/backup-restore.md.
+* **Monitoring:** `observability.metrics.serviceMonitor` (+ `labels` your Prometheus selects), `observability.metrics.exporters`
+  and `observability.otlp.endpoint` in the values file, then `apply`; OTLP headers only through
+  `observability.otlp.headersSecret`. The kube-prometheus-stack / Tempo / Loki recipe, and `make kind-observability
+  TENANT=<slug>` for kind, are in docs/observability.md.
 * **A release left `failed` or `pending-*`** by an interrupted or rejected apply: just run `apply` again. It upgrades
   over `failed` when a good revision exists, rolls `pending-*` back to the last good revision first, and validates the
   rendered chart with `kubectl apply --dry-run=server` before helm touches the release — a chart the API server rejects

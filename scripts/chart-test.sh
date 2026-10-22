@@ -147,7 +147,7 @@ for f in sorted(glob.glob(f"{out}/*.yaml")):
 print("   no ConfigMap / Secret key in both data and binaryData; keys valid; no resource rendered twice")
 PY
 # the Docker Compose stack ships copies of the chart's backup scripts: they must be identical (release.yml publishes both)
-for f in backup.sh restore-db.sh; do cmp -s "$CHART/files/$f" "deploy/compose/backup/$f" || { echo "deploy/compose/backup/$f differs from $CHART/files/$f (copy it over)" >&2; exit 1; }; done
+for f in backup.sh backup-report.sh restore-db.sh; do cmp -s "$CHART/files/$f" "deploy/compose/backup/$f" || { echo "deploy/compose/backup/$f differs from $CHART/files/$f (copy it over)" >&2; exit 1; }; done
 cmp -s "$CHART/files/realm-sync.js" deploy/compose/init/realm-sync.js || { echo "deploy/compose/init/realm-sync.js differs from $CHART/files/realm-sync.js (copy it over)" >&2; exit 1; }
 diff -r "$CHART/files/theme" deploy/compose/init/theme > /dev/null || { echo "deploy/compose/init/theme differs from $CHART/files/theme (cp -R it over)" >&2; diff -rq "$CHART/files/theme" deploy/compose/init/theme >&2; exit 1; }
 # the login theme's icons are the web app's (apps/web/public is the source; tools/icons/build.mjs writes both)
@@ -209,19 +209,44 @@ assert "loginTheme" not in json.loads(by(off, "ConfigMap", "acme-keycloak-realm"
 assert not any(v["name"] == "theme" for v in by(off, "Deployment", "acme-keycloak")["spec"]["template"]["spec"]["volumes"])
 print("   login theme: ConfigMap holds every file (images binary, cell.css from values); every item resolves to /opt/keycloak/themes/matelot/<path>, login/theme.properties included; realm selects it; theme.enabled=false is stock")
 PY
-# observability (docs/observability.md, drop 1): metrics ports and env on by default, OTLP env only once an endpoint
-# is set (headers in a Secret), a NetworkPolicy admitting scrapers from the monitoring namespaces; metrics.enabled=false
-# removes ports, env and policy. No monitoring CRD is rendered (ServiceMonitors come with drop 2).
-run otlp --set observability.otlp.endpoint=http://jaeger.observability:4318 --set observability.otlp.headers.Authorization="Basic abc" --set observability.otlp.metrics=true
+# observability (docs/observability.md, drops 1–2). Defaults: metrics ports + env, one metrics Service per scrape target,
+# the scrape NetworkPolicy, no exporter, no monitoring CRD. otlp: OTEL_* everywhere, headers from a Secret (never
+# values). all-on: ServiceMonitor + exporters — every ServiceMonitor endpoint must hit a Service port that exists and
+# every metrics Service must target a container port that exists (a ServiceMonitor pointing at nothing is silent:
+# the target simply never appears). metrics-off: nothing.
+run otlp --set observability.otlp.endpoint=http://jaeger.observability:4318 --set observability.otlp.headersSecret=grafana-cloud-otlp --set observability.otlp.metrics=true
 run metrics-off --set observability.metrics.enabled=false
+run observability-all --set observability.metrics.serviceMonitor.enabled=true --set observability.metrics.serviceMonitor.labels.release=kube-prometheus-stack --set observability.metrics.exporters.enabled=true --set observability.otlp.endpoint=http://tempo.monitoring:4318 --set backup.enabled=true
+run observability-external --set observability.metrics.serviceMonitor.enabled=true --set observability.metrics.exporters.enabled=true --set postgres.bundled=false --set postgres.externalUrl=postgresql://u:p@db:5432/platform --set postgres.externalKeycloakJdbcUrl=jdbc:postgresql://db:5432/keycloak --set redis.bundled=false --set redis.externalUrl=redis://redis.example:6379
+if helm template acme "$CHART" --set observability.otlp.headers.Authorization=x > "$OUT/headers.err" 2>&1; then echo "observability.otlp.headers (tokens in values) must be refused" >&2; exit 1; fi
+grep -q "observability.otlp.headers was removed" "$OUT/headers.err" || { echo "the headers refusal must say what to do: $(cat "$OUT/headers.err")" >&2; exit 1; }
+if helm template acme "$CHART" --set observability.metrics.enabled=false --set observability.metrics.serviceMonitor.enabled=true > /dev/null 2>&1; then echo "a ServiceMonitor without metrics must be refused" >&2; exit 1; fi
 python3 - "$OUT" <<'PY'
 import sys, yaml
 out = sys.argv[1]
 def docs(name): return [d for d in yaml.safe_load_all(open(f"{out}/{name}.yaml")) if d]
 def by(ds, kind, name): return next(d for d in ds if d["kind"] == kind and d["metadata"]["name"] == name)
-def container(ds, kind, name, c): return next(x for x in by(ds, kind, name)["spec"]["template"]["spec"]["containers"] if x["name"] == c)
+def kinds(ds, kind): return [d for d in ds if d["kind"] == kind]
+def pod(d): return d["spec"]["template"]["spec"] if d["kind"] != "CronJob" else d["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+def container(ds, kind, name, c): return next(x for x in pod(by(ds, kind, name))["containers"] if x["name"] == c)
 def env(c): return {e["name"]: e.get("value") for e in c.get("env", [])}
+def envref(c, n): return next((e.get("valueFrom") for e in c.get("env", []) if e["name"] == n), None)
 WORKLOADS = (("Deployment", "acme-api", "api"), ("Deployment", "acme-worker", "worker"), ("StatefulSet", "acme-runner", "runner"))
+def metrics_services(ds): return [d for d in kinds(ds, "Service") if d["metadata"].get("labels", {}).get("matelot.cloud/metrics") == "true"]
+
+def check_targets(ds, name):
+    """every metrics Service selects a workload whose pods expose the Service's targetPort (by name)"""
+    workloads = [d for d in ds if d["kind"] in ("Deployment", "StatefulSet")]
+    for svc in metrics_services(ds):
+        sel = svc["spec"]["selector"]
+        pods = [w for w in workloads if all(w["spec"]["template"]["metadata"]["labels"].get(k) == v for k, v in sel.items())]
+        assert pods, f"{name}: {svc['metadata']['name']} selects no workload ({sel})"
+        port = svc["spec"]["ports"][0]
+        assert port["name"] == "metrics", (name, svc["metadata"]["name"], port)
+        names = {p.get("name") for w in pods for c in w["spec"]["template"]["spec"]["containers"] for p in c.get("ports", [])}
+        assert port["targetPort"] in names, f"{name}: {svc['metadata']['name']} targets port {port['targetPort']!r}, the pods expose {sorted(n for n in names if n)}"
+
+# --- defaults: Services for api / worker / runner, nothing else
 d = docs("defaults")
 cm = by(d, "ConfigMap", "acme-api-config")["data"]
 assert cm["MATELOT_METRICS_ENABLED"] == "true" and cm["MATELOT_METRICS_PORT"] == "9464" and cm["DEPLOYMENT_ENVIRONMENT"] == "production", cm
@@ -229,29 +254,96 @@ assert "OTEL_EXPORTER_OTLP_ENDPOINT" not in cm, "no OTLP env without an endpoint
 for kind, name, c in WORKLOADS:
     ports = {p["name"]: p["containerPort"] for p in container(d, kind, name, c).get("ports", [])}
     assert ports.get("metrics") == 9464, (name, ports)
+    assert envref(container(d, kind, name, c), "OTEL_EXPORTER_OTLP_HEADERS") is None
 assert env(container(d, "Deployment", "acme-api", "api"))["MATELOT_COMPONENT"] == "api"
 assert env(container(d, "Deployment", "acme-worker", "worker"))["MATELOT_COMPONENT"] == "worker"
 r = env(container(d, "StatefulSet", "acme-runner", "runner"))
 assert r["RUNNER_METRICS_PORT"] == "9464" and r["MATELOT_CELL"] == "acme" and "OTEL_EXPORTER_OTLP_ENDPOINT" not in r, r
+assert sorted(s["metadata"]["labels"]["matelot.cloud/job"] for s in metrics_services(d)) == ["matelot-api", "matelot-runner", "matelot-worker"], [s["metadata"]["name"] for s in metrics_services(d)]
+check_targets(d, "defaults")
 np = by(d, "NetworkPolicy", "acme-allow-metrics-scrape")["spec"]
 assert np["ingress"][0]["ports"] == [{"port": 9464}] and {f["namespaceSelector"]["matchLabels"]["kubernetes.io/metadata.name"] for f in np["ingress"][0]["from"]} == {"monitoring", "observability"}, np
 assert not any(x["apiVersion"].startswith("monitoring.coreos.com") for x in d), "no monitoring CRD with defaults"
-assert not any(x["kind"] == "Secret" and x["metadata"]["name"] == "acme-otel" for x in d)
+assert [c["name"] for c in pod(by(d, "StatefulSet", "acme-postgres"))["containers"]] == ["postgres"] and [c["name"] for c in pod(by(d, "Deployment", "acme-redis"))["containers"]] == ["redis"], "no exporter sidecar by default"
+assert "KC_METRICS_ENABLED" not in env(container(d, "Deployment", "acme-keycloak", "keycloak"))
+assert "debug:" not in by(d, "ConfigMap", "acme-registry-config")["data"]["config.yml"]
+assert "http://acme-api/api/v1/registry/events" in by(d, "ConfigMap", "acme-registry-config")["data"]["config.yml"], "registry notifications go to the api Service port (80)"
+assert by(d, "Secret", "acme-api-secrets")["stringData"]["BACKUP_REPORT_TOKEN"], "the backup report token is generated"
+
+# --- otlp: env everywhere, headers from the named Secret
 o = docs("otlp")
 cm = by(o, "ConfigMap", "acme-api-config")["data"]
 assert cm["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://jaeger.observability:4318" and cm["OTEL_EXPORTER_OTLP_PROTOCOL"] == "http/protobuf" and cm["OTEL_TRACES_SAMPLER"] == "parentbased_always_on" and cm["OTEL_METRICS_EXPORTER"] == "prometheus,otlp", cm
-assert by(o, "Secret", "acme-otel")["stringData"]["OTEL_EXPORTER_OTLP_HEADERS"] == "Authorization=Basic abc"
 for kind, name, c in WORKLOADS:
-    assert any(e.get("secretRef", {}).get("name") == "acme-otel" for e in container(o, kind, name, c).get("envFrom", [])), f"{name}: the OTLP headers Secret is not referenced"
+    ref = envref(container(o, kind, name, c), "OTEL_EXPORTER_OTLP_HEADERS")
+    assert ref == {"secretKeyRef": {"name": "grafana-cloud-otlp", "key": "OTEL_EXPORTER_OTLP_HEADERS"}}, (name, ref)
+assert not any(x["kind"] == "Secret" and "OTEL_EXPORTER_OTLP_HEADERS" in (x.get("stringData") or {}) for x in o), "OTLP headers never rendered into a Secret from values"
 r = env(container(o, "StatefulSet", "acme-runner", "runner"))
 assert r["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://jaeger.observability:4318" and r["OTEL_EXPORTER_OTLP_PROTOCOL"] == "http/protobuf", r
+
+# --- all on: ServiceMonitor ↔ Services ↔ container ports; exporters; Keycloak / registry metrics; NetworkPolicy
+a = docs("observability-all")
+jobs = sorted(s["metadata"]["labels"]["matelot.cloud/job"] for s in metrics_services(a))
+assert jobs == ["matelot-api", "matelot-keycloak", "matelot-postgres", "matelot-redis", "matelot-registry", "matelot-runner", "matelot-worker"], jobs
+check_targets(a, "observability-all")
+sms = kinds(a, "ServiceMonitor")
+assert len(sms) == 1, sms
+sm = sms[0]
+assert sm["apiVersion"] == "monitoring.coreos.com/v1" and sm["metadata"]["labels"]["release"] == "kube-prometheus-stack", sm["metadata"]
+assert sm["spec"]["jobLabel"] == "matelot.cloud/job" and sm["spec"]["namespaceSelector"] == {"matchNames": ["tenant-acme"]}, sm["spec"]
+sel = sm["spec"]["selector"]["matchLabels"]
+selected = [s for s in kinds(a, "Service") if all(s["metadata"].get("labels", {}).get(k) == v for k, v in sel.items())]
+assert {s["metadata"]["name"] for s in selected} == {s["metadata"]["name"] for s in metrics_services(a)}, "the ServiceMonitor selects exactly the metrics Services"
+for ep in sm["spec"]["endpoints"]:
+    for s in selected: assert any(p["name"] == ep["port"] for p in s["spec"]["ports"]), f"ServiceMonitor endpoint port {ep['port']!r} missing on {s['metadata']['name']}"
+    assert ep["path"] == "/metrics" and {"targetLabel": "cell", "replacement": "acme"} in ep["relabelings"], ep
+pg = pod(by(a, "StatefulSet", "acme-postgres"))["containers"]
+assert [c["name"] for c in pg] == ["postgres", "metrics"], pg
+pe = pg[1]
+assert pe["image"].startswith("quay.io/prometheuscommunity/postgres-exporter:v") and envref(pe, "DATA_SOURCE_PASS") == {"secretKeyRef": {"name": "acme-postgres", "key": "POSTGRES_PASSWORD"}}, pe
+assert env(pe)["DATA_SOURCE_URI"] == "localhost:5432/platform?sslmode=disable" and pe["args"] == ["--web.listen-address=:9187"], pe
+rc = pod(by(a, "Deployment", "acme-redis"))["containers"]
+assert [c["name"] for c in rc] == ["redis", "metrics"] and rc[1]["args"] == ["-redis.addr=redis://localhost:6379", "-web.listen-address=:9121"], rc
+assert env(container(a, "Deployment", "acme-keycloak", "keycloak"))["KC_METRICS_ENABLED"] == "true"
+reg = yaml.safe_load(by(a, "ConfigMap", "acme-registry-config")["data"]["config.yml"])
+assert reg["http"]["debug"] == {"addr": ":5001", "prometheus": {"enabled": True, "path": "/metrics"}}, reg["http"]
+assert {"containerPort": 5001, "name": "metrics"} in container(a, "Deployment", "acme-registry", "registry")["ports"]
+assert by(a, "Ingress", "acme-registry")["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"]["port"] == {"name": "http"}, "the registry's metrics port never reaches the ingress"
+np = by(a, "NetworkPolicy", "acme-allow-metrics-scrape")["spec"]
+assert sorted(p["port"] for p in np["ingress"][0]["ports"]) == [5001, 9000, 9121, 9187, 9464], np["ingress"][0]["ports"]
+for ing in kinds(a, "Ingress"):
+    for rule in ing["spec"]["rules"]:
+        for path in rule["http"]["paths"]:
+            svc = path["backend"]["service"]["name"]
+            assert not svc.endswith("-metrics"), f"ingress {ing['metadata']['name']} routes to a metrics Service"
+# the backup job reports every run (dump with a PVC; the upload step with S3) with the generated token
+cj = by(a, "CronJob", "acme-backup")
+dump = next(c for c in pod(cj).get("initContainers", []) + pod(cj)["containers"] if c["name"] == "dump")
+assert env(dump)["REPORT_URL"] == "http://acme-api/api/v1/internal/backup-reports" and env(dump)["REPORT_SUCCESS"] == "1" and env(dump)["DESTINATION"] == "pvc", env(dump)
+assert envref(dump, "REPORT_TOKEN") == {"secretKeyRef": {"name": "acme-api-secrets", "key": "BACKUP_REPORT_TOKEN"}}
+assert "backup-report.sh" in by(a, "ConfigMap", "acme-backup-script")["data"]
+s3 = docs("backup-s3")
+cj = by(s3, "CronJob", "acme-backup")
+dump = next(c for c in pod(cj)["initContainers"] if c["name"] == "dump")
+up = next(c for c in pod(cj)["containers"] if c["name"] == "upload")
+assert env(dump)["REPORT_SUCCESS"] == "0" and env(dump)["DESTINATION"] == "s3://b/cells/acme", env(dump)
+assert "report_backup succeeded upload" in up["command"][2] and "report_backup failed upload" in up["command"][2] and envref(up, "REPORT_TOKEN"), up["command"]
+assert any(m["mountPath"] == "/scripts" for m in up["volumeMounts"]), "the upload step needs backup-report.sh"
+
+# --- external Postgres / Redis: no sidecar, no Service for them; the rest of the exporters stay
+x = docs("observability-external")
+jobs = sorted(s["metadata"]["labels"]["matelot.cloud/job"] for s in metrics_services(x))
+assert jobs == ["matelot-api", "matelot-keycloak", "matelot-registry", "matelot-runner", "matelot-worker"], jobs
+check_targets(x, "observability-external")
+
+# --- metrics off: nothing at all
 m = docs("metrics-off")
 assert by(m, "ConfigMap", "acme-api-config")["data"]["MATELOT_METRICS_ENABLED"] == "false"
 for kind, name, c in WORKLOADS:
     assert not any(p["name"] == "metrics" for p in container(m, kind, name, c).get("ports", [])), name
 assert env(container(m, "StatefulSet", "acme-runner", "runner"))["RUNNER_METRICS_PORT"] == "0"
-assert not any(x["kind"] == "NetworkPolicy" and x["metadata"]["name"] == "acme-allow-metrics-scrape" for x in m)
-print("   observability: metrics ports + env on by default, scrape NetworkPolicy, OTLP env + headers Secret once an endpoint is set, all off with metrics.enabled=false, no monitoring CRD")
+assert not metrics_services(m) and not any(x["kind"] == "NetworkPolicy" and x["metadata"]["name"] == "acme-allow-metrics-scrape" for x in m)
+print("   observability: metrics Services ↔ container ports ↔ the ServiceMonitor all line up (7 targets all-on, 5 with an external database / Redis, 3 by default); exporters, Keycloak and registry metrics only when asked; OTLP headers only from a Secret; the backup job reports every run; nothing with metrics off")
 PY
 # the realm-sync hook: post-install + post-upgrade, mounts the realm ConfigMap, runs the shared script; Keycloak's import
 # directory gets realm.json only (the script must not land in /opt/keycloak/data/import)

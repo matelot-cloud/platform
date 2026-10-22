@@ -65,6 +65,7 @@ pnpm db:generate    after editing apps/api/src/database/schema.ts (see Working o
 make check-layout   fail on stale top-level directories (CI does too)
 make kind-up / kind-load / deploy TENANT=acme   kind-up installs ingress-nginx + cert-manager + ClusterIssuer `selfsigned`; deploy uses it (HTTPS: browsers sign in only in a secure context)
 make kind-jaeger TENANT=acme   Jaeger all-in-one on kind, the cell exporting traces to it (one trace per pipeline; docs/observability.md)
+make kind-observability TENANT=acme   kube-prometheus-stack + Tempo + Loki + Alloy on kind, the cell's ServiceMonitor / exporters / OTLP on
 make backup TENANT=acme / restore TENANT=acme ARCHIVE=…   cell backup (CronJob in the chart) and restore; docs/backup-restore.md
 deploy/compose/smoke.sh   the Compose quick start end to end (up → doctor → project → backup → down -v → restore); CI job `compose`
 make provision TENANT=globex / decommission TENANT=globex   real cells from deploy/cells/<slug>.values.yaml; docs/cell-provisioning.md
@@ -143,6 +144,12 @@ mirror this layout exactly — nothing at the root that is not in the repository
   emitted at terminal status — a new job terminal transition must call `jobFinished`. Logs: one schema
   (`telemetry/log-schema.ts`), secrets in `REDACTED_KEYS`. The runner has no dependencies: its `telemetry.ts` is the
   same contract by hand.
+  Delivery (drop 2): a new scrape target = a metrics Service in the chart's `templates/metrics.yaml` targets list
+  (port named `metrics`; the one ServiceMonitor picks it up), its port in the `allow-metrics-scrape` NetworkPolicy, a
+  static job in `deploy/compose/init/observability/prometheus.yml` and in smoke-observability's expected jobs; never a
+  port on the host or the ingress. OTLP headers only from a Secret (`observability.otlp.headersSecret`). Anything
+  compose-init reads from the environment must be in compose.yaml's `x-config-env` (compose-init.test.sh checks).
+  Keycloak clients added after a realm's first import carry `matelot.createIfMissing: "true"` (realm-sync creates them).
 
 ## v1 focus (read first)
 

@@ -1,0 +1,30 @@
+# Tempo (single binary, local storage) of the Compose `observability` profile: traces from the collector, queried by
+# Grafana (datasource "Tempo", trace → logs in Loki by trace_id). 7 days of traces.
+stream_over_http_enabled: true
+server:
+  http_listen_port: 3200
+  grpc_listen_port: 9095
+  log_level: warn
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc: { endpoint: 0.0.0.0:4317 }
+        http: { endpoint: 0.0.0.0:4318 }
+ingester:
+  max_block_duration: 5m
+compactor:
+  compaction:
+    block_retention: 168h
+storage:
+  trace:
+    backend: local
+    wal: { path: /var/tempo/wal }
+    local: { path: /var/tempo/blocks }
+# single binary: nothing to gossip with — the ring stays on loopback (no memberlist port on the network, and no
+# dependence on finding a private address on the container's interfaces)
+memberlist:
+  bind_addr: ["127.0.0.1"]
+  advertise_addr: 127.0.0.1
+usage_report:
+  reporting_enabled: false

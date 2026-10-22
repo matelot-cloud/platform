@@ -84,6 +84,33 @@ spec:
             periodSeconds: 5
           resources:
             {{- toYaml .Values.postgres.resources | nindent 12 }}
+        {{- if and .Values.observability.metrics.enabled .Values.observability.metrics.exporters.enabled }}
+        # postgres_exporter (docs/observability.md): pg_* metrics on the pod network only (Service <release>-postgres-metrics)
+        - name: metrics
+          image: {{ .Values.observability.metrics.exporters.postgres.image | quote }}
+          args: [{{ printf "--web.listen-address=:%v" .Values.observability.metrics.exporters.postgres.port | quote }}]
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.observability.metrics.exporters.postgres.port }}
+          env:
+            - name: DATA_SOURCE_URI
+              value: {{ printf "localhost:5432/%s?sslmode=disable" .Values.postgres.database | quote }}
+            - name: DATA_SOURCE_USER
+              valueFrom: { secretKeyRef: { name: {{ .Release.Name }}-postgres, key: POSTGRES_USER } }
+            - name: DATA_SOURCE_PASS
+              valueFrom: { secretKeyRef: { name: {{ .Release.Name }}-postgres, key: POSTGRES_PASSWORD } }
+          readinessProbe:
+            httpGet: { path: /metrics, port: metrics }
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.observability.metrics.exporters.postgres.resources | nindent 12 }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+        {{- end }}
       volumes:
         - name: init
           configMap:

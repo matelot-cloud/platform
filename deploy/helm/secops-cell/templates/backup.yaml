@@ -16,6 +16,8 @@ metadata:
 data:
   backup.sh: |
 {{ .Files.Get "files/backup.sh" | indent 4 }}
+  backup-report.sh: |
+{{ .Files.Get "files/backup-report.sh" | indent 4 }}
 {{- if .Values.backup.pvc.enabled }}
 ---
 apiVersion: v1
@@ -86,6 +88,15 @@ spec:
                 {{- end }}
                 - name: OUT_DIR
                   value: /backups
+                # each run is reported to the api (matelot_backup_* metrics); with S3 the upload step reports the outcome
+                - name: REPORT_URL
+                  value: {{ printf "http://%s-api/api/v1/internal/backup-reports" .Release.Name | quote }}
+                - name: REPORT_TOKEN
+                  valueFrom: { secretKeyRef: { name: {{ .Release.Name }}-api-secrets, key: BACKUP_REPORT_TOKEN } }
+                - name: DESTINATION
+                  value: {{ ternary (printf "s3://%s/%s" .Values.backup.s3.bucket (.Values.backup.s3.prefix | default "")) "pvc" .Values.backup.s3.enabled | quote }}
+                - name: REPORT_SUCCESS
+                  value: {{ ternary "0" "1" .Values.backup.s3.enabled | quote }}
                 - name: SECRETS_DIR
                   value: /secrets
                 - name: RETENTION_DAYS
@@ -150,16 +161,28 @@ spec:
             - name: upload
               image: {{ .Values.backup.s3.image | quote }}
               command:
-                - sh
-                - -ec
+                - bash
+                - -c
                 - |
-                  f="$(readlink -f /backups/latest.tar.gz)"
-                  [ -f "$f" ] || { echo "no archive to upload"; exit 1; }
+                  set -eo pipefail
+                  . /scripts/backup-report.sh
                   dest="s3://{{ .Values.backup.s3.bucket }}/{{ with .Values.backup.s3.prefix }}{{ trimSuffix "/" . }}/{{ end }}"
-                  aws s3 cp "$f" "$dest$(basename "$f")"
-                  aws s3 cp "$f.sha256" "$dest$(basename "$f").sha256"
-                  echo "uploaded $(basename "$f") to $dest"
+                  f="$(readlink -f /backups/latest.tar.gz)"
+                  [ -f "$f" ] || { echo "no archive to upload"; report_backup failed upload "" "" "$dest" "no archive to upload"; exit 1; }
+                  # the run started at the archive's stamp (<cell>-YYYYmmddTHHMMSSZ.tar.gz): the duration gauge covers dump + upload
+                  st="${f##*-}"; st="${st%.tar.gz}"
+                  STARTED_AT="$(date -u -d "${st:0:4}-${st:4:2}-${st:6:2}T${st:9:2}:${st:11:2}:${st:13:2}Z" +%s 2>/dev/null || true)"; export STARTED_AT
+                  if aws s3 cp "$f" "$dest$(basename "$f")" && aws s3 cp "$f.sha256" "$dest$(basename "$f").sha256"; then
+                    echo "uploaded $(basename "$f") to $dest"
+                    report_backup succeeded upload "$(basename "$f")" "$(stat -c %s "$f")" "$dest"
+                  else
+                    report_backup failed upload "$(basename "$f")" "" "$dest" "aws s3 cp to $dest failed"; exit 1
+                  fi
               env:
+                - name: REPORT_URL
+                  value: {{ printf "http://%s-api/api/v1/internal/backup-reports" .Release.Name | quote }}
+                - name: REPORT_TOKEN
+                  valueFrom: { secretKeyRef: { name: {{ .Release.Name }}-api-secrets, key: BACKUP_REPORT_TOKEN } }
                 {{- with .Values.backup.s3.endpoint }}
                 - name: AWS_ENDPOINT_URL
                   value: {{ . | quote }}
@@ -176,6 +199,9 @@ spec:
               volumeMounts:
                 - name: backups
                   mountPath: /backups
+                  readOnly: true
+                - name: script
+                  mountPath: /scripts
                   readOnly: true
               resources:
                 {{- toYaml .Values.backup.resources | nindent 16 }}

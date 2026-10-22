@@ -199,71 +199,182 @@ Standard OTel variables first, ours only where OTel has none. Every variable exi
 
 ## Delivery
 
+Drop 1 gave every process its metrics port and its OTLP exporter; drop 2 delivers the signals to a stack — the
+customer's (Helm: kube-prometheus-stack, Tempo, Loki, or anything that speaks OTLP and scrapes Prometheus) or the one
+the Compose profile brings. Everything below is off by default: a cell installed with the chart's defaults renders
+no monitoring CRD and runs on a bare kind cluster.
+
 ### Helm
 
-New `observability` block in `values.yaml`; the chart stays deployable on kind with defaults and renders no
-monitoring CRDs unless asked. Drop 1 renders the parts that need no CRD: the metrics ports (api, worker, managed
-runners), `MATELOT_METRICS_*` / `DEPLOYMENT_ENVIRONMENT` in the api ConfigMap, the `OTEL_*` variables on every
-component once `otlp.endpoint` is set (headers in a Secret `<release>-otel`), and a NetworkPolicy admitting the
-metrics ports from `metrics.scrapeFromNamespaces` (default `monitoring`, `observability`). `make kind-jaeger
-TENANT=acme` puts a Jaeger all-in-one on the kind cluster and writes its endpoint into
-`deploy/cells/acme.values.yaml` (`scripts/lib/values-observability.py`), then applies the cell — the values file
-is the source of truth for `apply`, so the setting survives upgrades like every other cell setting; a cell deployed
-without a values file (`make deploy`) is upgraded in place with `--reuse-values` instead. The rest (ServiceMonitors,
-PrometheusRule, dashboards) is drop 2:
+```yaml
+observability:
+  environment: production         # deployment.environment on every signal
+  metrics:
+    enabled: true                 # /metrics on 9464 (api, worker, managed runners) + the scrape NetworkPolicy
+    port: 9464
+    scrapeFromNamespaces: [monitoring, observability]   # the only namespaces admitted to the metrics ports
+    serviceMonitor:
+      enabled: false              # one ServiceMonitor for every metrics Service below (needs the operator's CRDs)
+      labels: {}                  # e.g. release: kube-prometheus-stack — what the Prometheus's selector wants
+      interval: 30s
+      scrapeTimeout: 10s
+    exporters:
+      enabled: false              # postgres_exporter / redis_exporter sidecars, Keycloak metrics, registry debug port
+  otlp:
+    endpoint: ""                  # e.g. http://tempo.monitoring:4318 → OTEL_* on every component
+    protocol: http/protobuf       # or grpc
+    headersSecret: ""             # a Secret holding OTEL_EXPORTER_OTLP_HEADERS (Grafana Cloud's token) — never values
+    headersSecretKey: OTEL_EXPORTER_OTLP_HEADERS
+    tracesSampler: parentbased_always_on
+    tracesSamplerArg: ""
+    metrics: false                # also push metrics over OTLP (OTEL_METRICS_EXPORTER=prometheus,otlp)
+```
+
+What renders:
+
+* **Metrics Services.** One headless Service per target, `<release>-<name>-metrics`, port named `metrics`, labels
+  `matelot.cloud/metrics: "true"` and `matelot.cloud/job: matelot-<name>`: api, worker, runner (managed runners),
+  and with `exporters.enabled` postgres (9187) and redis (9121) when bundled, keycloak (9000, the management port)
+  when bundled, registry (5001) when the built-in registry is on. They exist with or without the operator — any
+  Prometheus can discover them by label.
+* **ServiceMonitor** `<release>` (`serviceMonitor.enabled`): selects exactly those Services in the release's
+  namespace, `jobLabel: matelot.cloud/job` (so the job is `matelot-api`, `matelot-postgres`, …), one endpoint on port
+  `metrics`, and a relabel adding `cell=<slug>`. Rendering it with `metrics.enabled=false` fails with a message.
+* **Exporters** (`exporters.enabled`): `postgres_exporter` v0.20.0 as a sidecar of the bundled Postgres
+  (`localhost:5432`, credentials from the `<release>-postgres` Secret), `redis_exporter` v1.94.0 as a sidecar of the
+  bundled Redis — neither with `bundled: false` (point your own exporter at the managed service); Keycloak gets
+  `KC_METRICS_ENABLED=true` (`/metrics` on the management port 9000, which never reaches the ingress); the registry
+  gets its `http.debug` listener on 5001 with Prometheus metrics. All of them run as non-root with a read-only root.
+* **NetworkPolicy** `<release>-allow-metrics-scrape`: ingress to 9464 (+ 9187, 9121, 9000, 5001 with the exporters)
+  only from `scrapeFromNamespaces`. No metrics Service is referenced by the ingress (`chart-test` asserts it).
+* **OTLP headers** come only from a Secret: `observability.otlp.headersSecret` names it, every component gets
+  `OTEL_EXPORTER_OTLP_HEADERS` through a `secretKeyRef`. The old `observability.otlp.headers` map is refused at
+  render time ("tokens do not belong in values").
+* **Backups** report themselves: the backup CronJob POSTs its outcome to the API (`/api/v1/internal/backup-reports`,
+  a generated bearer `BACKUP_REPORT_TOKEN` in `<release>-api-secrets`, also on S3 uploads), and the worker publishes
+  `matelot_backup_last_success_timestamp_seconds`, `matelot_backup_last_failure_timestamp_seconds` and
+  `matelot_backup_last_duration_seconds` — the same gauges on Compose, where no kube-state-metrics exists.
+
+`chart-test` renders defaults, OTLP on, metrics off, everything on and everything on with external Postgres / Redis,
+and asserts among others: no `monitoring.coreos.com` resource with defaults; every ServiceMonitor endpoint port
+exists on a Service whose selector matches a pod exposing that port; the job list per configuration; exporter args
+and env; the NetworkPolicy ports; the backup report env for PVC and S3. CI's kind step installs the
+prometheus-operator CRDs only (v0.94.1, the version kube-prometheus-stack 92.11.0 ships) and runs the server-side dry
+run of the everything-on render, fresh and over an existing release.
+
+### kube-prometheus-stack recipe
+
+The values the drop was validated with are in `deploy/observability/kind/` (published as `examples/observability/` in
+the helm-charts repository) — `make kind-observability TENANT=<slug>`
+installs them and switches the cell on (or `scripts/kind-observability.sh <slug> --print` for the bare commands):
+
+```sh
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo add grafana https://grafana.github.io/helm-charts
+helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack --version 92.11.0 \
+  -n monitoring --create-namespace -f deploy/observability/kind/kube-prometheus-stack.values.yaml --wait
+helm upgrade --install tempo grafana/tempo --version 1.24.4 -n monitoring -f deploy/observability/kind/tempo.values.yaml --wait
+helm upgrade --install loki  grafana/loki  --version 7.3.0  -n monitoring -f deploy/observability/kind/loki.values.yaml --wait
+helm upgrade --install alloy grafana/alloy --version 1.14.1 -n monitoring -f deploy/observability/kind/alloy.values.yaml --wait
+```
+
+and in the cell's values file (`deploy/cells/<slug>.values.yaml`, then `cell-provision.sh apply --slug <slug>`):
 
 ```yaml
 observability:
   metrics:
-    enabled: true                 # the /metrics listeners and the exporter sidecars (no CRDs)
     serviceMonitor:
-      enabled: false              # ServiceMonitor/PodMonitor for api, worker, runners, postgres, redis, registry, keycloak
-      labels: {}                  # e.g. release: kube-prometheus-stack (what the operator's selector wants)
-      interval: 30s
+      enabled: true
+      labels: { release: kube-prometheus-stack }   # = the kube-prometheus-stack release name
+    exporters:
+      enabled: true
   otlp:
-    endpoint: ""                  # e.g. http://otel-collector.monitoring:4317 → traces on, OTEL_* rendered for every component
-    protocol: grpc
-    headers: {}                   # rendered into a Secret (Grafana Cloud tokens live here)
-    tracesSampler: parentbased_always_on
-    tracesSamplerArg: ""
-  prometheusRules:
-    enabled: false                # PrometheusRule with the alerts below
-    labels: {}
-    runbookBaseUrl: https://matelot-cloud.github.io/website/docs/latest/observability.html#alerts
-  grafana:
-    dashboards:
-      enabled: false              # one ConfigMap per dashboard, label grafana_dashboard: "1" (the Grafana sidecar)
-      label: grafana_dashboard
-      folder: Matelot
-    url: ""                       # shown in Settings → Observability when set
+    endpoint: "http://tempo.monitoring:4318"
+    protocol: http/protobuf
 ```
 
-The NetworkPolicy allows ingress to 9464 (and the exporters' ports) from the namespaces matching
-`observability.metrics.serviceMonitor.namespaceSelector` (default: the `monitoring` namespace) only; the ingress never
-routes `/metrics`. `chart-test` renders `observability` fully on and fully off (and `serviceMonitor` without `otlp`,
-`otlp` without `serviceMonitor`) and asserts: no `monitoring.coreos.com` resource with defaults; every component's
-Deployment carries the `OTEL_*` env when `otlp.endpoint` is set and none when it is empty; dashboards ConfigMaps
-carry the label; the PrometheusRule parses (`promtool check rules` in CI). CI's kind step installs the
-kube-prometheus-stack **CRDs only** (the operator's CRD manifests, not the stack) before the server-side dry run of
-the fully-on render.
+What matters in the stack's values: `prometheus.prometheusSpec.enableFeatures: [exemplar-storage]` (the trace links
+on the histograms) and `serviceMonitorNamespaceSelector: {}` (cells live in `tenant-<slug>`); Grafana's
+`sidecar.datasources.exemplarTraceIdDestinations` (`trace_id` → Tempo) and the Tempo / Loki datasources with
+trace → logs by `trace_id`; Alloy turning our JSON log lines' `trace_id` / `span_id` into Loki structured metadata.
+On a **real cluster** keep all of that and change: Grafana's admin password from a Secret
+(`grafana.admin.existingSecret`), persistence and retention sized for the cluster (Prometheus
+`storageSpec`, Loki / Tempo on object storage — `loki.storage.type: s3`, `deploymentMode: SimpleScalable`, Tempo
+`storage.trace.backend: s3`), Alertmanager on, Alloy as a DaemonSet with `loki.source.file` over `/var/log/pods` if
+the API-based tailing is too much load, and Grafana's ingress behind your SSO.
 
 ### Docker Compose
 
-`docker compose --profile observability up` adds `otel-collector` (receivers otlp + prometheus scrape of the
-cell's containers; exporters to the three below), `prometheus`, `tempo`, `loki`, `grafana` (provisioned datasources
-+ our dashboards, admin password generated by `compose-init` like every other secret, reachable through Caddy at
-`$BASE/grafana/` behind Keycloak OIDC) and `alloy` for container logs. Off by default; `MATELOT_OBSERVABILITY=1` in
-`.env` is what `--profile observability` reads. `smoke.sh` runs once more with the profile and asserts: every
-Prometheus target `up`, `matelot_build_info` from api / worker / runner, a trace of the demo pipeline in Tempo (by
-`matelot.pipeline.id`), the same pipeline's log lines in Loki by `trace_id`.
+`COMPOSE_PROFILES=observability` in `.env` (or `docker compose --profile observability up -d`) adds:
+
+| Service | Image | Role |
+|---|---|---|
+| `otel-collector` | otel/opentelemetry-collector-contrib 0.163.1 | OTLP in (the cell's `MATELOT_OTLP_ENDPOINT` defaults to `http://otel-collector:4318` with the profile), `matelot.cell` resource attribute, traces → Tempo |
+| `prometheus` | prom/prometheus v3.15.0 | scrapes api, worker, runner (9464), the exporters, Keycloak (9000), the registry (5001) and the stack itself; exemplar storage on; 7 days |
+| `tempo` | grafana/tempo 2.9.0 | single binary, local storage, 7 days |
+| `loki` | grafana/loki 3.6.12 | single binary, TSDB v13 on the filesystem, structured metadata, 7 days |
+| `alloy` | grafana/alloy v1.21.0 | the logs of this compose project's containers (Docker socket, read-only) → Loki; `trace_id` / `span_id` as structured metadata, `level` / `component` / `cell` / `compose_service` labels |
+| `grafana` | grafana/grafana 12.4.12 | at `<domain>/grafana/` through Caddy; datasources provisioned (Prometheus exemplars → Tempo, Tempo → Loki by `trace_id`, Loki `trace_id` → Tempo) |
+| `postgres-exporter`, `redis-exporter` | as on Helm | the bundled database and cache |
+
+`init` renders their configuration into the config volume (the cell's slug substituted), turns on Keycloak's metrics
+and the registry's debug listener, and generates Grafana's secrets like every other one. Grafana signs users in with
+the cell's Keycloak (client `grafana`, confidential; `realm-sync` creates it in a realm that predates the profile);
+they arrive as Viewers. The local `admin` account is for the operator: `docker compose run --rm init show` prints its
+password. No service of the profile publishes a port — Prometheus, Tempo and Loki are reachable only on the compose
+network and through Grafana. Alloy needs `/var/run/docker.sock` (read-only); that is a privileged handle on the host,
+which is what container log collection costs — leave the profile off where that is not acceptable and send OTLP to
+your own collector instead.
+
+`smoke.sh --observability` (a second CI pass) brings the cell up with the profile and, through Caddy and Grafana's
+datasource proxy only: the datasources and the Keycloak sign-in redirect; every Prometheus target `up`;
+`matelot_build_info` from api / worker / runner; one series from each exporter; a `checkout` pipeline on a public
+repository whose trace is in Tempo with `matelot-pipeline` and `matelot-runner` spans and whose log lines are in Loki
+by `trace_id`; a backup run producing `matelot_backup_last_success_timestamp_seconds`.
 
 ### For customers who run their own collector
 
-`docs/observability.md` ships the collector configuration we recommend — receivers `otlp` + `prometheus`
-(scrape config for the cell's pods), processors `k8sattributes`, `resource`, `batch`, exporters
-`prometheusremotewrite` / `otlp` (Tempo) / `loki` — plus the Grafana Cloud recipe (one OTLP endpoint with basic
-auth) and the kube-prometheus-stack recipe (`serviceMonitor.labels.release`, `prometheusRules.labels`, the
-dashboards sidecar).
+Point the cell at the collector (`observability.otlp.endpoint`, or `MATELOT_OTLP_ENDPOINT` on Compose) and let the
+collector scrape the metrics Services. The configuration we recommend:
+
+```yaml
+receivers:
+  otlp:
+    protocols:
+      grpc: { endpoint: 0.0.0.0:4317 }
+      http: { endpoint: 0.0.0.0:4318 }
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: matelot
+          scrape_interval: 30s
+          kubernetes_sd_configs: [{ role: endpoints }]
+          relabel_configs:   # the cell's metrics Services only, job = matelot-<name>, cell = the namespace's slug
+            - { source_labels: [__meta_kubernetes_service_label_matelot_cloud_metrics], regex: "true", action: keep }
+            - { source_labels: [__meta_kubernetes_endpoint_port_name], regex: metrics, action: keep }
+            - { source_labels: [__meta_kubernetes_service_label_matelot_cloud_job], target_label: job }
+            - { source_labels: [__meta_kubernetes_namespace], regex: "tenant-(.+)", target_label: cell }
+processors:
+  memory_limiter: { check_interval: 1s, limit_percentage: 80, spike_limit_percentage: 20 }
+  k8sattributes:
+    extract: { metadata: [k8s.namespace.name, k8s.pod.name, k8s.deployment.name, k8s.statefulset.name] }
+  batch: {}
+exporters:
+  prometheusremotewrite: { endpoint: https://prometheus.example.com/api/v1/write }
+  otlp/tempo: { endpoint: tempo.monitoring:4317, tls: { insecure: true } }
+  otlphttp/loki: { endpoint: http://loki.monitoring:3100/otlp }
+service:
+  pipelines:
+    traces:  { receivers: [otlp], processors: [memory_limiter, k8sattributes, batch], exporters: [otlp/tempo] }
+    metrics: { receivers: [prometheus, otlp], processors: [memory_limiter, k8sattributes, batch], exporters: [prometheusremotewrite] }
+```
+
+The collector's namespace must be in `observability.metrics.scrapeFromNamespaces`. Keep exemplars: the
+`prometheusremotewrite` exporter forwards them when the receiving Prometheus has `exemplar-storage` on. Logs stay on
+stdout as JSON (one schema, `trace_id` / `span_id` included) for whatever ships pod logs — Alloy, Fluent Bit, the
+collector's `filelog` receiver; promote `trace_id` to structured metadata (Loki) or a field (Elastic), never to an
+index label. Grafana Cloud: one OTLP endpoint with basic auth — put `Authorization=Basic <base64 instance:token>` in a
+Secret under the key `OTEL_EXPORTER_OTLP_HEADERS` and name it in `observability.otlp.headersSecret`.
 
 ## Dashboards and alerts
 
@@ -323,7 +434,10 @@ of the four dashboards from the kind acceptance run.
 * No label or span attribute carries a secret, a token, a repository URL with credentials, or user input; route
   templates, not paths; the redaction list applies to logs *and* to span attributes (`http.url` is recorded without
   query string).
-* OTLP headers (Grafana Cloud tokens) live in a Secret, rendered into `OTEL_EXPORTER_OTLP_HEADERS` of each pod.
+* OTLP headers (Grafana Cloud tokens) live in a Secret the operator creates (`observability.otlp.headersSecret`),
+  referenced by every pod through a `secretKeyRef`; the chart refuses headers in values.
+* The backup report endpoint is unauthenticated for users and accepts only the generated `BACKUP_REPORT_TOKEN`
+  (compared in constant time); it is not in the OpenAPI document.
 * Business gauges are per cell (the customer's own cell): no cross-tenant data exists in a cell.
 
 ## Plan — four drops
@@ -331,7 +445,7 @@ of the four dashboards from the kind acceptance run.
 | Drop | Content | Acceptance |
 |---|---|---|
 | 1 — instrumentation ✅ | `tracing.ts` preload + SDK in api / worker; runner spans and `traceParent` in the claim protocol (`pipelines.trace_parent`, `jobs.trace_parent`, migration 0049); meter with Views + our exposition on 9464 (exemplars); log schema, per-module levels, redaction list + test; env in `env.ts`, `api-configmap.yaml`, `compose-init`; `/version` with commit; `make kind-jaeger` | `exposition.spec.ts` (format, buckets, exemplars, labels), `log-schema.spec.ts` (redaction, levels, trace ids), `tracing.spec.ts` (no-op when off, provider when on), `pipeline-trace.spec.ts` (create → claim → complete: one trace, pinned ids, parents, exemplars, BullMQ propagation), runner `telemetry.test.ts`; verified against a real Jaeger 2.22: a security pipeline (checkout, syft, trivy, semgrep, gate) is one trace across api, runner and worker |
-| 2 — delivery | `observability.*` values, ServiceMonitors / PodMonitors, NetworkPolicy, exporters, Keycloak metrics, registry debug port; chart-test on / off; CI kind with the CRDs; Compose profile with collector, Prometheus, Tempo, Loki, Grafana, Alloy; `smoke.sh` with the profile; the recommended collector config in the docs | chart-test and CI green; Compose smoke with the profile green (targets up, trace in Tempo, logs in Loki) |
+| 2 — delivery | `observability.*` values, metrics Services + one ServiceMonitor, NetworkPolicy, exporter sidecars, Keycloak metrics, registry debug port, OTLP headers from a Secret only, backup reports → backup gauges; chart-test on / off; CI kind with the operator CRDs; Compose profile with collector, Prometheus, Tempo, Loki, Grafana (Keycloak sign-in), Alloy; `smoke.sh --observability`; the collector config and the kube-prometheus-stack recipe above; `make kind-observability` | chart-test and CI green; Compose smoke with the profile green (targets up, trace in Tempo, logs in Loki); on kind with the recipe: `apply` passes, every matelot target UP, `matelot_build_info` for api / worker / runner, the exporters' series, a demo-app pipeline trace in Tempo with its logs in Loki |
 | 3 — dashboards and alerts | the four dashboards, the rules file, `promtool` / linter in CI, PrometheusRule and dashboards ConfigMaps, Grafana provisioning in Compose, screenshots | kind with kube-prometheus-stack + Tempo + Loki: dashboards show the demo pipeline; `NoRunnerOnline` fires with runners scaled to 0; `BackupFailed` fires when the CronJob is made to fail |
 | 4 — product | Settings → Observability, doctor section, audit / security events as OTel logs, customer docs | render tests for the page; doctor test; the SIEM schema documented and covered by a test that pins the field names |
 

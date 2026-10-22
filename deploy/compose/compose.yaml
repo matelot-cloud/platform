@@ -25,11 +25,23 @@ x-config-env: &config-env
   MATELOT_DOCS_URL: ${MATELOT_DOCS_URL:-https://matelot.cloud/docs/latest/}
   MATELOT_LOG_LEVEL: ${MATELOT_LOG_LEVEL:-info}
   MATELOT_LICENSE: ${MATELOT_LICENSE:-}   # M13: licence key (Free tier when empty); also Settings → License in the app
+  MATELOT_THEME_LOGO: ${MATELOT_THEME_LOGO:-}
+  MATELOT_THEME_PRIMARY_COLOR: ${MATELOT_THEME_PRIMARY_COLOR:-}
+  MATELOT_THEME_PRIMARY_COLOR_HOVER: ${MATELOT_THEME_PRIMARY_COLOR_HOVER:-}
+  MATELOT_ENVIRONMENT: ${MATELOT_ENVIRONMENT:-production}
+  MATELOT_OTLP_ENDPOINT: ${MATELOT_OTLP_ENDPOINT:-}
+  MATELOT_OTLP_PROTOCOL: ${MATELOT_OTLP_PROTOCOL:-http/protobuf}
+  MATELOT_OTLP_HEADERS: ${MATELOT_OTLP_HEADERS:-}
+  MATELOT_OTLP_METRICS: ${MATELOT_OTLP_METRICS:-0}
+  MATELOT_TRACES_SAMPLER: ${MATELOT_TRACES_SAMPLER:-parentbased_always_on}
+  # the profiles of this stack: with `observability` in COMPOSE_PROFILES (.env) init wires the cell to the bundled
+  # collector, Prometheus, Grafana (docs/observability.md)
+  MATELOT_PROFILES: ${COMPOSE_PROFILES:-}
 # api / worker entrypoint: load the generated secrets and config from the volume (eval'd by `sh -c`), then start
 x-load-env: &load-env |
   set -e
   set -a; . /matelot/env/api.env; set +a
-  for f in /matelot/secrets/*/*; do k="$$(basename "$$f")"; case "$$k" in *.*) continue;; esac; export "$$k=$$(cat "$$f")"; done
+  for f in /matelot/secrets/*/*; do case "$$f" in */grafana/*) continue;; esac; k="$$(basename "$$f")"; case "$$k" in *.*) continue;; esac; export "$$k=$$(cat "$$f")"; done
 
 services:
   init:
@@ -48,6 +60,10 @@ services:
       - caddy-config:/volumes/caddy-config
       - runner-data:/volumes/runner-data
       - runner-work:/volumes/runner-work
+      - prometheus-data:/volumes/prometheus-data
+      - tempo-data:/volumes/tempo-data
+      - loki-data:/volumes/loki-data
+      - grafana-data:/volumes/grafana-data
     restart: "no"
 
   postgres:
@@ -158,7 +174,9 @@ services:
   runner:
     image: ${MATELOT_REGISTRY_PREFIX:-ghcr.io/matelot-cloud}/runner:${MATELOT_VERSION:-latest}
     <<: [*app-image, *restart, *logging]
-    command: ["sh", "-c", "export RUNNER_MANAGED_SECRET=$$(cat /matelot/secrets/managed-runner/MANAGED_RUNNER_SECRET) && exec node dist/index.js"]
+    # observability (docs/observability.md): /metrics on :9464 (compose network only) and the OTLP settings come from
+    # env/runner.env, written by init like the api's (the bundled collector with the observability profile)
+    command: ["sh", "-c", "set -a && . /matelot/env/runner.env && set +a && export RUNNER_MANAGED_SECRET=$$(cat /matelot/secrets/managed-runner/MANAGED_RUNNER_SECRET) && exec node dist/index.js"]
     environment:
       RUNNER_URL: http://api:3000/api/v1
       RUNNER_NAME: compose-runner-1
@@ -166,13 +184,6 @@ services:
       RUNNER_DATA_DIR: /data
       RUNNER_WORKDIR: /work
       HOME: /work
-      # observability (docs/observability.md): /metrics on the compose network only; traces when an endpoint is set
-      RUNNER_METRICS_PORT: "9464"
-      APP_VERSION: ${MATELOT_VERSION:-latest}
-      MATELOT_CELL: ${MATELOT_ORG_SLUG:-matelot}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${MATELOT_OTLP_ENDPOINT:-}
-      OTEL_EXPORTER_OTLP_PROTOCOL: ${MATELOT_OTLP_PROTOCOL:-http/protobuf}
-      OTEL_EXPORTER_OTLP_HEADERS: ${MATELOT_OTLP_HEADERS:-}
     volumes:
       - config:/matelot:ro
       - runner-data:/data
@@ -272,8 +283,11 @@ services:
     image: postgres:16
     profiles: [backup]
     user: "10001:10001"
-    entrypoint: ["bash", "-c", "export PGUSER=$$(cat /matelot/secrets/postgres/POSTGRES_USER) PGPASSWORD=$$(cat /matelot/secrets/postgres/POSTGRES_PASSWORD) && exec bash /backup/backup.sh"]
+    entrypoint: ["bash", "-c", "export PGUSER=$$(cat /matelot/secrets/postgres/POSTGRES_USER) PGPASSWORD=$$(cat /matelot/secrets/postgres/POSTGRES_PASSWORD) REPORT_TOKEN=$$(cat /matelot/secrets/api-secrets/BACKUP_REPORT_TOKEN 2> /dev/null) && exec bash /backup/backup.sh"]
     environment:
+      # each run is reported to the api (matelot_backup_last_success_timestamp_seconds & co., as on Helm)
+      REPORT_URL: http://api:3000/api/v1/internal/backup-reports
+      DESTINATION: compose
       PGHOST: postgres
       DATABASES: platform keycloak
       SECRETS_DIR: /matelot/secrets
@@ -289,6 +303,116 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
 
+  # ---- observability profile (docs/observability.md): COMPOSE_PROFILES=observability in .env, then `docker compose up -d`.
+  # Collector → Tempo for traces, Prometheus for metrics (exemplars on), Loki + Alloy for the containers' logs, Grafana
+  # behind Caddy at /grafana/ (Keycloak sign-in; admin password generated in secrets/grafana). No port is published:
+  # everything talks on the compose network, Grafana is reached through Caddy only.
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.163.1
+    profiles: [observability]
+    <<: [*restart, *logging]
+    command: ["--config=/matelot/observability/otel-collector.yaml"]
+    volumes:
+      - config:/matelot:ro
+    deploy: { resources: { limits: { memory: 256M } } }
+    depends_on:
+      init: { condition: service_completed_successfully }
+      tempo: { condition: service_started }
+
+  tempo:
+    image: grafana/tempo:2.9.0
+    profiles: [observability]
+    <<: [*restart, *logging]
+    user: "10001:10001"
+    command: ["-config.file=/matelot/observability/tempo.yaml"]
+    volumes:
+      - config:/matelot:ro
+      - tempo-data:/var/tempo
+    deploy: { resources: { limits: { memory: 512M } } }
+    depends_on:
+      init: { condition: service_completed_successfully }
+
+  prometheus:
+    image: prom/prometheus:v3.15.0
+    profiles: [observability]
+    <<: [*restart, *logging]
+    user: "65534:65534"
+    command: ["--config.file=/matelot/observability/prometheus.yml", "--storage.tsdb.path=/prometheus", "--storage.tsdb.retention.time=7d", "--enable-feature=exemplar-storage", "--web.enable-lifecycle"]
+    volumes:
+      - config:/matelot:ro
+      - prometheus-data:/prometheus
+    deploy: { resources: { limits: { memory: 512M } } }
+    depends_on:
+      init: { condition: service_completed_successfully }
+
+  loki:
+    image: grafana/loki:3.6.12
+    profiles: [observability]
+    <<: [*restart, *logging]
+    user: "10001:10001"
+    command: ["-config.file=/matelot/observability/loki.yaml"]
+    volumes:
+      - config:/matelot:ro
+      - loki-data:/loki
+    deploy: { resources: { limits: { memory: 512M } } }
+    depends_on:
+      init: { condition: service_completed_successfully }
+
+  alloy:
+    image: grafana/alloy:v1.21.0
+    profiles: [observability]
+    <<: [*restart, *logging]
+    user: "0:0"                   # reads the Docker socket (container logs); the socket is a privileged handle on the host
+    command: ["run", "--server.http.listen-addr=0.0.0.0:12345", "--storage.path=/var/lib/alloy", "/matelot/observability/alloy.alloy"]
+    environment:
+      MATELOT_COMPOSE_PROJECT: ${COMPOSE_PROJECT_NAME:-matelot}
+    volumes:
+      - config:/matelot:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    deploy: { resources: { limits: { memory: 256M } } }
+    depends_on:
+      loki: { condition: service_started }
+
+  grafana:
+    image: grafana/grafana:12.4.12
+    profiles: [observability]
+    <<: [*restart, *logging]
+    user: "472:0"
+    # settings from env/grafana.env (root URL /grafana/, Keycloak sign-in) and the provisioned datasources, rendered by init
+    entrypoint: ["sh", "-c", "set -a && . /matelot/env/grafana.env && set +a && exec /run.sh"]
+    environment:
+      GF_PATHS_PROVISIONING: /matelot/observability/grafana
+    volumes:
+      - config:/matelot:ro
+      - grafana-data:/var/lib/grafana
+    deploy: { resources: { limits: { memory: 256M } } }
+    depends_on:
+      init: { condition: service_completed_successfully }
+      prometheus: { condition: service_started }
+
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.20.0
+    profiles: [observability]
+    <<: [*restart, *logging]
+    environment:
+      DATA_SOURCE_URI: postgres:5432/platform?sslmode=disable
+      DATA_SOURCE_USER_FILE: /matelot/secrets/postgres/POSTGRES_USER
+      DATA_SOURCE_PASS_FILE: /matelot/secrets/postgres/POSTGRES_PASSWORD
+    volumes:
+      - config:/matelot:ro
+    deploy: { resources: { limits: { memory: 128M } } }
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.94.0
+    profiles: [observability]
+    <<: [*restart, *logging]
+    command: ["-redis.addr=redis://redis:6379"]
+    deploy: { resources: { limits: { memory: 64M } } }
+    depends_on:
+      redis: { condition: service_healthy }
+
 volumes:
   config:        # generated secrets and configuration — part of every backup
   postgres:      # both databases
@@ -296,5 +420,9 @@ volumes:
   backups:       # archives written by the backup profile
   caddy-data:    # Let's Encrypt certificates
   caddy-config:
+  prometheus-data:   # the observability profile's stores (metrics, traces, logs: 7 days; Grafana's own database)
+  tempo-data:
+  loki-data:
+  grafana-data:
   runner-data:
   runner-work:

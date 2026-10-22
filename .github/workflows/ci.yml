@@ -113,6 +113,10 @@ jobs:
         # upgrade failed. So: dry-run each configuration on the empty namespace, create the default render for real,
         # dry-run every configuration again.
         run: |
+          # the prometheus-operator CRDs only (the version kube-prometheus-stack 92.11.0 ships; no operator, nothing
+          # runs): what the ServiceMonitor is validated against
+          kubectl apply --server-side -f https://github.com/prometheus-operator/prometheus-operator/releases/download/v0.94.1/stripped-down-crds.yaml > /dev/null
+          kubectl wait --for condition=Established --timeout 60s crd/servicemonitors.monitoring.coreos.com
           kubectl create namespace tenant-acme
           dry_run() { # <label> <helm --set args…>
             local label="$1"; shift
@@ -122,7 +126,7 @@ jobs:
             kubectl create --dry-run=server --namespace tenant-acme -f /tmp/hooks.yaml > /dev/null || { echo "hook validation failed for: $label" >&2; exit 1; }
             echo "server dry-run ok: $label"
           }
-          configs=("defaults" "tls --set ingress.tls=true" "branded --set tenant.name=Globex --set keycloak.theme.logo=https://cdn.example.com/logo.png --set keycloak.theme.primaryColor=#0f766e" "backup --set backup.enabled=true")
+          configs=("defaults" "tls --set ingress.tls=true" "branded --set tenant.name=Globex --set keycloak.theme.logo=https://cdn.example.com/logo.png --set keycloak.theme.primaryColor=#0f766e" "backup --set backup.enabled=true" "observability-all --set observability.metrics.serviceMonitor.enabled=true --set observability.metrics.serviceMonitor.labels.release=kube-prometheus-stack --set observability.metrics.exporters.enabled=true --set observability.otlp.endpoint=http://tempo.monitoring:4318 --set observability.otlp.headersSecret=otlp-headers --set backup.enabled=true" "metrics-off --set observability.metrics.enabled=false")
           for cfg in "${configs[@]}"; do dry_run $cfg; done
           echo "--- the release exists (hook Job included): the upgrade case"
           helm template acme deploy/helm/secops-cell --namespace tenant-acme | kubectl create --namespace tenant-acme -f - > /dev/null
@@ -152,7 +156,7 @@ jobs:
   compose:
     # the Docker Compose quick start, end to end, with the images built from this commit (deploy/compose/smoke.sh)
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4
@@ -179,6 +183,13 @@ jobs:
           MATELOT_VERSION: ci            # smoke.sh writes these into its own .env.smoke (the user's .env is never used)
           MATELOT_REGISTRY_PREFIX: secops
         run: bash smoke.sh
+      - name: "Smoke test, observability profile (all Prometheus targets up, a pipeline's trace in Tempo, its logs in Loki by trace_id, the backup gauge)"
+        working-directory: deploy/compose
+        env:
+          MATELOT_CLI: node ../../apps/cli/dist/index.js
+          MATELOT_VERSION: ci
+          MATELOT_REGISTRY_PREFIX: secops
+        run: bash smoke.sh --observability
       - name: Logs on failure
         if: failure()
         working-directory: deploy/compose

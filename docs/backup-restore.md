@@ -77,6 +77,11 @@ backup:
     endpoint: ""              # S3-compatible endpoint for MinIO / Ceph
 ```
 
+Every run reports its outcome to the cell's API (a generated `BACKUP_REPORT_TOKEN`; the S3 upload reports too), so
+`matelot_backup_last_success_timestamp_seconds`, `matelot_backup_last_failure_timestamp_seconds` and
+`matelot_backup_last_duration_seconds` are on the worker's `/metrics` — alert on the first growing older than a day
+(docs/observability.md). A report that cannot be delivered never fails the backup. Docker Compose reports the same way.
+
 `make deploy` (or `helm upgrade`) creates the CronJob `<release>-backup`, the PVC `<release>-backups` (kept on
 uninstall) and the script ConfigMap. On a StorageClass with `volumeBindingMode: WaitForFirstConsumer` (kind, EKS gp3,
 GKE, AKS defaults) that PVC stays **Pending until the first backup runs** — normal, but it means `helm … --wait` on

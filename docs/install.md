@@ -81,6 +81,8 @@ docker push "$(matelot registry path --service <serviceId>)":1   # prints host +
 | `MATELOT_LICENSE` | empty | licence key (Free tier when empty; entitlements arrive with the commercial release) |
 | `MATELOT_BACKUP_RETENTION_DAYS` | 14 | archives kept on the backups volume |
 | `MATELOT_THEME_LOGO` / `MATELOT_THEME_PRIMARY_COLOR` | empty | the sign-in page's logo (URL or data: URI) and button / link colour (see *Branding the sign-in page* below) |
+| `COMPOSE_PROFILES` | empty | `observability` adds Prometheus, Tempo, Loki, Grafana (at `<domain>/grafana/`, Keycloak sign-in; local admin password in `docker compose run --rm init show`), Alloy and the exporters — nothing published on the host (docs/observability.md) |
+| `MATELOT_OTLP_ENDPOINT` / `_PROTOCOL` / `_HEADERS` / `MATELOT_TRACES_SAMPLER` | empty | traces to your own collector instead (docs/observability.md) |
 
 Changing `MATELOT_DOMAIN` (or the scheme) after the first start is just `docker compose up -d`: Keycloak imported the
 realm once, so the one-shot `realm-sync` service updates the realm's redirect URIs and `sslRequired` through the admin

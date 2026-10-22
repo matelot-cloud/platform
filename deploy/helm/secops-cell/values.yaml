@@ -190,16 +190,38 @@ networkPolicy:
 observability:
   # docs/observability.md — standard signals for the customer's own stack. Metrics: every api / worker / runner pod
   # serves Prometheus / OpenMetrics (with trace exemplars) on its own port, never on the ingress; the NetworkPolicy
-  # admits scrapers from the namespaces below. Traces: OTLP to the endpoint below (off while it is empty).
-  # ServiceMonitors, PrometheusRule and dashboards come with the next drop.
+  # admits scrapers from the namespaces below only. Traces: OTLP to the endpoint below (off while it is empty).
   metrics:
     enabled: true
     port: 9464
     scrapeFromNamespaces: [monitoring, observability]   # namespaces whose pods may reach the metrics ports
+    serviceMonitor:
+      enabled: false               # one ServiceMonitor (prometheus-operator CRD) for every metrics Service of the cell
+      labels: {}                   # what the operator selects on — kube-prometheus-stack: { release: kube-prometheus-stack }
+      interval: 30s
+      scrapeTimeout: 10s
+    exporters:
+      enabled: false               # postgres_exporter / redis_exporter sidecars (bundled Postgres / Redis only), Keycloak
+                                   # metrics (KC_METRICS_ENABLED, management port), the registry's debug port — all on the
+                                   # pod network only. Turning it on restarts Postgres, Redis, Keycloak and the registry once.
+      postgres:
+        image: quay.io/prometheuscommunity/postgres-exporter:v0.20.0
+        port: 9187
+        resources:
+          requests: { cpu: 10m, memory: 32Mi }
+          limits: { memory: 128Mi }
+      redis:
+        image: oliver006/redis_exporter:v1.94.0
+        port: 9121
+        resources:
+          requests: { cpu: 10m, memory: 16Mi }
+          limits: { memory: 64Mi }
+      registryPort: 5001           # the registry's debug listener (/metrics)
   otlp:
     endpoint: ""                     # e.g. http://otel-collector.monitoring:4318 (http/protobuf) — sets OTEL_EXPORTER_OTLP_ENDPOINT on every component
     protocol: http/protobuf          # grpc | http/protobuf | http/json
-    headers: {}                      # e.g. { Authorization: "Basic …" } for Grafana Cloud — stored in a Secret
+    headersSecret: ""                # name of a Secret in the namespace holding the OTLP headers (Grafana Cloud: Authorization=Basic …) —
+    headersSecretKey: OTEL_EXPORTER_OTLP_HEADERS   # the key in it; never put tokens in values (`headers` was removed)
     tracesSampler: parentbased_always_on
     tracesSamplerArg: ""
     metrics: false                   # also push the metrics over OTLP (OTEL_METRICS_EXPORTER=prometheus,otlp)

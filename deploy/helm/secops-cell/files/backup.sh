@@ -4,6 +4,18 @@
 # .sha256 next to it and a "latest.tar.gz" symlink; archives older than $RETENTION_DAYS days are pruned.
 # Restore with scripts/cell-restore.sh from https://github.com/matelot-cloud/helm-charts (docs: backup-restore).
 set -euo pipefail
+# Each run is reported to the cell's API (backup-report.sh; REPORT_URL / REPORT_TOKEN, optional): a failure from the
+# trap below, a success at the end — unless REPORT_SUCCESS=0 (with S3 the upload step reports the outcome).
+export STARTED_AT="${STARTED_AT:-$(date +%s)}"
+# shellcheck source=backup-report.sh
+. "$(dirname "$0")/backup-report.sh"
+LAST_STEP="starting"
+on_exit() {
+  local rc=$?
+  rm -rf "${WORK:-/nonexistent}"
+  [ "$rc" = 0 ] || report_backup failed dump "" "" "${DESTINATION:-}" "backup.sh exited with $rc while $LAST_STEP"
+}
+trap on_exit EXIT
 # Connection: PGHOST/PGUSER/PGPASSWORD (bundled Postgres), or DATABASE_URL (external): postgresql://user:pass@host[:port]/db[?…]
 if [ -z "${PGHOST:-}" ] && [ -n "${DATABASE_URL:-}" ]; then
   rest="${DATABASE_URL#*://}"; rest="${rest%%\?*}"
@@ -22,10 +34,10 @@ CELL="${CELL:-cell}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 NAME="$CELL-$STAMP"
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/$NAME/db" "$WORK/$NAME/secrets" "$OUT_DIR"
 
 for db in $DATABASES; do
+  LAST_STEP="dumping database $db"
   echo "dumping database $db"
   pg_dump --format=custom --no-owner --no-privileges --file "$WORK/$NAME/db/$db.dump" "$db"
 done
@@ -60,6 +72,7 @@ fi
   echo "server=$(psql -d postgres -Atc 'select version()')"
 } > "$WORK/$NAME/manifest.txt"
 
+LAST_STEP="writing the archive"
 tar -C "$WORK" -czf "$OUT_DIR/$NAME.tar.gz.part" "$NAME"
 mv "$OUT_DIR/$NAME.tar.gz.part" "$OUT_DIR/$NAME.tar.gz"
 ( cd "$OUT_DIR" && sha256sum "$NAME.tar.gz" > "$NAME.tar.gz.sha256" )
@@ -70,3 +83,4 @@ if [ "$RETENTION_DAYS" -gt 0 ]; then
   find "$OUT_DIR" -maxdepth 1 -type f -name "$CELL-*.tar.gz*" -mtime +"$RETENTION_DAYS" -print -delete | sed 's/^/pruned /'
 fi
 echo "backup done: $NAME"
+[ "${REPORT_SUCCESS:-1}" = 0 ] || report_backup succeeded dump "$NAME.tar.gz" "$(stat -c %s "$OUT_DIR/$NAME.tar.gz")" "${DESTINATION:-}"

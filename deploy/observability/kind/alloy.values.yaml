@@ -1,0 +1,60 @@
+# grafana/alloy 1.14.1 for Matelot on kind: the pod logs of every cell namespace (tenant-<slug>) into Loki, through
+# the Kubernetes API (one replica; no host mounts). Our processes log one JSON schema (docs/observability.md,
+# "Logs"): trace_id / span_id become structured metadata, level / component labels, the namespace gives `cell`.
+#   helm upgrade --install alloy grafana/alloy --version 1.14.1 -n monitoring -f deploy/observability/kind/alloy.values.yaml
+controller:
+  type: deployment
+  replicas: 1
+alloy:
+  resources: { requests: { cpu: 50m, memory: 128Mi }, limits: { memory: 512Mi } }
+  configMap:
+    content: |
+      discovery.kubernetes "pods" {
+        role = "pod"
+      }
+
+      discovery.relabel "cells" {
+        targets = discovery.kubernetes.pods.targets
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          regex         = "tenant-.+"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          regex         = "tenant-(.+)"
+          target_label  = "cell"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_name"]
+          target_label  = "container"
+        }
+      }
+
+      loki.source.kubernetes "cells" {
+        targets    = discovery.relabel.cells.output
+        forward_to = [loki.process.matelot.receiver]
+      }
+
+      loki.process "matelot" {
+        stage.json {
+          expressions = { trace_id = "", span_id = "", level = "", component = "" }
+        }
+        stage.structured_metadata {
+          values = { trace_id = "", span_id = "" }
+        }
+        stage.labels {
+          values = { level = "", component = "" }
+        }
+        forward_to = [loki.write.default.receiver]
+      }
+
+      loki.write "default" {
+        endpoint {
+          url = "http://loki.monitoring:3100/loki/api/v1/push"
+        }
+      }

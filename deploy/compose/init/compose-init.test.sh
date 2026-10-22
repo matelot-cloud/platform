@@ -88,4 +88,58 @@ bash compose-init.sh restore-secrets "$T/restore" > /dev/null
 # must give up with a clear message after REALM_SYNC_TIMEOUT (the script itself is tested by realm-sync.test.js)
 out="$(KEYCLOAK_URL=http://127.0.0.1:1/auth REALM_SYNC_TIMEOUT=1 bash compose-init.sh realm-update 2>&1)" && { echo "FAIL: realm-update should fail against a closed port" >&2; exit 1; }
 printf '%s' "$out" | grep -q "keycloak at http://127.0.0.1:1/auth not ready after 1s" || { echo "FAIL: realm-update message: $out" >&2; exit 1; }
-echo "compose-init ok"
+# the observability profile (COMPOSE_PROFILES=observability → MATELOT_PROFILES): Grafana's secrets, its route, its
+# Keycloak client, the exporters' switches, the runner's OTLP default and the stack's configs rendered for the cell
+MATELOT_PROFILES=observability MATELOT_ORG_SLUG=acme MATELOT_ORG_NAME="$NAME" MATELOT_DOMAIN=matelot.example.com MATELOT_ACME_EMAIL="$EMAIL" bash compose-init.sh > "$T/out3" 2>&1 || { cat "$T/out3"; exit 1; }
+for f in grafana/GF_SECURITY_ADMIN_PASSWORD grafana/GRAFANA_OIDC_CLIENT_SECRET api-secrets/BACKUP_REPORT_TOKEN; do [ -s "$M/secrets/$f" ] || { echo "FAIL: secret $f" >&2; exit 1; }; done
+grep -q "handle /grafana\* {" "$M/caddy/Caddyfile" && grep -q "reverse_proxy grafana:3000" "$M/caddy/Caddyfile" || { echo "FAIL: Grafana route" >&2; exit 1; }
+check_env "$M/keycloak/keycloak.env" KC_METRICS_ENABLED true
+check_env "$M/env/api.env" OTEL_EXPORTER_OTLP_ENDPOINT "http://otel-collector:4318"
+check_env "$M/env/runner.env" OTEL_EXPORTER_OTLP_ENDPOINT "http://otel-collector:4318"
+check_env "$M/env/runner.env" MATELOT_CELL acme
+check_env "$M/env/grafana.env" GF_SERVER_ROOT_URL "https://matelot.example.com/grafana/"
+check_env "$M/env/grafana.env" GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET__FILE /matelot/secrets/grafana/GRAFANA_OIDC_CLIENT_SECRET
+python3 - "$M" <<'PY'
+import json, sys, yaml, pathlib
+m = pathlib.Path(sys.argv[1])
+r = json.load(open(m / "keycloak/import/realm.json"))
+g = next(c for c in r["clients"] if c["clientId"] == "grafana")
+assert g["secret"] == (m / "secrets/grafana/GRAFANA_OIDC_CLIENT_SECRET").read_text().strip() and not g.get("publicClient"), g
+assert g["redirectUris"] == ["https://matelot.example.com/grafana/login/generic_oauth"] and g["attributes"]["matelot.createIfMissing"] == "true", g
+reg = yaml.safe_load(open(m / "registry/config.yml"))
+assert reg["http"]["debug"] == {"addr": ":5001", "prometheus": {"enabled": True, "path": "/metrics"}}, reg["http"].get("debug")
+o = m / "observability"
+for f in ("otel-collector.yaml", "tempo.yaml", "loki.yaml", "prometheus.yml", "grafana/datasources/datasources.yaml"):
+    assert "__CELL__" not in (o / f).read_text(), f
+    yaml.safe_load(open(o / f))
+assert "__CELL__" not in (o / "alloy.alloy").read_text()
+prom = yaml.safe_load(open(o / "prometheus.yml"))
+assert prom["global"]["external_labels"]["cell"] == "acme"
+jobs = {j["job_name"] for j in prom["scrape_configs"]}
+assert {"matelot-api", "matelot-worker", "matelot-runner", "matelot-postgres", "matelot-redis", "matelot-keycloak", "matelot-registry"} <= jobs, jobs
+ds = {d["uid"]: d for d in yaml.safe_load(open(o / "grafana/datasources/datasources.yaml"))["datasources"]}
+assert ds["prometheus"]["jsonData"]["exemplarTraceIdDestinations"][0]["datasourceUid"] == "tempo"
+assert ds["tempo"]["jsonData"]["tracesToLogsV2"]["datasourceUid"] == "loki" and 'cell="acme"' in ds["tempo"]["jsonData"]["tracesToLogsV2"]["query"]
+PY
+MATELOT_PROFILES=observability bash compose-init.sh show | grep -q "Grafana" || { echo "FAIL: show prints Grafana" >&2; exit 1; }
+# without the profile nothing of it is rendered into the Caddyfile or Keycloak
+MATELOT_ORG_NAME="$NAME" MATELOT_DOMAIN=matelot.example.com MATELOT_ACME_EMAIL="$EMAIL" bash compose-init.sh > /dev/null 2>&1
+! grep -q "grafana" "$M/caddy/Caddyfile" || { echo "FAIL: Grafana route without the profile" >&2; exit 1; }
+! grep -q KC_METRICS_ENABLED "$M/keycloak/keycloak.env" || { echo "FAIL: Keycloak metrics without the profile" >&2; exit 1; }
+# compose.yaml: every MATELOT_* this script reads reaches it through x-config-env (the theme and OTLP settings once
+# did not); no service of the observability profile publishes a port (they are reached through Caddy or not at all)
+python3 - ../compose.yaml compose-init.sh <<'PY'
+import re, sys, yaml
+compose = yaml.safe_load(open(sys.argv[1]))
+read = set(re.findall(r"\$\{(MATELOT_[A-Z_]+)", open(sys.argv[2]).read()))
+internal = {"MATELOT_CONFIG_DIR", "MATELOT_VOLUMES_DIR", "MATELOT_THEME_SRC", "MATELOT_OBSERVABILITY_SRC"}   # set by the init service itself
+passed = set(compose["x-config-env"])
+missing = sorted(read - internal - passed)
+assert not missing, f"compose-init.sh reads {missing} but x-config-env does not pass them"
+assert compose["x-config-env"]["MATELOT_PROFILES"] == "${COMPOSE_PROFILES:-}"
+obs = [n for n, s in compose["services"].items() if "observability" in (s.get("profiles") or [])]
+assert {"otel-collector", "prometheus", "tempo", "loki", "grafana", "alloy", "postgres-exporter", "redis-exporter"} <= set(obs), obs
+for n in obs:
+    assert not compose["services"][n].get("ports"), f"{n} publishes a port"
+PY
+echo "compose-init ok (incl. the observability profile)"

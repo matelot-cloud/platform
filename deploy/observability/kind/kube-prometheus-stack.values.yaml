@@ -1,0 +1,54 @@
+# kube-prometheus-stack 92.11.0 for Matelot (docs/observability.md, "kube-prometheus-stack"): kind as written; a real
+# cluster keeps everything here and adds persistence / retention / ingress for Grafana (see the doc).
+#   helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack --version 92.11.0 \
+#     -n monitoring --create-namespace -f deploy/observability/kind/kube-prometheus-stack.values.yaml
+# The release name matters: with serviceMonitorSelectorNilUsesHelmValues (default) the Prometheus selects
+# ServiceMonitors labelled release=<release name> — the label the cell's ServiceMonitor gets from
+# observability.metrics.serviceMonitor.labels.
+prometheus:
+  prometheusSpec:
+    enableFeatures: [exemplar-storage]        # exemplars on the pipeline / job / HTTP histograms → Tempo
+    serviceMonitorNamespaceSelector: {}       # every namespace (the cells live in tenant-<slug>)
+    retention: 2d
+    resources: { requests: { cpu: 100m, memory: 512Mi } }
+alertmanager:
+  enabled: false                              # kind: nothing to page; a real cluster keeps it
+grafana:
+  adminPassword: matelot-kind                 # kind only — a real cluster sets admin.existingSecret
+  sidecar:
+    datasources:
+      exemplarTraceIdDestinations:            # Prometheus exemplar → the trace in Tempo
+        datasourceUid: tempo
+        traceIdLabelName: trace_id
+  additionalDataSources:
+    - name: Tempo
+      uid: tempo
+      type: tempo
+      access: proxy
+      url: http://tempo.monitoring:3200
+      jsonData:
+        tracesToLogsV2:                       # a span → its log lines in Loki (trace_id is structured metadata)
+          datasourceUid: loki
+          spanStartTimeShift: -5m
+          spanEndTimeShift: 5m
+          customQuery: true
+          query: '{namespace=~"tenant-.+"} | trace_id="$${__trace.traceId}"'
+        serviceMap: { datasourceUid: prometheus }
+        nodeGraph: { enabled: true }
+    - name: Loki
+      uid: loki
+      type: loki
+      access: proxy
+      url: http://loki.monitoring:3100
+      jsonData:
+        derivedFields:                        # a log line → its trace
+          - name: trace_id
+            matcherType: label                # structured metadata field
+            matcherRegex: trace_id
+            datasourceUid: tempo
+            url: '$${__value.raw}'
+# kind has no reachable etcd / controller-manager / scheduler / kube-proxy metrics: their targets would only be DOWN
+kubeEtcd: { enabled: false }
+kubeControllerManager: { enabled: false }
+kubeScheduler: { enabled: false }
+kubeProxy: { enabled: false }

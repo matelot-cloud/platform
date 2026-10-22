@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+# The observability pass of smoke.sh (`smoke.sh --observability`, sourced after the cell is up with
+# COMPOSE_PROFILES=observability): everything is asked the way an operator would, through Caddy and Grafana's
+# datasource proxy (nothing of the stack publishes a port). Fails with the Prometheus targets / the query answers.
+# Uses smoke.sh's helpers: cli, cli_json, token, log, diagnose, BASE.
+GRAFANA_PW="$(docker compose run --rm --no-deps init show | sed -n 's/^Grafana: .*local admin: admin \/ \([^)]*\)).*/\1/p')"
+[ -n "$GRAFANA_PW" ] || { echo "init show prints no Grafana admin password (was the profile passed to init?)" >&2; docker compose run --rm --no-deps init show >&2; exit 1; }
+gf() { curl -fsS -u "admin:$GRAFANA_PW" "$@"; }   # gf <url…> through Caddy
+DS="$BASE/grafana/api/datasources/proxy/uid"
+
+log "Grafana through Caddy: health, the provisioned datasources, the Keycloak sign-in offered"
+for _ in $(seq 1 30); do gf -o /dev/null "$BASE/grafana/api/health" 2> /dev/null && break; sleep 5; done
+gf "$BASE/grafana/api/datasources" | python3 -c '
+import sys, json
+ds = {d["uid"]: d for d in json.load(sys.stdin)}
+assert {"prometheus", "tempo", "loki"} <= set(ds), sorted(ds)
+assert ds["prometheus"]["jsonData"]["exemplarTraceIdDestinations"][0]["datasourceUid"] == "tempo", ds["prometheus"]["jsonData"]
+assert ds["tempo"]["jsonData"]["tracesToLogsV2"]["datasourceUid"] == "loki", ds["tempo"]["jsonData"]
+print("   datasources:", ", ".join(sorted(ds)), "(exemplars → tempo, traces → loki)")'
+curl -fsS "$BASE/grafana/login" | grep -q "generic_oauth" || { echo "Grafana's login page offers no Keycloak sign-in" >&2; exit 1; }
+curl -fsS -o /dev/null -w '%{redirect_url}\n' "$BASE/grafana/login/generic_oauth" | grep -q "/auth/realms/platform/protocol/openid-connect/auth?.*client_id=grafana" \
+  || { echo "Grafana's sign-in does not redirect to the cell's Keycloak" >&2; curl -sS -D - -o /dev/null "$BASE/grafana/login/generic_oauth" >&2; exit 1; }
+echo "   sign-in: redirects to the cell's Keycloak (client grafana)"
+
+log "Prometheus: every target up (api, worker, runner, postgres, redis, keycloak, registry and the stack itself)"
+targets_ok() {
+  gf "$DS/prometheus/api/v1/targets?state=active" | python3 -c '
+import sys, json
+t = json.load(sys.stdin)["data"]["activeTargets"]
+jobs = {}
+for x in t: jobs.setdefault(x["labels"]["job"], []).append(x)
+want = {"matelot-api", "matelot-worker", "matelot-runner", "matelot-postgres", "matelot-redis", "matelot-keycloak", "matelot-registry"}
+missing = sorted(want - set(jobs)); down = sorted(f"{j} ({x.get(\"lastError\") or x[\"health\"]})" for j, xs in jobs.items() for x in xs if x["health"] != "up")
+print(f"   {len(t)} targets; missing: {missing or \"none\"}; not up: {down or \"none\"}")
+sys.exit(1 if missing or down else 0)'
+}
+ok=0; for _ in $(seq 1 24); do if targets_ok; then ok=1; break; fi; sleep 10; done
+[ "$ok" = 1 ] || { echo "Prometheus targets not all up after 240 s" >&2; diagnose; exit 1; }
+gf -G "$DS/prometheus/api/v1/query" --data-urlencode 'query=count by (job) (matelot_build_info)' | python3 -c '
+import sys, json
+jobs = {r["metric"]["job"] for r in json.load(sys.stdin)["data"]["result"]}
+assert {"matelot-api", "matelot-worker", "matelot-runner"} <= jobs, jobs
+print("   matelot_build_info:", ", ".join(sorted(jobs)))'
+# one series per exporter, scoped to its job: the database / cache seen by its exporter, Keycloak's management
+# endpoint (KC_METRICS_ENABLED), the registry's debug listener
+for q in 'pg_up{job="matelot-postgres"} == 1' 'redis_up{job="matelot-redis"} == 1' 'jvm_memory_used_bytes{job="matelot-keycloak"}' 'go_goroutines{job="matelot-registry"}'; do
+  gf -G "$DS/prometheus/api/v1/query" --data-urlencode "query=$q" | python3 -c 'import sys, json; r = json.load(sys.stdin)["data"]["result"]; assert r, sys.argv[1]; print("  ", sys.argv[1], "present")' "$q" \
+    || { echo "no series for $q" >&2; exit 1; }
+done
+
+log "a pipeline on a public repository: its trace in Tempo, its logs in Loki by trace_id"
+MATELOT_TOKEN="$(token)"; export MATELOT_URL="$BASE" MATELOT_TOKEN    # the administrator's Keycloak session (full rights, like the web app)
+ORG="$(cli_json 'print(d[0]["id"])' -- request GET /api/v1/organizations)"
+WS="$(cli_json 'print(d["id"])' -- workspace create --org "$ORG" --slug obs --name Observability)"
+TEAM="$(cli_json 'print(d["id"])' -- team create --workspace "$WS" --slug platform --name Platform)"
+PROJECT="$(cli_json 'print(d["id"])' -- project create --team "$TEAM" --slug demo --name Demo)"
+SVC="$(cli_json 'print(d["id"])' -- service create --project "$PROJECT" --slug demo-app --name "demo app")"
+REPO_URL="${SMOKE_REPOSITORY_URL:-https://github.com/matelot-cloud/matelot}"
+CONN="$(cli_json 'print(d["id"])' -- connection create --org "$ORG" --body "{\"provider\":\"git\",\"name\":\"smoke\",\"repositoryUrl\":\"$REPO_URL\",\"auth\":{\"type\":\"none\"}}")"
+REPO=""; for _ in $(seq 1 30); do
+  REPO="$(cli_json 'print(d[0]["id"] if d else "")' -- request GET "/api/v1/integrations/$CONN/repositories" 2> /dev/null || true)"; [ -n "$REPO" ] && break; sleep 2
+done
+[ -n "$REPO" ] || { echo "the connection to $REPO_URL listed no repository after 60 s" >&2; docker compose logs --tail 40 worker >&2; exit 1; }
+cli repository attach --service "$SVC" --repository-id "$REPO" --json > /dev/null
+PIPE="$(cli pipeline --service "$SVC" --template checkout --wait --json)" || { echo "pipeline failed: $PIPE" >&2; docker compose logs --tail 40 runner >&2; exit 1; }
+TRACE_ID="$(printf '%s' "$PIPE" | python3 -c 'import sys, json; d = json.load(sys.stdin); assert d["status"] == "succeeded", d["status"]; print(d["traceParent"].split("-")[1])')"
+echo "   pipeline succeeded; trace $TRACE_ID"
+ok=0; for _ in $(seq 1 24); do   # the batch processors flush within 5 s, the collector within its batch timeout
+  if gf -H 'Accept: application/json' "$DS/tempo/api/traces/$TRACE_ID" 2> /dev/null | python3 -c '
+import sys, json
+raw = sys.stdin.read(); d = json.loads(raw)
+batches = d.get("batches") or d.get("resourceSpans") or d.get("trace", {}).get("resourceSpans") or []
+services = {a["value"].get("stringValue") for b in batches for a in b.get("resource", {}).get("attributes", []) if a["key"] == "service.name"}
+names = {s["name"] for b in batches for ss in (b.get("scopeSpans") or b.get("instrumentationLibrarySpans") or []) for s in ss.get("spans", [])}
+print(f"   tempo: {sum(1 for _ in names)} span names from {sorted(services)}")
+sys.exit(0 if "matelot-pipeline" in services and "matelot-runner" in services and any(n.startswith("pipeline ") for n in names) else 1)'; then ok=1; break; fi
+  sleep 5
+done
+[ "$ok" = 1 ] || { echo "the pipeline trace $TRACE_ID is not complete in Tempo after 120 s" >&2; docker compose logs --tail 30 otel-collector tempo >&2; exit 1; }
+ok=0; for _ in $(seq 1 24); do   # Alloy tails the containers' logs; trace_id is structured metadata
+  if gf -G "$DS/loki/loki/api/v1/query_range" --data-urlencode "query={cell=~\".+\"} | trace_id=\"$TRACE_ID\"" --data-urlencode "since=1h" --data-urlencode "limit=200" 2> /dev/null | python3 -c '
+import sys, json
+r = json.load(sys.stdin)["data"]["result"]
+lines = sum(len(s["values"]) for s in r); services = sorted({s["stream"].get("compose_service", "?") for s in r})
+print(f"   loki: {lines} lines with the trace id from {services}")
+sys.exit(0 if lines else 1)'; then ok=1; break; fi
+  sleep 5
+done
+[ "$ok" = 1 ] || { echo "no log line with trace_id $TRACE_ID in Loki after 120 s" >&2; docker compose logs --tail 30 alloy loki >&2; exit 1; }
+
+log "a backup reports itself: matelot_backup_last_success_timestamp_seconds (the same gauge as on Kubernetes)"
+docker compose --profile backup run --rm backup > /dev/null || { echo "the backup run failed" >&2; exit 1; }
+ok=0; for _ in $(seq 1 18); do
+  if gf -G "$DS/prometheus/api/v1/query" --data-urlencode 'query=matelot_backup_last_success_timestamp_seconds > (time() - 3600)' | python3 -c 'import sys, json; r = json.load(sys.stdin)["data"]["result"]; print("   backup gauge:", [x["value"][1] for x in r]); sys.exit(0 if r else 1)'; then ok=1; break; fi
+  sleep 10
+done
+[ "$ok" = 1 ] || { echo "no recent matelot_backup_last_success_timestamp_seconds after 180 s" >&2; docker compose logs --tail 20 api worker >&2; exit 1; }
+log "observability smoke test passed"

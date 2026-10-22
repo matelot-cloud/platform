@@ -6,6 +6,11 @@ storage:
 http:
   addr: :5000
   headers: { X-Content-Type-Options: [nosniff] }
+{{- if and .Values.observability.metrics.enabled .Values.observability.metrics.exporters.enabled }}
+  debug:
+    addr: {{ printf ":%v" .Values.observability.metrics.exporters.registryPort | quote }}
+    prometheus: { enabled: true, path: /metrics }
+{{- end }}
 auth:
   token:
     realm: {{ printf "%s://%s/api/v1/registry/token" (include "cell.scheme" .) (include "cell.apiHost" .) | quote }}
@@ -15,7 +20,7 @@ auth:
 notifications:
   endpoints:
     - name: platform
-      url: http://{{ .Release.Name }}-api:3000/api/v1/registry/events
+      url: http://{{ .Release.Name }}-api/api/v1/registry/events   # the api Service listens on 80
       headers: { Authorization: ["Bearer {{ include "cell.registryEventsSecret" . }}"] }
       timeout: 5s
       threshold: 3

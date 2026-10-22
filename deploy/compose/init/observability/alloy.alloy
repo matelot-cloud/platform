@@ -1,0 +1,48 @@
+// Alloy of the Compose `observability` profile: the log lines of this compose project's containers into Loki. Our
+// processes write one JSON schema (docs/observability.md, "Logs"): trace_id / span_id become structured metadata (a
+// filter, never an index label), level and component become labels. Reads the Docker socket (read-only mount; still a
+// privileged handle on the host — it is what container log collection needs).
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+  filter {
+    name   = "label"
+    values = ["com.docker.compose.project=" + sys.env("MATELOT_COMPOSE_PROJECT")]
+  }
+}
+
+discovery.relabel "containers" {
+  targets = []
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "compose_service"
+  }
+}
+
+loki.source.docker "containers" {
+  host          = "unix:///var/run/docker.sock"
+  targets       = discovery.docker.containers.targets
+  relabel_rules = discovery.relabel.containers.rules
+  forward_to    = [loki.process.matelot.receiver]
+}
+
+loki.process "matelot" {
+  stage.json {
+    expressions = { trace_id = "", span_id = "", level = "", component = "" }
+  }
+  stage.structured_metadata {
+    values = { trace_id = "", span_id = "" }
+  }
+  stage.labels {
+    values = { level = "", component = "" }
+  }
+  stage.static_labels {
+    values = { cell = "__CELL__" }
+  }
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

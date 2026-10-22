@@ -25,6 +25,9 @@ case "$DOMAIN" in
   *) SCHEME="${MATELOT_SCHEME:-https}"; LOCAL=0;;
 esac
 BASE_URL="$SCHEME://$DOMAIN"
+# the observability profile (COMPOSE_PROFILES=observability in .env, passed in as MATELOT_PROFILES): the cell is wired
+# to the bundled collector / Prometheus / Grafana (docs/observability.md)
+OBS=0; case ",${MATELOT_PROFILES:-}," in *,observability,*) OBS=1;; esac
 if [ "$LOCAL" = 1 ]; then REGISTRY_HOST="$DOMAIN:$REGISTRY_PORT"; REGISTRY_SITE=":5000"; else REGISTRY_HOST="registry.$DOMAIN"; REGISTRY_SITE="registry.$DOMAIN"; fi
 
 rand() { openssl rand -hex "$1"; }   # 2*$1 hex characters
@@ -40,14 +43,16 @@ secret() { # secret <dir> <KEY> <generator…>: write once
   if [ ! -s "$dir/$key" ]; then "$@" > "$dir/$key"; echo "generated secrets/$name/$key"; fi
 }
 if [ "$MODE" = show ]; then
-  echo "URL:            $BASE_URL"; echo "Admin login:    $ADMIN_EMAIL"; echo "Admin password: $(cat "$M/secrets/keycloak/SEED_ADMIN_PASSWORD")"; exit 0
+  echo "URL:            $BASE_URL"; echo "Admin login:    $ADMIN_EMAIL"; echo "Admin password: $(cat "$M/secrets/keycloak/SEED_ADMIN_PASSWORD")"
+  if [ -s "$M/secrets/grafana/GF_SECURITY_ADMIN_PASSWORD" ]; then echo "Grafana:        $BASE_URL/grafana/ (sign in with Keycloak; local admin: admin / $(cat "$M/secrets/grafana/GF_SECURITY_ADMIN_PASSWORD"))"; fi
+  exit 0
 fi
 if [ "$MODE" = restore-secrets ]; then
   SRC="${2:?restore-secrets <dir with secrets/*/>}"
   for d in "$SRC"/*/; do
     [ -d "$d" ] || continue
     base="$(basename "$d")"   # Kubernetes archives carry the release prefix (acme-cell-key): keep the suffix
-    for n in cell-key api-secrets postgres keycloak managed-runner registry; do case "$base" in *"$n") base="$n";; esac; done
+    for n in cell-key api-secrets postgres keycloak managed-runner registry grafana; do case "$base" in *"$n") base="$n";; esac; done
     mkdir -p "$M/secrets/$base"; cp -f "$d"/* "$M/secrets/$base/"; echo "restored secrets/$base ($(ls "$d" | tr '\n' ' '))"
   done
   MODE=init
@@ -74,6 +79,11 @@ if [ -n "${MATELOT_ADMIN_PASSWORD:-}" ]; then secret keycloak SEED_ADMIN_PASSWOR
 else secret keycloak SEED_ADMIN_PASSWORD sh -c "openssl rand -base64 18 | tr -d '/+=' | cut -c1-16"; fi
 secret managed-runner MANAGED_RUNNER_SECRET rand 24
 secret registry REGISTRY_EVENTS_SECRET rand 24
+secret api-secrets BACKUP_REPORT_TOKEN rand 24     # the backup service's reports to the api (backup-report.sh)
+if [ "$OBS" = 1 ]; then
+  secret grafana GF_SECURITY_ADMIN_PASSWORD rand 12   # Grafana's local admin (Keycloak users sign in as Viewers)
+  secret grafana GRAFANA_OIDC_CLIENT_SECRET rand 24   # the "grafana" client of the realm
+fi
 if [ ! -s "$M/secrets/registry/registry.key" ] || [ ! -s "$M/secrets/registry/registry.crt" ]; then
   openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=secops-registry-token" \
     -keyout "$M/secrets/registry/registry.key" -out "$M/secrets/registry/registry.crt" 2> /dev/null
@@ -108,6 +118,10 @@ mkdir -p "$M/caddy" "$M/keycloak/import" "$M/registry" "$M/web" "$M/env"
   handle /auth/* {
     reverse_proxy keycloak:8080
   }
+CADDY
+  # Grafana (observability profile): its own sign-in through Keycloak; serves from the /grafana sub-path
+  [ "$OBS" = 1 ] && printf '  handle /grafana* {\n    reverse_proxy grafana:3000\n  }\n'
+  cat <<'CADDY'
   handle {
     reverse_proxy web:8080
   }
@@ -133,6 +147,7 @@ kv "$M/keycloak/keycloak.env" KC_HTTP_RELATIVE_PATH /auth
 kv "$M/keycloak/keycloak.env" KC_HTTP_MANAGEMENT_RELATIVE_PATH /
 kv "$M/keycloak/keycloak.env" KC_PROXY_HEADERS xforwarded
 kv "$M/keycloak/keycloak.env" KC_HEALTH_ENABLED true
+[ "$OBS" = 1 ] && kv "$M/keycloak/keycloak.env" KC_METRICS_ENABLED true   # /metrics on the management port 9000 (compose network only)
 # the "matelot" login theme (init/theme, a copy of the chart's files/theme) plus this cell's overrides in cell.css:
 # the keycloak service copies it into /opt/keycloak/themes at start
 THEME_SRC="${MATELOT_THEME_SRC:-$(dirname "$0")/theme/matelot}"
@@ -147,6 +162,18 @@ rm -rf "$M/keycloak/theme"; mkdir -p "$M/keycloak/theme"; cp -R "$THEME_SRC" "$M
 # the layout Keycloak resolves: themes/matelot/login/theme.properties (the keycloak service copies theme/matelot as is)
 [ -f "$M/keycloak/theme/matelot/login/theme.properties" ] || { echo "login theme source $THEME_SRC has no login/theme.properties" >&2; exit 1; }
 SEED_PASSWORD="$(cat "$M/secrets/keycloak/SEED_ADMIN_PASSWORD")"
+# Grafana's sign-in (observability profile): a confidential client; realm-sync creates it in an existing realm
+# (matelot.createIfMissing) and keeps its redirect URI and secret in line
+GRAFANA_CLIENT=""
+if [ "$OBS" = 1 ]; then
+  GRAFANA_CLIENT=",
+    {
+      \"clientId\": \"grafana\", \"name\": \"Grafana\", \"enabled\": true, \"protocol\": \"openid-connect\", \"publicClient\": false,
+      \"secret\": \"$(cat "$M/secrets/grafana/GRAFANA_OIDC_CLIENT_SECRET")\", \"standardFlowEnabled\": true, \"directAccessGrantsEnabled\": false,
+      \"redirectUris\": [\"$BASE_URL/grafana/login/generic_oauth\"], \"webOrigins\": [\"$BASE_URL\"],
+      \"attributes\": { \"pkce.code.challenge.method\": \"S256\", \"post.logout.redirect.uris\": \"$BASE_URL/grafana/*\", \"matelot.createIfMissing\": \"true\" }
+    }"
+fi
 cat > "$M/keycloak/import/realm.json" <<REALM
 {
   "realm": "platform",
@@ -171,7 +198,7 @@ cat > "$M/keycloak/import/realm.json" <<REALM
         { "name": "platform-api-audience", "protocol": "openid-connect", "protocolMapper": "oidc-audience-mapper", "consentRequired": false,
           "config": { "included.client.audience": "platform-api", "id.token.claim": "false", "access.token.claim": "true" } }
       ]
-    }
+    }$GRAFANA_CLIENT
   ],
   "users": [
     { "username": "admin", "email": "$(json_str "$ADMIN_EMAIL")", "emailVerified": true, "enabled": true,
@@ -189,6 +216,7 @@ storage:
 http:
   addr: :5000
   headers: { X-Content-Type-Options: [nosniff] }
+$( [ "$OBS" = 1 ] && printf '  debug:\n    addr: ":5001"\n    prometheus: { enabled: true, path: /metrics }\n' )
 auth:
   token:
     realm: $BASE_URL/api/v1/registry/token
@@ -243,6 +271,8 @@ kv "$E" GITHUB_URL https://github.com
 kv "$E" MATELOT_METRICS_ENABLED true
 kv "$E" MATELOT_METRICS_PORT 9464
 kv "$E" DEPLOYMENT_ENVIRONMENT "${MATELOT_ENVIRONMENT:-production}"
+# the observability profile sends to the bundled collector unless an endpoint of the customer's own is set
+[ "$OBS" = 1 ] && [ -z "${MATELOT_OTLP_ENDPOINT:-}" ] && MATELOT_OTLP_ENDPOINT=http://otel-collector:4318
 if [ -n "${MATELOT_OTLP_ENDPOINT:-}" ]; then
   kv "$E" OTEL_EXPORTER_OTLP_ENDPOINT "$MATELOT_OTLP_ENDPOINT"
   kv "$E" OTEL_EXPORTER_OTLP_PROTOCOL "${MATELOT_OTLP_PROTOCOL:-http/protobuf}"
@@ -251,6 +281,52 @@ if [ -n "${MATELOT_OTLP_ENDPOINT:-}" ]; then
   [ "${MATELOT_OTLP_METRICS:-0}" = 1 ] && kv "$E" OTEL_METRICS_EXPORTER "prometheus,otlp"
 fi
 kv "$E" MATELOT_LICENSE "${MATELOT_LICENSE:-}"
+# the runner's environment (sourced by its command): metrics port, cell, and the same OTLP settings as the api
+R="$M/env/runner.env"; : > "$R"
+kv "$R" RUNNER_METRICS_PORT 9464
+kv "$R" APP_VERSION "${MATELOT_VERSION:-unknown}"
+kv "$R" MATELOT_CELL "$ORG_SLUG"
+kv "$R" DEPLOYMENT_ENVIRONMENT "${MATELOT_ENVIRONMENT:-production}"
+kv "$R" LOG_LEVEL "${MATELOT_LOG_LEVEL:-info}"
+if [ -n "${MATELOT_OTLP_ENDPOINT:-}" ]; then
+  kv "$R" OTEL_EXPORTER_OTLP_ENDPOINT "$MATELOT_OTLP_ENDPOINT"
+  kv "$R" OTEL_EXPORTER_OTLP_PROTOCOL "${MATELOT_OTLP_PROTOCOL:-http/protobuf}"
+  [ -n "${MATELOT_OTLP_HEADERS:-}" ] && kv "$R" OTEL_EXPORTER_OTLP_HEADERS "$MATELOT_OTLP_HEADERS"
+fi
+
+# ---- the observability profile's configuration (init/observability, __CELL__ → the organization slug) -------------
+rm -rf "$M/observability"
+if [ "$OBS" = 1 ]; then
+  OBS_SRC="${MATELOT_OBSERVABILITY_SRC:-$(dirname "$0")/observability}"
+  mkdir -p "$M/observability"; cp -R "$OBS_SRC/." "$M/observability/"
+  cell_re="$(printf '%s' "$ORG_SLUG" | sed 's/[&/\\]/\\&/g')"
+  find "$M/observability" -type f -exec sed -i "s/__CELL__/$cell_re/g" {} +
+  G="$M/env/grafana.env"; : > "$G"
+  kv "$G" GF_SERVER_ROOT_URL "$BASE_URL/grafana/"
+  kv "$G" GF_SERVER_SERVE_FROM_SUB_PATH true
+  kv "$G" GF_SECURITY_ADMIN_USER admin
+  kv "$G" GF_SECURITY_ADMIN_PASSWORD__FILE /matelot/secrets/grafana/GF_SECURITY_ADMIN_PASSWORD
+  [ "$SCHEME" = https ] && kv "$G" GF_SECURITY_COOKIE_SECURE true
+  kv "$G" GF_ANALYTICS_REPORTING_ENABLED false
+  kv "$G" GF_ANALYTICS_CHECK_FOR_UPDATES false
+  kv "$G" GF_USERS_ALLOW_SIGN_UP false
+  kv "$G" GF_USERS_AUTO_ASSIGN_ORG_ROLE Viewer
+  # sign-in with the cell's Keycloak: the browser goes to the public realm URL, Grafana exchanges the code on the compose
+  # network (backchannel); user details come from the ID token (no userinfo call across the two hostnames)
+  kv "$G" GF_AUTH_GENERIC_OAUTH_ENABLED true
+  kv "$G" GF_AUTH_GENERIC_OAUTH_NAME Matelot
+  kv "$G" GF_AUTH_GENERIC_OAUTH_ALLOW_SIGN_UP true
+  kv "$G" GF_AUTH_GENERIC_OAUTH_CLIENT_ID grafana
+  kv "$G" GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET__FILE /matelot/secrets/grafana/GRAFANA_OIDC_CLIENT_SECRET
+  kv "$G" GF_AUTH_GENERIC_OAUTH_SCOPES "openid email profile"
+  kv "$G" GF_AUTH_GENERIC_OAUTH_AUTH_URL "$BASE_URL/auth/realms/platform/protocol/openid-connect/auth"
+  kv "$G" GF_AUTH_GENERIC_OAUTH_TOKEN_URL http://keycloak:8080/auth/realms/platform/protocol/openid-connect/token
+  kv "$G" GF_AUTH_GENERIC_OAUTH_USE_PKCE true
+  kv "$G" GF_AUTH_GENERIC_OAUTH_EMAIL_ATTRIBUTE_PATH email
+  kv "$G" GF_AUTH_GENERIC_OAUTH_LOGIN_ATTRIBUTE_PATH preferred_username
+  kv "$G" GF_AUTH_GENERIC_OAUTH_NAME_ATTRIBUTE_PATH name
+  kv "$G" GF_AUTH_SIGNOUT_REDIRECT_URL "$BASE_URL/auth/realms/platform/protocol/openid-connect/logout?client_id=grafana&post_logout_redirect_uri=$BASE_URL/grafana/login"
+fi
 C="$M/env/cell.env"; : > "$C"
 kv "$C" BASE_URL "$BASE_URL"; kv "$C" ADMIN_EMAIL "$ADMIN_EMAIL"; kv "$C" REGISTRY_HOST "$REGISTRY_HOST"; kv "$C" SCHEME "$SCHEME"
 
@@ -258,5 +334,7 @@ kv "$C" BASE_URL "$BASE_URL"; kv "$C" ADMIN_EMAIL "$ADMIN_EMAIL"; kv "$C" REGIST
 chmod -R a+rX "$M"                       # readable by the uids of the services; the volume is private to the stack
 own() { [ -d "$2" ] || return 0; chown -R "$1" "$2" 2> /dev/null || echo "warning: cannot chown $2 to $1 (not root?)"; }
 own 999:999 "$V/postgres"
-for v in registry backups caddy-data caddy-config runner-data runner-work; do own 10001:10001 "$V/$v"; done
+for v in registry backups caddy-data caddy-config runner-data runner-work tempo-data loki-data; do own 10001:10001 "$V/$v"; done
+own 65534:65534 "$V/prometheus-data"
+own 472:0 "$V/grafana-data"
 echo "matelot init: $BASE_URL (registry $REGISTRY_HOST, org $ORG_SLUG, admin $ADMIN_EMAIL)"

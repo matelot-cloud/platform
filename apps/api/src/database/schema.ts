@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { AnyPgColumn, boolean, customType, doublePrecision, index, integer, jsonb, pgEnum, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { AnyPgColumn, bigint, boolean, customType, doublePrecision, index, integer, jsonb, pgEnum, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 
 const bytea = customType<{ data: Buffer; driverData: Buffer }>({ dataType: () => 'bytea' });
 
@@ -1186,6 +1186,29 @@ export const platformHeartbeats = pgTable('platform_heartbeats', {
   lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
   detail: jsonb('detail').$type<Record<string, unknown>>(),
 });
+
+/** One row per cell backup run, reported by the backup job (POST /internal/backup-reports): the matelot_backup_*
+ *  metrics come from here, so the Helm CronJob and the Compose backup service produce the same gauges. */
+export const backupStatusEnum = pgEnum('backup_status', ['succeeded', 'failed']);
+export const backupReports = pgTable(
+  'backup_reports',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    status: backupStatusEnum('status').notNull(),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    finishedAt: timestamp('finished_at', { withTimezone: true }).notNull().defaultNow(),
+    /** archive file name (`<cell>-<stamp>.tar.gz`), never a path with credentials */
+    archive: text('archive'),
+    bytes: bigint('bytes', { mode: 'number' }),
+    /** where it went: pvc | s3 | compose (a bucket / prefix, never credentials) */
+    destination: text('destination'),
+    error: text('error'),
+    /** the step that reported: dump | upload */
+    step: text('step'),
+  },
+  (t) => [index('backup_reports_finished_idx').on(t.status, t.finishedAt)],
+);
+export type BackupReport = typeof backupReports.$inferSelect;
 
 /** Keys the cell signs with. Purpose `identity`: OIDC tokens for workload identity federation. Private key encrypted with the cell key. */
 export const signingKeys = pgTable('signing_keys', {

@@ -20,6 +20,7 @@ import { DatabaseModule } from './database/database.module';
 import { HealthModule } from './health/health.module';
 import { IamModule } from './iam/iam.module';
 import { MetaModule } from './meta/meta.module';
+import { BackupsModule } from './backups/backups.module';
 import { OrganizationsModule } from './organizations/organizations.module';
 import { EnvironmentsModule } from './environments/environments.module';
 import { ExecutionModule } from './execution/execution.module';
@@ -79,6 +80,7 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
     AuthModule,
     HealthModule,
     MetaModule,
+    BackupsModule,
     OrganizationsModule,
     WorkspacesModule,
     TeamsModule,

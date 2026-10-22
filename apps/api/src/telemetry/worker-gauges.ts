@@ -3,7 +3,7 @@ import { Queue } from 'bullmq';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type IORedis from 'ioredis';
 import { DATABASE, Database } from '../database/database.module';
-import { codeFindings, findings, jobs, runnerPools, runners } from '../database/schema';
+import { backupReports, codeFindings, findings, jobs, runnerPools, runners } from '../database/schema';
 import { QUEUES } from '../jobs/queues';
 import { Metrics } from './metrics';
 
@@ -28,7 +28,7 @@ export class WorkerGauges {
   /** Queue depth, runners, pipeline queue: cheap, every 15 s. */
   async refresh(now = new Date()): Promise<void> {
     try {
-      await Promise.all([this.refreshQueues(now), this.refreshPipelineQueue(now), this.refreshRunners(now)]);
+      await Promise.all([this.refreshQueues(now), this.refreshPipelineQueue(now), this.refreshRunners(now), this.refreshBackups()]);
     } catch (error) {
       this.logger.warn(`gauge refresh failed: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -90,6 +90,15 @@ export class WorkerGauges {
     this.metrics.runnersOnline.replace(seen.map((p) => ({ value: online.get(p.pool)?.online ?? 0, attributes: { pool: p.pool, managed: String(p.managed) } })));
     this.metrics.runnersBusy.replace(seen.map((p) => ({ value: online.get(p.pool)?.busy ?? 0, attributes: { pool: p.pool } })));
     this.metrics.runnerLastSeen.replace(seen.filter((p) => p.lastSeen).map((p) => ({ value: Math.floor(new Date(p.lastSeen!).getTime() / 1000), attributes: { pool: p.pool } })));
+  }
+
+  /** The newest successful and failed backup runs (reported by the backup job): BackupTooOld / BackupFailed read these. */
+  private async refreshBackups(): Promise<void> {
+    const newest = async (status: 'succeeded' | 'failed') => (await this.db.select({ finishedAt: backupReports.finishedAt, startedAt: backupReports.startedAt }).from(backupReports).where(eq(backupReports.status, status)).orderBy(sql`${backupReports.finishedAt} desc`).limit(1))[0];
+    const [ok, bad] = await Promise.all([newest('succeeded'), newest('failed')]);
+    this.metrics.backupLastSuccess.replace(ok ? [{ value: Math.floor(ok.finishedAt.getTime() / 1000) }] : []);
+    this.metrics.backupLastFailure.replace(bad ? [{ value: Math.floor(bad.finishedAt.getTime() / 1000) }] : []);
+    this.metrics.backupLastDuration.replace(ok?.startedAt ? [{ value: Math.max(0, (ok.finishedAt.getTime() - ok.startedAt.getTime()) / 1000) }] : []);
   }
 
   /** Open findings by severity and kind — one query over the cell, with the correlation loop (10 min). */

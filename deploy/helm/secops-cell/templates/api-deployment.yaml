@@ -62,10 +62,6 @@ spec:
           envFrom:
             - configMapRef:
                 name: {{ .Release.Name }}-api-config
-            {{- if .Values.observability.otlp.headers }}
-            - secretRef:
-                name: {{ .Release.Name }}-otel
-            {{- end }}
             - secretRef:
                 name: {{ .Release.Name }}-api-secrets
             - secretRef:
@@ -81,6 +77,7 @@ spec:
           env:
             - name: MATELOT_COMPONENT
               value: api
+            {{- include "cell.otlpHeadersEnv" . | nindent 12 }}
           {{- if .Values.keycloak.bundled }}
             # user administration (create, reset, invite links) through the bundled Keycloak's admin API
             - name: KC_BOOTSTRAP_ADMIN_USERNAME

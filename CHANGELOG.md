@@ -4,6 +4,50 @@
 
 Images `ghcr.io/matelot-cloud/{api,web,worker,runner}` and the chart `oci://ghcr.io/matelot-cloud/charts/secops-cell`, signed, with SBOM attestations; install guide at https://matelot-cloud.github.io/website/docs/latest/install.html. The sections below are the drops that make up the release, newest first.
 
+### Observability drop 2 — delivery: ServiceMonitor, exporters, backup gauges, the Compose `observability` profile (migration 0050); release steps retried
+
+- **Release robustness.** `cosign sign`, `syft` / `cosign attest` (`.github/scripts/sign-image.sh`), the chart
+  signature and the GitHub release are retried (3 attempts, 30 s then 60 s, each failure logged as a workflow
+  warning; `.github/scripts/retry.sh`). The release step is `.github/scripts/publish-release.sh`: an existing release
+  (a half-succeeded earlier attempt, or a re-run of the job) is edited and its assets re-uploaded with `--clobber`
+  instead of failing on "already exists". `check-workflows.sh` guards both and self-tests the retry helper.
+- **Helm.** `observability.metrics.serviceMonitor` renders one ServiceMonitor over headless metrics Services
+  (`<release>-<name>-metrics`, port `metrics`, job `matelot-<name>`, a `cell` label) for api, worker, runner and, with
+  `observability.metrics.exporters`, postgres_exporter v0.20.0 / redis_exporter v1.94.0 sidecars of the bundled
+  Postgres / Redis, Keycloak's metrics (`KC_METRICS_ENABLED`, management port 9000) and the registry's debug listener
+  (5001). The scrape NetworkPolicy admits those ports from `scrapeFromNamespaces` only; nothing reaches the ingress.
+  Defaults render no monitoring CRD.
+- **OTLP headers only from a Secret.** `observability.otlp.headersSecret` (+ `headersSecretKey`) puts
+  `OTEL_EXPORTER_OTLP_HEADERS` on every component through a `secretKeyRef`; `observability.otlp.headers` is removed and
+  refused at render time, and the chart's `<release>-otel` Secret is gone. **Upgrade note:** a cell that set
+  `otlp.headers` must move the value into a Secret and name it before the next `apply`.
+- **Backup gauges on Helm and Compose.** Backup runs report their outcome to `POST /api/v1/internal/backup-reports`
+  (bearer `BACKUP_REPORT_TOKEN`, generated into the api secrets on both deliveries; constant-time comparison; not in
+  the OpenAPI document; table `backup_reports`, 180 days). The worker publishes
+  `matelot_backup_last_success_timestamp_seconds`, `…_last_failure_timestamp_seconds` and
+  `matelot_backup_last_duration_seconds`. The report goes over curl or plain bash `/dev/tcp` (the postgres image has
+  no curl) and never fails the backup; the S3 upload reports too.
+- **Compose `observability` profile** (`COMPOSE_PROFILES=observability`): OpenTelemetry Collector, Prometheus
+  (exemplar storage), Tempo, Loki, Alloy (this project's container logs, `trace_id` / `span_id` as structured
+  metadata) and Grafana at `<domain>/grafana/` behind Caddy, signing in with the cell's Keycloak (client `grafana`;
+  local admin password in `init show`), datasources provisioned with exemplars → Tempo → Loki by `trace_id`, plus the
+  two exporters. No port is published on the host. `realm-sync` now creates clients marked
+  `matelot.createIfMissing` in an existing realm and keeps a rendered client secret in sync.
+- **CI.** `smoke.sh --observability` runs a second Compose pass: every Prometheus target up, `matelot_build_info` from
+  api / worker / runner, a series from each exporter, a `checkout` pipeline's trace in Tempo and its log lines in Loki
+  by `trace_id`, the backup gauge — all through Caddy and Grafana's datasource proxy. The chart job installs the
+  prometheus-operator CRDs (v0.94.1) on kind and dry-runs the everything-on render, fresh and as an upgrade.
+  `chart-test` checks that every ServiceMonitor endpoint reaches a Service port backed by a pod.
+- **kind.** `make kind-observability TENANT=<slug>` installs kube-prometheus-stack 92.11.0, Tempo 1.24.4, Loki 7.3.0
+  (single binary) and Alloy 1.14.1 with `deploy/observability/kind/*.values.yaml`, then writes the cell's
+  `observability` block (ServiceMonitor with `release: kube-prometheus-stack`, exporters, OTLP to Tempo) and applies.
+  `docs/observability.md` has the recommended collector configuration and the kube-prometheus-stack recipe.
+- **Fixed on the way.** Compose `init` never received `MATELOT_THEME_*`, `MATELOT_OTLP_*`, `MATELOT_ENVIRONMENT` or
+  `MATELOT_TRACES_SAMPLER` from `.env` (missing from `x-config-env`): the sign-in branding and the OTLP settings of
+  `.env` were silently ignored on Compose. `compose-init.test.sh` now fails on any variable the script reads that
+  compose does not pass. The chart's registry notified `http://<release>-api:3000`, but the api Service listens on
+  80: push notifications never reached the API on Helm.
+
 ### Observability drop 1 fix-up 3: probe pods without a verdict are retried, client polls and worker timers leave no traces of their own (CLI 2.24.2)
 
 - `checks`: "the probe pod gave no verdict" right after a rollout (the curl pod's output empty while the API answered

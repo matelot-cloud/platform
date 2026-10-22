@@ -98,12 +98,8 @@ spec:
               value: {{ . | quote }}
             - name: OTEL_EXPORTER_OTLP_PROTOCOL
               value: {{ $.Values.observability.otlp.protocol | quote }}
+            {{- include "cell.otlpHeadersEnv" $ | nindent 12 }}
             {{- end }}
-          {{- if .Values.observability.otlp.headers }}
-          envFrom:
-            - secretRef:
-                name: {{ .Release.Name }}-otel
-          {{- end }}
           {{- if .Values.observability.metrics.enabled }}
           ports:
             - name: metrics

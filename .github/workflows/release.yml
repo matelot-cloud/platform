@@ -190,7 +190,7 @@ jobs:
           helm push "out/$CHART_NAME-$VERSION.tgz" "oci://$REGISTRY/$ORG/charts" 2>&1 | tee push.log
           digest=$(sed -n 's/^Digest: *//p' push.log)
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
-          cosign sign --yes "$REGISTRY/$ORG/charts/$CHART_NAME@$digest"
+          bash .github/scripts/retry.sh "cosign sign chart" cosign sign --yes "$REGISTRY/$ORG/charts/$CHART_NAME@$digest"
       - name: Sync the chart folder to matelot-cloud/helm-charts
         env:
           VERSION: ${{ needs.version.outputs.version }}
@@ -316,7 +316,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PUBLIC_REPOS_TOKEN }}
           VERSION: ${{ needs.version.outputs.version }}
-        run: |
-          flags=(); [ "${{ needs.version.outputs.prerelease }}" = "true" ] && flags+=(--prerelease)
-          # the public repo has no code: the release is a tag on its default branch
-          gh release create "v$VERSION" --repo "$ORG/matelot" --target main --title "Matelot v$VERSION" --notes-file notes.md "${flags[@]}" matelot-*.spdx.json
+          PRERELEASE: ${{ needs.version.outputs.prerelease }}
+        # retried (3 attempts, 30 s / 60 s) and idempotent: an existing release gets its notes and assets updated
+        run: bash .github/scripts/publish-release.sh

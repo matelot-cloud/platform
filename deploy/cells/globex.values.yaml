@@ -52,6 +52,13 @@ backup:
     prefix: cells/globex
 
 observability:
+  metrics:
+    serviceMonitor:
+      enabled: true   # needs the prometheus-operator CRDs (kube-prometheus-stack)
+      labels:
+        release: "kube-prometheus-stack"
+    exporters:
+      enabled: true   # postgres_exporter / redis_exporter sidecars, Keycloak and registry metrics
   otlp:
-    endpoint: "http://jaeger.observability:4318"   # OTLP traces (docs/observability.md); empty = tracing off
+    endpoint: "http://tempo.monitoring:4318"   # OTLP traces (docs/observability.md); empty = tracing off
     protocol: http/protobuf

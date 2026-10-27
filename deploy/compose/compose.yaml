@@ -386,11 +386,16 @@ services:
     volumes:
       - config:/matelot:ro
       - grafana-data:/var/lib/grafana
-    deploy: { resources: { limits: { memory: 256M } } }
+    deploy: { resources: { limits: { memory: 512M } } }
     depends_on:
       init: { condition: service_completed_successfully }
       prometheus: { condition: service_started }
-
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/grafana/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
   postgres-exporter:
     image: quay.io/prometheuscommunity/postgres-exporter:v0.20.0
     profiles: [observability]

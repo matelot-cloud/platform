@@ -4,6 +4,28 @@
 
 Images `ghcr.io/matelot-cloud/{api,web,worker,runner}` and the chart `oci://ghcr.io/matelot-cloud/charts/secops-cell`, signed, with SBOM attestations; install guide at https://matelot-cloud.github.io/website/docs/latest/install.html. The sections below are the drops that make up the release, newest first.
 
+### CI fix after drops 2–3: generated BACKUP_REPORT_TOKEN pinned in chart-test; Grafana step of the Compose smoke readable
+
+- **chart job, "generated secrets: install == upgrade".** Drop 2's `BACKUP_REPORT_TOKEN` went through the
+  keep-existing helper (`cell.generated`, `lookup` of `<release>-api-secrets`) but with `"value" ""`: no values
+  override, so chart-test — which simulates the upgrade by feeding every generated value back as a value, because
+  `helm template` has no cluster — could not pin it, and the api's `checksum/secret` differed between its install
+  and upgrade renders. On a cluster `lookup` returned the stored token, so upgrades did not rotate it (the kind runs
+  reported backups through the API after upgrades); the test was what broke. Now `backup.reportToken` (empty =
+  generated, then kept) is the override, chart-test pins it, and chart-test fails on any `cell.generated` caller
+  without a values override — before comparing checksums, with the secret's name. Reproduced and verified with a
+  real `helm` (the drop 2–3 renders were done with a stand-in that hid it).
+- **compose job, `smoke.sh --observability`.** The Grafana step parsed whatever `curl -f` printed: on any non-200
+  that was nothing, hence `JSONDecodeError … char 0` and no cause in the log. Every Grafana call now goes through `gf`,
+  which prints the URL, the HTTP status and the first 300 bytes of the body (like login-page-check.sh) whenever the
+  answer is not JSON with 200; the health wait gives up after 180 s with the Caddyfile's /grafana route, the
+  container's state (`OOMKilled`, exit code, restarts, health) and the last log lines of Grafana and Caddy. Grafana's
+  memory limit goes from 256 MiB to 512 MiB (its documented minimum; a first start runs its database migrations), it
+  gets a healthcheck on `/grafana/api/health`, and its provisioning tree has the `plugins/` and `alerting/`
+  directories it reads at start (empty), so its log carries no "cannot read … provisioning" errors.
+- **Process.** chart-test runs with a real `helm` before every drop and `smoke.sh --observability` on a real Docker
+  before every drop that touches `deploy/compose`; a drop that could not do either says so first (CLAUDE.md).
+
 ### Observability drop 3 — dashboards and alert rules, plus the six fixes from the rc.20 kind run (migration 0051)
 
 - **Metrics exist from the first scrape.** Every enumerable series — job kind × terminal status, pipeline status ×

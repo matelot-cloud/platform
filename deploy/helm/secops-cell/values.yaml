@@ -169,6 +169,7 @@ backup:
   schedule: "17 2 * * *"       # cron, UTC
   retentionDays: 14            # prune archives older than this on the PVC (0 = keep everything)
   image: ""                    # defaults to postgres.image, so pg_dump matches the server
+  reportToken: ""              # the bearer the backup run presents to the API (backup reports → backup gauges); generated when empty, kept across upgrades like the other generated secrets
   pvc:                         # keep archives in the namespace (a helper pod reads them back: scripts/cell-backup.sh -d DIR)
     enabled: true
     size: 10Gi

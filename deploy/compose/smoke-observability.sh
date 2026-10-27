@@ -5,11 +5,40 @@
 # Uses smoke.sh's helpers: cli, cli_json, token, log, diagnose, BASE.
 GRAFANA_PW="$(docker compose run --rm --no-deps init show | sed -n 's/^Grafana: .*local admin: admin \/ \([^)]*\)).*/\1/p')"
 [ -n "$GRAFANA_PW" ] || { echo "init show prints no Grafana admin password (was the profile passed to init?)" >&2; docker compose run --rm --no-deps init show >&2; exit 1; }
-gf() { curl -fsS -u "admin:$GRAFANA_PW" "$@"; }   # gf <url…> through Caddy
+# gf <url…>: a GET through Caddy as Grafana's local admin, like login-page-check.sh: the URL, the HTTP status and the
+# first 300 bytes of the body go to stderr whenever the answer is not JSON with status 200, so a wrong route (the
+# web app's HTML from Caddy's catch-all), a redirect, a 401 or a 502 is readable from the log; the body goes to stdout.
+GF_BODY=./.smoke-gf.body
+gf() {
+  local url="" a code
+  for a in "$@"; do case "$a" in http://*|https://*) url="$a" ;; esac; done   # the URL, wherever it is among curl's arguments
+  code="$(curl -sS -u "admin:$GRAFANA_PW" -o "$GF_BODY" -w '%{http_code}' "$@" 2> "$GF_BODY.err")" || code="000 (curl: $(cat "$GF_BODY.err"))"
+  if [ "$code" != 200 ] || ! head -c 1 "$GF_BODY" | grep -q '[{[]'; then
+    printf 'gf %s → HTTP %s; body (first 300 bytes): %s\n' "$url" "$code" "$(head -c 300 "$GF_BODY" | tr '\n' ' ')" >&2
+    return 1
+  fi
+  cat "$GF_BODY"
+}
 DS="$BASE/grafana/api/datasources/proxy/uid"
 
 log "Grafana through Caddy: health, the provisioned datasources, the Keycloak sign-in offered"
-for _ in $(seq 1 30); do gf -o /dev/null "$BASE/grafana/api/health" 2> /dev/null && break; sleep 5; done
+# Grafana's own health answer: {"database":"ok",…}. Anything else after 3 minutes — the web app's HTML (Caddy without
+# the /grafana route: init did not see the profile), a 502 (Grafana not up: its log follows), a redirect — fails here
+# with what was received, not later with a JSON error at char 0.
+up=0
+for _ in $(seq 1 36); do
+  if gf "$BASE/grafana/api/health" > "$GF_BODY.health" 2> "$GF_BODY.why" && grep -q '"database"' "$GF_BODY.health"; then up=1; break; fi
+  sleep 5
+done
+if [ "$up" = 0 ]; then
+  echo "Grafana did not answer $BASE/grafana/api/health with its health JSON in 180 s: $(cat "$GF_BODY.why")" >&2
+  echo "---- Caddyfile route for /grafana (missing = init ran without the observability profile):" >&2; docker compose exec -T caddy cat /matelot/caddy/Caddyfile 2>/dev/null | grep -n -A2 "grafana" >&2 || true
+  echo "---- grafana container (OOMKilled / restarts: a memory limit too small shows here):" >&2; docker compose ps -a grafana >&2
+  docker inspect --format 'state={{.State.Status}} oomkilled={{.State.OOMKilled}} exit={{.State.ExitCode}} restarts={{.RestartCount}} health={{if .State.Health}}{{.State.Health.Status}}{{end}}' "$(docker compose ps -aq grafana)" >&2 2>/dev/null || true
+  docker compose logs --tail 60 grafana >&2; docker compose logs --tail 20 caddy >&2
+  exit 1
+fi
+echo "   health: $(tr -d '\n' < "$GF_BODY.health")"
 gf "$BASE/grafana/api/datasources" | python3 -c '
 import sys, json
 ds = {d["uid"]: d for d in json.load(sys.stdin)}
@@ -17,7 +46,8 @@ assert {"prometheus", "tempo", "loki"} <= set(ds), sorted(ds)
 assert ds["prometheus"]["jsonData"]["exemplarTraceIdDestinations"][0]["datasourceUid"] == "tempo", ds["prometheus"]["jsonData"]
 assert ds["tempo"]["jsonData"]["tracesToLogsV2"]["datasourceUid"] == "loki", ds["tempo"]["jsonData"]
 print("   datasources:", ", ".join(sorted(ds)), "(exemplars → tempo, traces → loki)")'
-curl -fsS "$BASE/grafana/login" | grep -q "generic_oauth" || { echo "Grafana's login page offers no Keycloak sign-in" >&2; exit 1; }
+curl -sS "$BASE/grafana/login" > "$GF_BODY" || true
+grep -q "generic_oauth" "$GF_BODY" || { echo "Grafana's login page offers no Keycloak sign-in; first 300 bytes: $(head -c 300 "$GF_BODY" | tr '\n' ' ')" >&2; exit 1; }
 curl -fsS -o /dev/null -w '%{redirect_url}\n' "$BASE/grafana/login/generic_oauth" | grep -q "/auth/realms/platform/protocol/openid-connect/auth?.*client_id=grafana" \
   || { echo "Grafana's sign-in does not redirect to the cell's Keycloak" >&2; curl -sS -D - -o /dev/null "$BASE/grafana/login/generic_oauth" >&2; exit 1; }
 echo "   sign-in: redirects to the cell's Keycloak (client grafana)"

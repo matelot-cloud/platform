@@ -183,6 +183,12 @@ providers · 17 provisioning control plane.
 
 - The chart, provisioning, backup/restore (PVC and S3) and upgrades are verified on kind (Oct 2026); no real cloud
   cluster yet. `make helm-lint` (scripts/chart-test.sh) is the gate for chart changes.
+- **Before a drop (hard rule, after CI stayed red from drop 2 to drop 3):** `scripts/chart-test.sh` runs with a real
+  `helm` binary — never a stand-in renderer (one hid the unpinned BACKUP_REPORT_TOKEN) — and `deploy/compose/smoke.sh
+  --observability` (plus the plain pass) runs on a real Docker whenever the drop touches `deploy/compose`. When an
+  environment cannot do either (helm download or image registries blocked), the drop says so in its first line, with
+  what was run instead, and is not called green. Every generated secret has a values override (`"value" .Values.…`)
+  so chart-test can pin it; chart-test asserts that too.
 - The web app is tested in jsdom (test/render.mjs) and has been used in a real browser on kind; no full visual pass yet.
 - Product name is a placeholder ("Security Platform" / `secops`).
 - MCP server: apps/api/src/mcp (tools generated from OpenAPI; docs/mcp.md). CLI: `matelot mcp`.

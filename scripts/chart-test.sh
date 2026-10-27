@@ -72,13 +72,32 @@ config = by(first, "ConfigMap", "acme-registry-config")["data"]["config.yml"]
 assert reg["REGISTRY_EVENTS_SECRET"] in config, "registry config.yml and Secret disagree on REGISTRY_EVENTS_SECRET"
 open(f"{out}/reg.key", "w").write(reg["registry.key"]); open(f"{out}/reg.crt", "w").write(reg["registry.crt"])
 seed = by(first, "Secret", "acme-keycloak")["stringData"]["SEED_ADMIN_PASSWORD"]
-second = render([f"--set=encryptionKey={cell_key}", f"--set=registry.eventsSecret={reg['REGISTRY_EVENTS_SECRET']}", f"--set=managedRunners.secret={runner}", f"--set=keycloak.seedAdminPassword={seed}", f"--set-file=registry.tokenKey={out}/reg.key", f"--set-file=registry.tokenCert={out}/reg.crt"])
+# every generated secret has a values override (`"value" .Values.…`): without one this check cannot pin it, and drop 2's
+# BACKUP_REPORT_TOKEN (`"value" ""`) made it fail in CI while the stand-in renderer said the chart was fine
+import re
+helpers = open(f"{chart}/templates/_helpers.tpl").read()
+calls = re.findall(r'include "cell\.generated" \(dict ([^\n]*)\)', helpers)
+assert calls, "no cell.generated callers found"
+for c in calls:
+    name = re.search(r'"name" "(\w+)"', c).group(1)
+    # the registry key pair's explicit form is registry.tokenKey + registry.tokenCert, passed as $explicit
+    assert re.search(r'"value" (\.Values\.[\w.]+|\(coalesce \$explicit)', c), f"generated secret {name} has no values override (\"value\" .Values.…): it cannot be pinned, and an explicit value cannot be given"
+report = by(first, "Secret", "acme-api-secrets")["stringData"]["BACKUP_REPORT_TOKEN"]
+# every generated secret the chart keeps through `lookup` on a cluster has a values override: that is how this check
+# (no cluster, so `helm template` would roll a new one per render) pins it — a generated secret without one fails here
+pins = [f"--set=encryptionKey={cell_key}", f"--set=registry.eventsSecret={reg['REGISTRY_EVENTS_SECRET']}", f"--set=managedRunners.secret={runner}", f"--set=keycloak.seedAdminPassword={seed}", f"--set=backup.reportToken={report}", f"--set-file=registry.tokenKey={out}/reg.key", f"--set-file=registry.tokenCert={out}/reg.crt"]
+second = render(pins)
 a, b = checksums(first), checksums(second)
 for w in a:
     if a[w] != b[w]:
         print(f"{w}: checksums differ between install and upgrade:\n  install {a[w]}\n  upgrade {b[w]}"); sys.exit(1)
 for kind, name in [("Secret", "acme-cell-key"), ("Secret", "acme-registry"), ("Secret", "acme-managed-runner"), ("Secret", "acme-api-secrets"), ("Secret", "acme-keycloak"), ("ConfigMap", "acme-registry-config")]:
     assert by(first, kind, name) == by(second, kind, name), f"{kind}/{name} renders differently on install vs upgrade"
+# every key of the generated Secrets is covered by a pin: a new generated key must get a values override and a pin here
+generated = {"acme-cell-key": ["CELL_ENCRYPTION_KEY"], "acme-managed-runner": ["MANAGED_RUNNER_SECRET"], "acme-api-secrets": ["BACKUP_REPORT_TOKEN"], "acme-keycloak": ["SEED_ADMIN_PASSWORD"], "acme-registry": ["REGISTRY_EVENTS_SECRET", "registry.key", "registry.crt"]}
+third = render(pins)
+for name, keys in generated.items():
+    for k in keys: assert by(second, "Secret", name)["stringData"][k] == by(third, "Secret", name)["stringData"][k], f"Secret {name}.{k} is not pinned: a generated secret without a values override rolls on every helm template"
 print("   install and upgrade render identical checksums for", ", ".join(sorted(a)))
 
 # an image release must roll only the workloads whose image changed — never the database, Keycloak, Redis or registry
@@ -87,7 +106,7 @@ def pod_templates(docs):
            {f"CronJob/{d['metadata']['name']}": d["spec"]["jobTemplate"]["spec"]["template"] for d in docs if d["kind"] == "CronJob"}
 # (generated secrets pinned as above: without a cluster each `helm template` would roll new ones, and the registry's
 #  checksum legitimately covers its token key pair — on a real upgrade `lookup` returns the stored pair)
-pinned = [f"--set=encryptionKey={cell_key}", f"--set=registry.eventsSecret={reg['REGISTRY_EVENTS_SECRET']}", f"--set=managedRunners.secret={runner}", f"--set=keycloak.seedAdminPassword={seed}", f"--set-file=registry.tokenKey={out}/reg.key", f"--set-file=registry.tokenCert={out}/reg.crt"]
+pinned = pins
 # the realm-sync hook seeds tenant.adminEmails with the generated temporary password; off with keycloak.seedAdmins=false
 job = by(first, "Job", "acme-realm-sync"); env = {e["name"]: e for e in job["spec"]["template"]["spec"]["containers"][0]["env"]}
 assert env["SEED_USERS"]["value"] == ",".join(yaml.safe_load(open(f"{chart}/values.yaml"))["tenant"]["adminEmails"]), "SEED_USERS must be tenant.adminEmails"

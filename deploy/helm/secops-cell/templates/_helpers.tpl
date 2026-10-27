@@ -162,7 +162,7 @@ checksums agree, and an install renders exactly what the next upgrade renders (n
 
 {{/* Shared secret the backup job presents to POST /api/v1/internal/backup-reports (generated once, kept in api-secrets). */}}
 {{- define "cell.backupReportToken" -}}
-{{- include "cell.generated" (dict "ctx" . "name" "backupReportToken" "value" "" "secret" "api-secrets" "key" "BACKUP_REPORT_TOKEN" "gen" (randAlphaNum 48)) -}}
+{{- include "cell.generated" (dict "ctx" . "name" "backupReportToken" "value" .Values.backup.reportToken "secret" "api-secrets" "key" "BACKUP_REPORT_TOKEN" "gen" (randAlphaNum 48)) -}}
 {{- end -}}
 
 {{/* OTEL_EXPORTER_OTLP_HEADERS from the Secret observability.otlp.headersSecret (env list entry, indented by the caller).

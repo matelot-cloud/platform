@@ -1,0 +1,2 @@
+# Grafana-managed alerting provisioning: none — the alert rules are Prometheus rules (observability/rules), shown read-only in Grafana
+apiVersion: 1

@@ -47,7 +47,7 @@ cli_json() {
   printf '%s' "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); $expr"
 }
 if [ "$CHECK" = 1 ]; then printf 'CLI command: %q' "${CLI[0]}"; printf ' %q' "${CLI[@]:1}"; echo; cli --version; exit 0; fi
-cleanup() { rm -rf ./.smoke-login.err ./.smoke-cli.err ./.smoke-credentials.json ./.smoke-Dockerfile ./.smoke-context.txt ./.smoke-ctx; if [ "$KEEP" = 0 ]; then rm -f ./.env.smoke; log "down -v"; docker compose down -v --remove-orphans > /dev/null 2>&1 || true; fi; }
+cleanup() { rm -rf ./.smoke-login.err ./.smoke-cli.err ./.smoke-gf.body* ./.smoke-credentials.json ./.smoke-Dockerfile ./.smoke-context.txt ./.smoke-ctx; if [ "$KEEP" = 0 ]; then rm -f ./.env.smoke; log "down -v"; docker compose down -v --remove-orphans > /dev/null 2>&1 || true; fi; }
 trap cleanup EXIT
 
 wait_ready() { # through the proxy, as a browser would

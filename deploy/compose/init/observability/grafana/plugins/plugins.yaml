@@ -1,0 +1,3 @@
+# Grafana plugin provisioning: none (the directory exists so Grafana logs no "cannot read" error at start)
+apiVersion: 1
+apps: []

@@ -90,20 +90,32 @@ sent with the trace's id but the sampled flag off, so the cell records no span f
 `logs shipped` on the job span. The runners' claim long-poll (one request every 20 s per runner, with or without
 work) is never a trace of its own: its request span is dropped by the same rules and the polling loop runs with
 instrumentation suppressed, so an empty poll leaves nothing; a poll that hands out a job leaves one `claim` span in
-the pipeline's trace under the job's span (`matelot.claim.polls`, `matelot.claim.waited_ms`, runner, pool). The
-same for client polls: `matelot pipeline --wait` (and the correlation wait) sends each poll with a traceparent whose
-sampled flag is off, and the cell's sampler (`telemetry/sampler.ts`) records no root trace for `GET
-/pipelines/:id`, `/pipelines/:id/jobs`, `/jobs/:id`, `/jobs/:id/logs` and the correlation job endpoint from a client
-that sends nothing — a poll inside a traced request stays a child of it. Worker timers are root spans named `worker
-<loop>` (correlation, registry reconcile, exceptions, digest, remediation reconcile, snapshots, risk, usage, image
-sync, enrichment); the every-few-seconds housekeeping (sweeper, gauges, platform heartbeat and the policy_eval queue
-query) runs with instrumentation suppressed and the sweeper emits a `worker sweep` span only when it changed
-something; module initialisation of the api and the worker (signing keys, caches) runs suppressed too — so every root
-span is a request, a worker loop or a pipeline (the budget test fails on any other). `apps/api/test/span-budget.mjs` (CI, api job) runs a security pipeline through the
+the pipeline's trace under the job's span: it starts when the job became claimable (`jobs.queued_at` — creation for
+the first stage, the stage opening for later ones, a retry or a lost lease afterwards; the job span has a `queued`
+event there) and ends at the hand-out, so it is the job's queue wait and never starts before its parent; the runner's
+own long-poll wait, which may have begun before the job existed, is only the attribute `matelot.claim.waited_ms`
+(with `matelot.claim.polls`, runner, pool). **Client polls** are never a trace of their own: the web app marks every
+background refetch (its refresh interval, a window regaining focus, an invalidation when a job finished) and the CLI
+its `--wait` loops with `x-matelot-poll: 1` (the CLI also sends a traceparent whose sampled flag is off, for older
+cells); the cell's sampler (`telemetry/sampler.ts`) records no root for a GET that carries the header, nor for `GET
+/pipelines/:id`, `/pipelines/:id/jobs`, `/jobs/:id`, `/jobs/:id/logs` and the correlation job endpoint from any
+client. Every other parentless GET is recorded for a share of the trace ids — `MATELOT_TRACES_GET_RATIO`
+(`observability.otlp.getRatio`, default 0.1): reads are many and alike, one in ten shows the latency profile —
+and mutations (POST, PUT, PATCH, DELETE) always; a request inside a sampled trace follows its parent, poll or not.
+One open tab was ~150 root traces in 10 minutes (jobs/active, audit-events, /me, …) before this. Worker timers are
+root spans named `worker <loop>` (correlation, registry reconcile, exceptions, digest, remediation reconcile,
+snapshots, risk, usage, image sync, enrichment) under service `matelot-worker`; the every-few-seconds housekeeping
+(sweeper, gauges, platform heartbeat and the policy_eval queue query) runs with instrumentation suppressed and the
+sweeper emits a `worker sweep` span (also `matelot-worker`: only a pipeline's root and job spans belong to
+`matelot-pipeline`) only when it changed something; module initialisation of the api and the worker (signing keys,
+caches) runs suppressed too — so every root span is a request, a worker loop or a pipeline (the budget test fails on
+any other). `apps/api/test/span-budget.mjs` (CI, api job) runs a security pipeline through the
 built api and worker with the real instrumentation and a fake runner, and fails above **150 spans** in the trace,
 on any `/logs` span, when the root is not `pipeline Security pipeline` under `matelot-pipeline`, when any job of the
 template lacks its `job <kind>`, `claim`, `/start` and `/complete` spans in the pipeline's trace (or has them in
-another), when empty claim polls or `--wait` polls add a span, or when any root span is not a request, a `worker <loop>` or a
+another), when empty claim polls or `--wait` polls add a span, when a simulated web session (ten marked polls of four
+routes) adds a root, when a span starts before or ends after its parent, when a span other than a pipeline's root or
+job carries service `matelot-pipeline`, or when any root span is not a request, a `worker <loop>` or a
 pipeline — today the trace holds 34 spans from the cell plus the runner's own (about 25 for the real one).
 
 ### Metrics
@@ -120,6 +132,16 @@ pinned by `exposition.spec.ts`: dots → underscores, the unit as suffix, `_tota
 1, every label in the allowed set. Names follow the OTel conventions (`http.server.request.duration` →
 `http_server_request_duration_seconds`); ours carry the `matelot_` prefix.
 
+**Every enumerable series exists from the first scrape, at zero** (`KNOWN_LABEL_SETS` in `metrics.ts`,
+`seedKnownSeries`; the runner's `telemetry.ts` likewise): job kind × terminal status, pipeline status × trigger, claim
+and gate results, queue × result, the correlation / sync / webhook sets — counters through `add(0)`, histograms as
+empty buckets rendered by the serializer until observed. A series that first appears at its observed value gives
+`rate()` and `increase()` nothing for that first event: the alert on the first failed job and the p95 after the first
+pipeline were both NaN. Both the api and the worker publish the pipeline families (either process can be the one
+that finishes a given job: the runner API, the worker's policy_eval, a timeout, a cancel), so dashboards sum over
+`job`. What stays lazy, because its label set is not known at startup: the HTTP histogram (route template × method ×
+status) and the per-pool gauges — their queries use `or vector(0)` / `absent()` where a missing series matters.
+
 | Metric (Prometheus name) | Type | Labels | Source |
 |---|---|---|---|
 | `http_server_request_duration_seconds` | histogram | `http_request_method`, `http_route` (the **route template** `/api/v1/projects/:projectId`, never the raw path), `http_response_status_code` | api (interceptor after routing; probes excluded) |
@@ -130,7 +152,7 @@ pinned by `exposition.spec.ts`: dots → underscores, the unit as suffix, `_tota
 | `matelot_queue_jobs_processed_total` | counter | `queue`, `result` | worker (BullMQ events) |
 | `matelot_pipeline_jobs_total` | counter | `kind`, `status` (succeeded, failed, cancelled, timed_out) | api, on `/complete` and the sweeper |
 | `matelot_pipeline_job_duration_seconds` | histogram | `kind` | api, from `started_at` → `finished_at` |
-| `matelot_pipeline_job_queue_wait_seconds` | histogram | `kind` | api, `created_at` → `started_at` |
+| `matelot_pipeline_job_queue_wait_seconds` | histogram | `kind` | api, `queued_at` → `started_at` (queued = claimable: creation for the first stage, the stage opening for later ones) |
 | `matelot_pipeline_jobs_queued` | gauge | `kind`, `pool` | worker, `jobs` table every 15 s (the DB queue: depth and age below) |
 | `matelot_pipeline_oldest_queued_job_age_seconds` | gauge | `pool` | worker |
 | `matelot_pipelines_total` | counter | `status`, `trigger` | api |
@@ -139,13 +161,13 @@ pinned by `exposition.spec.ts`: dots → underscores, the unit as suffix, `_tota
 | `matelot_runner_last_seen_timestamp_seconds` | gauge | `pool` | worker: unix time of the newest heartbeat per pool, so `NoRunnerOnline` is `time() - … > 600`, an expression on the scrape |
 | `matelot_runner_claims_total` | counter | `result` (job, empty, disconnected) | api |
 | `matelot_runner_job_duration_seconds`, `matelot_runner_jobs_total`, `matelot_runner_busy` | histogram / counter / gauge | `kind`, `phase` / `kind`, `status` / — | runner (its own `/metrics`, `RUNNER_METRICS_PORT`; exemplars on the job histogram) |
-| `matelot_sbom_ingest_duration_seconds`, `matelot_sbom_correlation_duration_seconds` | histogram | `source` | api / worker |
+| `matelot_sbom_ingest_duration_seconds`, `matelot_sbom_correlation_duration_seconds` | histogram | `source` (runner, ci_upload, manual / loop) | api (`SbomService.ingest`) / worker |
 | `matelot_findings_open` | gauge | `severity`, `kind` (dependency, code) | worker, refreshed every 10 min with the correlation loop — **per cell, never per project** (cardinality) |
 | `matelot_gate_evaluations_total` | counter | `result` (pass, fail, warn) | api |
-| `matelot_sla_breaches` | gauge | `severity` | worker, hourly with the digest |
+| `matelot_sla_breaches` | gauge | `severity` | worker, every 10 min with the findings refresh: open / in-progress remediations past `due_at` |
 | `matelot_integration_sync_failures_total` | counter | `kind` (github, gitlab, jira, registry) | worker |
 | `matelot_webhook_lag_seconds` | histogram | `provider` | worker (delivery time → processed) |
-| `matelot_backup_last_success_timestamp_seconds`, `matelot_backup_last_duration_seconds` | gauge | — | drop 2: the backup CronJob reports to the API (`POST /internal/backup-report`, cell-local token); Compose `backup` service likewise |
+| `matelot_backup_last_success_timestamp_seconds`, `matelot_backup_last_failure_timestamp_seconds`, `matelot_backup_last_duration_seconds` | gauge | — | worker, from the backup reports (`POST /api/v1/internal/backup-reports`, cell-local token) the backup CronJob / Compose `backup` service send |
 | `matelot_license_seats_used`, `matelot_license_expiry_timestamp_seconds` | gauge | — | M13 (absent until licensing exists) |
 | `matelot_build_info` | gauge (1) | `version`, `commit`, `node_version`, `component` | each process, from `/api/v1/version` data |
 
@@ -378,41 +400,150 @@ Secret under the key `OTEL_EXPORTER_OTLP_HEADERS` and name it in `observability.
 
 ## Dashboards and alerts
 
-Dashboards are JSON in `deploy/observability/dashboards/*.json`, one source reused by the chart (ConfigMaps) and
-Compose (Grafana provisioning); the datasource is a `${DS_PROMETHEUS}` / `${DS_TEMPO}` input so they import into
-any Grafana. Four of them:
+Four dashboards and one rules file, shipped twice from one source: `deploy/observability/dashboards/*.json` and
+`deploy/observability/rules/*.yaml`, copied into the chart (`files/observability`) and the Compose profile
+(`init/observability`) by `python3 tools/dashboards/build.py` (`make dashboards`) — `chart-test` fails when a copy
+differs. The dashboards are **generated**: edit `tools/dashboards/build.py`, never the JSON. `tools/dashboards/test.py`
+(CI, chart job) regenerates and compares, parses every panel query and rule expression with `promtool`, and checks
+that every metric a query names is one a process emits — ours from the instrument declarations in
+`telemetry/metrics.ts` and the runner's `telemetry.ts`, the exporters' and Kubernetes' from its allowlist — so a
+dashboard cannot plot a metric nobody publishes. The rules' unit tests (`rules/matelot_test.yaml`, `promtool test
+rules`) run there too.
 
-1. **Cell overview** — health of every component (build_info present + up), RED per route group, queue depth
-   (BullMQ and the pipeline queue), runners online / busy, pipelines per hour and success rate, DB connections and
-   query latency, Redis latency, disk (backups PVC, registry PVC, Postgres PVC from kubelet metrics), certificate
-   expiry (cert-manager / Caddy metrics), backup age.
-2. **Pipelines** — per-kind durations p50 / p95, failures by kind, queue wait, runner utilisation, and a link from a
-   pipeline row to its trace in Tempo (`matelot.pipeline.id` data link).
-3. **Security posture** — open findings by severity over time, gate pass / fail rate, SLA breaches, SBOM coverage —
-   the business gauges from the worker.
-4. **Integrations** — sync failures by kind, webhook lag, registry pulls / pushes.
+Every query is scoped to the **`cell`** variable (`label_values(matelot_build_info, cell)`): on Helm the ServiceMonitor's
+relabel adds `cell=<slug>` to every series; on Compose the scrape jobs carry it as a target label (an external label
+would not reach the rules or the variable). The datasources are inputs (`${DS_PROMETHEUS}`, `${DS_TEMPO}`) in the
+source JSON, so it imports into any Grafana; the chart resolves them to the uids of
+`observability.grafana.dashboards.datasources` (kube-prometheus-stack's `prometheus`, our `tempo`) and compose-init to
+its provisioned datasources, because provisioning does not resolve inputs.
 
-Alerts (`deploy/observability/rules/matelot.yaml`, the PrometheusRule's source), each with a `runbook_url` into
-the alerts section of the customer page:
+| Dashboard (uid) | Rows |
+|---|---|
+| **Cell overview** (`matelot-cell-overview`) | Components (api, worker, Keycloak, Postgres, Redis, registry up; runners online; version) · Traffic RED (requests/s by route, 5xx ratio, p50/p95/p99) · Queues and runners (pipeline jobs queued by kind, oldest queued job by pool, runners online/busy, BullMQ by queue and state) · Pipelines (per hour by status, success rate, jobs finished) · Database and cache (pool connections per process, query p95, Postgres transactions and size, Redis commands and memory) · Backups, storage and certificates (backup age, duration, last failure; PVC usage and certificate expiry from the cluster — empty on Compose) |
+| **Pipelines** (`matelot-pipelines`, variable `kind`) | Jobs (duration p95/p50 by kind with exemplars, finished per hour by status, failures by kind, queue wait p95, the runners' own duration) · Runners (utilisation, claims/s by result, online by pool) · Pipelines (duration p95 by status, per hour by trigger, a 24 h table by kind). The traces: the exemplar dots open the job's trace in Tempo; a text panel gives the TraceQL for the failed pipelines |
+| **Security posture** (`matelot-security-posture`) | Findings (open by severity and kind, critical/high stats, SLA breaches, total) · Gates and SLAs (evaluations per hour by result, fail ratio, breaches by severity) · SBOMs (ingested per hour by source, ingest p95, correlation run p95) |
+| **Integrations** (`matelot-integrations`) | Source and issue trackers (sync failures by kind, worker queue jobs by result, webhook lag p95, failed BullMQ jobs) · Built-in registry (requests/s by handler and method = pulls and pushes, 4xx/5xx, p95) · Keycloak (active requests, JVM heap, Agroal pool) |
+
+Two gauges that existed as instruments but were never set now are: `matelot_sla_breaches{severity}` (open or
+in-progress remediations past their due date, with the findings refresh every 10 minutes) and
+`matelot_sbom_ingest_duration_seconds{source}` (around `SbomService.ingest`; source = runner, ci_upload, manual).
+"SBOM coverage" as a per-service ratio is the product's own Coverage page, not a cell metric (it would be per
+service: cardinality); the dashboard shows ingests per hour by source. Where the design said "a link from a pipeline
+row to its trace", the metrics carry no pipeline ids (labels are bounded sets), so the link is the exemplar on the
+duration histograms plus the TraceQL panel.
+
+**Helm:** `observability.prometheusRules.enabled` renders the PrometheusRule `<release>` (labels from
+`prometheusRules.labels`, e.g. `release: kube-prometheus-stack`; `prometheusRules.kubernetes: false` leaves out the
+group that needs kube-state-metrics / kubelet / cert-manager; `runbookBaseUrl` rewrites every `runbook_url`);
+`observability.grafana.dashboards.enabled` renders one ConfigMap per dashboard with `grafana_dashboard: "1"` and the
+`grafana_folder: Matelot` annotation for the sidecar (`deploy/observability/kind/kube-prometheus-stack.values.yaml`
+sets `sidecar.dashboards.folderAnnotation` and `ruleNamespaceSelector: {}`). Both need `metrics.enabled` and the
+operator's CRDs; `make kind-observability` switches them on with the rest. **Compose:** the profile's Prometheus loads
+`rules/matelot.yaml` (its `/alerts` page shows them; Grafana's alert list too) and Grafana provisions the four
+dashboards into folder *Matelot*; `smoke.sh --observability` asserts the dashboards, the rules and that the inputs
+resolved. Screenshots of the dashboards are not in this repository: they come from the kind acceptance run.
+
+### Alerts
+
+`deploy/observability/rules/matelot.yaml` (every stack) and `matelot-kubernetes.yaml` (Kubernetes metrics). Each
+alert links here (`runbook_url`, `#alert-<name>`); severities: *critical* = users or data are affected now, *warning*
+= they will be. Prometheus evaluates them; routing to a pager is the customer's Alertmanager.
 
 | Alert | Condition | Severity |
 |---|---|---|
-| `MatelotApiDown` | `up{job="matelot-api"} == 0` for 2 m, or no `matelot_build_info{component="api"}` | critical |
-| `MatelotWorkerDown` | no worker `build_info` / `up == 0` for 5 m | critical |
-| `MatelotNoRunnerOnline` | `sum(matelot_runners_online) == 0` for 10 m while `matelot_pipeline_jobs_queued > 0` | warning |
-| `MatelotQueueBacklog` | `matelot_pipeline_oldest_queued_job_age_seconds > 600` or BullMQ oldest > 600 s for 10 m | warning |
-| `MatelotPipelineFailureRate` | failed / total over 1 h > 50 % with ≥ 5 pipelines | warning |
-| `MatelotDbConnectionsHigh` | pool in use > 80 % of `DB_POOL_MAX` for 10 m | warning |
-| `MatelotBackupFailed` | the backup CronJob's last run failed (kube-state-metrics `kube_job_status_failed`) or `matelot_backup_last_success_timestamp_seconds` older than 2 × the schedule | critical |
-| `MatelotBackupTooOld` | last success > 36 h | warning |
-| `MatelotCertificateExpiring` | `certmanager_certificate_expiration_timestamp_seconds - time() < 14 d` | warning |
-| `MatelotDiskAlmostFull` | any cell PVC `kubelet_volume_stats_available_bytes / capacity < 10 %` | critical |
-| `MatelotKeycloakDown` | Keycloak `up == 0` for 2 m | critical |
-| `MatelotLicenseExpiring` | `matelot_license_expiry_timestamp_seconds - time() < 14 d` (M13) | warning |
+| `MatelotApiDown` | `up{job="matelot-api"} == 0` for 2 m | critical |
+| `MatelotApiAbsent` | no `matelot-api` target at all for 5 m | critical |
+| `MatelotWorkerDown` | `up{job="matelot-worker"} == 0` for 5 m | critical |
+| `MatelotKeycloakDown` | `up{job="matelot-keycloak"} == 0` for 2 m | critical |
+| `MatelotNoRunnerOnline` | runners online = 0 (or none ever reported) while `matelot_pipeline_jobs_queued > 0`, for 10 m | warning |
+| `MatelotQueueBacklog` | oldest queued pipeline job or BullMQ job older than 600 s, for 10 m | warning |
+| `MatelotPipelineFailureRate` | failed / total pipelines over 1 h > 50 % with ≥ 5 pipelines, for 15 m | warning |
+| `MatelotDbConnectionsHigh` | a process has > 8 of its 10 pool connections in use, or callers waiting, for 10 m | warning |
+| `MatelotBackupFailed` | the last backup report is a failure newer than the last success, for 5 m | critical |
+| `MatelotBackupTooOld` | last success older than 36 h, for 1 h | warning |
+| `MatelotLicenseExpiring` | `matelot_license_expiry_timestamp_seconds - time() < 14 d` (absent until M13) | warning |
+| `MatelotBackupJobFailed` (k8s) | `kube_job_status_failed` of a `*-backup-*` Job in a `tenant-*` namespace | critical |
+| `MatelotCertificateExpiring` (k8s) | `certmanager_certificate_expiration_timestamp_seconds - time() < 14 d` | warning |
+| `MatelotDiskAlmostFull` (k8s) | a `tenant-*` PVC under 10 % free (kubelet volume stats), for 15 m | critical |
 
-CI validates the dashboards (`dashboard-linter`) and the rules (`promtool check rules`, `promtool test rules`
-with unit tests for `NoRunnerOnline`, `QueueBacklog`, `BackupTooOld`); `docs/observability.md` carries screenshots
-of the four dashboards from the kind acceptance run.
+Runbooks:
+
+#### Alert: MatelotApiDown
+The api pod answers no scrape. `kubectl -n tenant-<slug> get pods` / `docker compose ps`: a crash loop shows in the
+restart count; `kubectl logs deploy/<slug>-api --previous` has the reason — most often the database unreachable at
+start (`DATABASE_URL`, Postgres down: see Postgres on the Cell overview) or a failed migration (the init container's
+log). `/api/v1/health/ready` through the ingress says whether users are affected; if only the metrics port is
+unreachable the NetworkPolicy or the ServiceMonitor changed (`scrapeFromNamespaces`).
+
+#### Alert: MatelotApiAbsent
+Prometheus has no target: the metrics Service is gone (`kubectl -n tenant-<slug> get svc <slug>-api-metrics`), the
+ServiceMonitor is not selected (its labels must match the Prometheus's `serviceMonitorSelector` — the `release` label
+of kube-prometheus-stack), or `observability.metrics.enabled` was turned off while this rule stayed loaded.
+
+#### Alert: MatelotWorkerDown
+Background work stopped: source sync, webhooks, correlation, the policy_eval stage of pipelines, the sweeper. Same
+diagnosis as the api (`deploy/<slug>-worker`); the worker also needs Redis (`REDIS_URL`) — a Redis down shows as
+`redis_up 0` on the overview. Pipelines whose next stage is *evaluate* stay queued until it is back.
+
+#### Alert: MatelotKeycloakDown
+Nobody can sign in. `kubectl -n tenant-<slug> logs deploy/<slug>-keycloak`: its database (the `keycloak` database on
+the same Postgres), the hostname settings after a domain change (`KC_HOSTNAME`), or memory. Existing tokens keep
+working until they expire; the API itself is up.
+
+#### Alert: MatelotNoRunnerOnline
+Jobs wait and no runner has sent a heartbeat for a minute. Managed runners: `kubectl -n tenant-<slug> get sts
+<slug>-runner` (scaled to 0? crash loop? the registration secret rotated?). Customer runners: their host, their
+network path to the API, their token. `matelot runners list` and `matelot doctor` show the same from the CLI. The
+queued jobs run as soon as a runner with the required tags comes back; nothing is lost.
+
+#### Alert: MatelotQueueBacklog
+The oldest queued job has waited more than 10 minutes. Pipeline jobs: not enough runners for the load, or jobs whose
+`requiredTags` / requested pool no runner serves (`matelot job show <id>`); the Pipelines dashboard's *Queue wait* and
+*Runners online by pool* tell which. BullMQ jobs (source sync, webhooks): the worker is down or saturated — the
+Integrations dashboard's *Worker queue jobs* and *Failed BullMQ jobs*.
+
+#### Alert: MatelotPipelineFailureRate
+More than half the pipelines of the last hour failed, at least five of them. Look at the Pipelines dashboard's
+*Failures per hour by kind*: one kind failing everywhere is a scanner image or a repository the runners cannot
+reach (the job log: `matelot job logs <id>`); every kind failing is the runner's environment (disk, network, a
+broken image pull). A gate (`policy_eval`) failing every run is a policy, not an outage — the Security posture
+dashboard's gate panels.
+
+#### Alert: MatelotDbConnectionsHigh
+A process holds more than 8 of its 10 pool connections, or requests wait for one. A slow query is the usual cause:
+`pg_stat_activity` on the cell's Postgres (`kubectl exec … psql`), or the *Query latency p95* panel; a sustained load
+needs more api replicas (`api.replicas`) rather than a bigger pool.
+
+#### Alert: MatelotBackupFailed
+The last backup run reported a failure. The reason is in the report (`backup_reports` table through
+`GET /api/v1/internal/backup-reports` is not exposed; the API's audit trail has `backup.failed` with the error) and
+in the Job's log (`kubectl -n tenant-<slug> logs job/<name>`; Compose: `docker compose --profile backup run --rm
+backup`). Typical: Postgres unreachable (the run waits two minutes for it), the backups PVC full
+(`MatelotDiskAlmostFull`), S3 credentials. Run one by hand: `make backup TENANT=<slug>`.
+
+#### Alert: MatelotBackupTooOld
+No successful backup for 36 hours. The CronJob is suspended or its schedule changed (`kubectl -n tenant-<slug> get
+cronjob`), every run fails (see above), or backups were disabled (`backup.enabled`) while the rules stayed loaded —
+then turn the rules off or the backups on.
+
+#### Alert: MatelotLicenseExpiring
+The licence expires within 14 days (M13 licensing; the metric does not exist before). Renew the key in Settings →
+License; the cell falls back to the Free tier otherwise.
+
+#### Alert: MatelotBackupJobFailed
+Kubernetes saw a backup Job pod fail (kube-state-metrics). Same as `MatelotBackupFailed`, from the cluster's side:
+`kubectl -n <namespace> get jobs` and the failed pod's log.
+
+#### Alert: MatelotCertificateExpiring
+cert-manager has not renewed a cell certificate due within 14 days: `kubectl -n <namespace> describe certificate`
+and the issuer's challenge (DNS of `<slug>.<domain>`, `auth-<slug>.<domain>`, `registry-<slug>.<domain>` pointing at
+the ingress; rate limits). Users see browser warnings when it expires.
+
+#### Alert: MatelotDiskAlmostFull
+A cell volume has under 10 % free: Postgres (`<slug>-postgres`), the registry, or the backups PVC. Grow the PVC if the
+storage class allows expansion; otherwise prune — backup retention (`backup.retentionDays`), registry garbage
+collection, or the database's own growth (SBOM documents are the bulk). Postgres stopping on a full disk takes the
+cell down.
 
 ## Product-facing (phase 4)
 
@@ -446,7 +577,7 @@ of the four dashboards from the kind acceptance run.
 |---|---|---|
 | 1 — instrumentation ✅ | `tracing.ts` preload + SDK in api / worker; runner spans and `traceParent` in the claim protocol (`pipelines.trace_parent`, `jobs.trace_parent`, migration 0049); meter with Views + our exposition on 9464 (exemplars); log schema, per-module levels, redaction list + test; env in `env.ts`, `api-configmap.yaml`, `compose-init`; `/version` with commit; `make kind-jaeger` | `exposition.spec.ts` (format, buckets, exemplars, labels), `log-schema.spec.ts` (redaction, levels, trace ids), `tracing.spec.ts` (no-op when off, provider when on), `pipeline-trace.spec.ts` (create → claim → complete: one trace, pinned ids, parents, exemplars, BullMQ propagation), runner `telemetry.test.ts`; verified against a real Jaeger 2.22: a security pipeline (checkout, syft, trivy, semgrep, gate) is one trace across api, runner and worker |
 | 2 — delivery | `observability.*` values, metrics Services + one ServiceMonitor, NetworkPolicy, exporter sidecars, Keycloak metrics, registry debug port, OTLP headers from a Secret only, backup reports → backup gauges; chart-test on / off; CI kind with the operator CRDs; Compose profile with collector, Prometheus, Tempo, Loki, Grafana (Keycloak sign-in), Alloy; `smoke.sh --observability`; the collector config and the kube-prometheus-stack recipe above; `make kind-observability` | chart-test and CI green; Compose smoke with the profile green (targets up, trace in Tempo, logs in Loki); on kind with the recipe: `apply` passes, every matelot target UP, `matelot_build_info` for api / worker / runner, the exporters' series, a demo-app pipeline trace in Tempo with its logs in Loki |
-| 3 — dashboards and alerts | the four dashboards, the rules file, `promtool` / linter in CI, PrometheusRule and dashboards ConfigMaps, Grafana provisioning in Compose, screenshots | kind with kube-prometheus-stack + Tempo + Loki: dashboards show the demo pipeline; `NoRunnerOnline` fires with runners scaled to 0; `BackupFailed` fires when the CronJob is made to fail |
+| 3 — dashboards and alerts | the four dashboards generated by `tools/dashboards/build.py`, the rules files with promtool unit tests, `tools/dashboards/test.py` in CI (regeneration, expression parsing, every metric published), PrometheusRule + dashboards ConfigMaps in the chart, Grafana provisioning + `rule_files` in Compose, `smoke.sh --observability` asserting both, the runbooks above; with it the fixes the rc.20 run asked for: series seeded at zero, the claim span inside its job, `worker sweep` under matelot-worker, the image tag pinned by `apply --tag`, the backup waiting for Postgres, polls never roots (`x-matelot-poll`) and GETs ratio-sampled | kind with kube-prometheus-stack + Tempo + Loki: dashboards show the demo pipeline; `NoRunnerOnline` fires with runners scaled to 0; `BackupFailed` fires when the CronJob is made to fail |
 | 4 — product | Settings → Observability, doctor section, audit / security events as OTel logs, customer docs | render tests for the page; doctor test; the SIEM schema documented and covered by a test that pins the field names |
 
 Acceptance for the milestone: on kind with kube-prometheus-stack, Tempo and Loki installed from their charts and

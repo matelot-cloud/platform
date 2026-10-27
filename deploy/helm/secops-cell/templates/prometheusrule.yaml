@@ -1,0 +1,29 @@
+{{- /*
+The cell's alert rules as a PrometheusRule (observability.prometheusRules.enabled): the groups of
+files/observability/rules/*.yaml (the copies of deploy/observability/rules — chart-test fails when they differ), the
+runbook base URL rewritten to prometheusRules.runbookBaseUrl. Needs the prometheus-operator CRDs (kube-prometheus-stack)
+and the labels its ruleSelector wants (prometheusRules.labels, e.g. release: kube-prometheus-stack). The series
+carry `cell` from the ServiceMonitor's relabel, so the rules are per cell even with one Prometheus for many.
+*/ -}}
+{{- if .Values.observability.prometheusRules.enabled }}
+{{- if not .Values.observability.metrics.enabled }}{{ fail "observability.prometheusRules.enabled needs observability.metrics.enabled" }}{{ end }}
+{{- $base := "https://matelot-cloud.github.io/website/docs/latest/observability.html" }}
+{{- $groups := (.Files.Get "files/observability/rules/matelot.yaml" | fromYaml).groups }}
+{{- if .Values.observability.prometheusRules.kubernetes }}
+{{- $groups = concat $groups (.Files.Get "files/observability/rules/matelot-kubernetes.yaml" | fromYaml).groups }}
+{{- end }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app.kubernetes.io/name: secops-cell
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    matelot.cloud/cell: {{ .Values.tenant.slug | quote }}
+    {{- with .Values.observability.prometheusRules.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    {{- toYaml $groups | replace $base (.Values.observability.prometheusRules.runbookBaseUrl | trimSuffix "/") | nindent 4 }}
+{{- end }}

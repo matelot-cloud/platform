@@ -95,6 +95,8 @@ export const envSchema = z.object({
   OTEL_EXPORTER_OTLP_PROTOCOL: z.preprocess(emptyToUndefined, z.enum(['grpc', 'http/protobuf', 'http/json']).optional()),
   OTEL_TRACES_SAMPLER: z.preprocess(emptyToUndefined, z.enum(['always_on', 'always_off', 'traceidratio', 'parentbased_always_on', 'parentbased_always_off', 'parentbased_traceidratio']).optional()),
   OTEL_TRACES_SAMPLER_ARG: z.preprocess(emptyToUndefined, z.coerce.number().min(0).max(1).optional()),
+  /** share of parentless GET requests recorded as traces (polls never are; mutations always): telemetry/sampler.ts */
+  MATELOT_TRACES_GET_RATIO: z.preprocess(emptyToUndefined, z.coerce.number().min(0).max(1).optional()),
   OTEL_METRICS_EXPORTER: z.preprocess(emptyToUndefined, z.string().regex(/^(prometheus|otlp|none)(,(prometheus|otlp|none))*$/).optional()),
   /** `deployment.environment` on every signal. */
   DEPLOYMENT_ENVIRONMENT: z.string().default('production'),

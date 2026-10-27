@@ -102,6 +102,15 @@ jobs:
       - run: python3 -c 'import yaml' 2>/dev/null || pip install pyyaml
       - name: helm lint + render in every supported configuration
         run: bash scripts/chart-test.sh
+      - name: Dashboards and alert rules (built from tools/dashboards/build.py; every query parses and names a metric a process emits; promtool unit tests of the alerts)
+        run: |
+          curl -fsSL -o /tmp/prometheus.tar.gz https://github.com/prometheus/prometheus/releases/download/v3.15.0/prometheus-3.15.0.linux-amd64.tar.gz
+          tar -xzf /tmp/prometheus.tar.gz -C /tmp prometheus-3.15.0.linux-amd64/promtool
+          PROMTOOL=/tmp/prometheus-3.15.0.linux-amd64/promtool python3 tools/dashboards/test.py
+          # the Compose Prometheus config with the rule file where the container has it
+          mkdir -p /tmp/pc/matelot/observability/rules && cp deploy/observability/rules/matelot.yaml /tmp/pc/matelot/observability/rules/ && sed 's/__CELL__/acme/g' deploy/compose/init/observability/prometheus.yml > /tmp/pc/prometheus.yml
+          sed -i 's#- /matelot/observability/rules/matelot.yaml#- /tmp/pc/matelot/observability/rules/matelot.yaml#' /tmp/pc/prometheus.yml
+          /tmp/prometheus-3.15.0.linux-amd64/promtool check config --lint-fatal /tmp/pc/prometheus.yml
       - name: kind cluster for API-server validation (about 40 s)
         uses: helm/kind-action@v1
         with: { cluster_name: chart-dry-run, wait: 60s }

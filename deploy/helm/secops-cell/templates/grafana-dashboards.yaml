@@ -1,0 +1,29 @@
+{{- /*
+The four dashboards (files/observability/dashboards — copies of deploy/observability/dashboards, built by
+tools/dashboards/build.py; chart-test fails when they differ) as ConfigMaps for Grafana's sidecar
+(observability.grafana.dashboards.enabled): kube-prometheus-stack picks up label grafana_dashboard=1 in every namespace
+by default and files them under the folder of the grafana_folder annotation when sidecar.dashboards.folderAnnotation
+is set. The JSON's ${DS_PROMETHEUS} / ${DS_TEMPO} inputs — kept for a manual import — are resolved to the datasource
+uids of grafana.dashboards.datasources, because provisioning does not resolve inputs.
+*/ -}}
+{{- if .Values.observability.grafana.dashboards.enabled }}
+{{- $d := .Values.observability.grafana.dashboards }}
+{{- range $path, $_ := .Files.Glob "files/observability/dashboards/*.json" }}
+{{- $name := base $path | trimSuffix ".json" }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $.Release.Name }}-dashboard-{{ $name }}
+  labels:
+    app.kubernetes.io/name: secops-cell
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+    matelot.cloud/cell: {{ $.Values.tenant.slug | quote }}
+    {{ $d.label }}: {{ $d.labelValue | quote }}
+  annotations:
+    {{ $d.folderAnnotation }}: {{ $d.folder | quote }}
+data:
+  matelot-{{ $name }}.json: |-
+{{ $.Files.Get $path | replace "${DS_PROMETHEUS}" $d.datasources.prometheus | replace "${DS_TEMPO}" $d.datasources.tempo | indent 4 }}
+{{- end }}
+{{- end }}

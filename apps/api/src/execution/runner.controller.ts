@@ -3,14 +3,18 @@ import { getMetrics } from '../telemetry/metrics';
 import { context as otelContext, SpanKind } from '@opentelemetry/api';
 import { suppressTracing } from '@opentelemetry/core';
 import { contextFromTraceparent, tracer } from '../telemetry/spans';
+import { queuedAt } from '../telemetry/pipeline-telemetry';
 import type { Job } from '../database/schema';
 
-/** The one span a successful claim leaves: in the pipeline's trace, under the job's span (never under the poll's). */
-function emitClaimSpan(job: Job, principal: RunnerPrincipal, startedMs: number, polls: number): void {
+/** The one span a successful claim leaves: in the pipeline's trace, under the job's span (never under the poll's). It
+ *  covers the job's time in the queue — from when it became claimable (jobs.queued_at) to the hand-out — so it never
+ *  starts before its parent, whose start is the job's creation; this runner's own long-poll wait (which may have begun
+ *  long before the job existed) is only the attribute `matelot.claim.waited_ms`. */
+function emitClaimSpan(job: Job, principal: RunnerPrincipal, pollStartedMs: number, polls: number): void {
   if (!job.traceParent) return;
   const span = tracer().startSpan('claim', {
-    kind: SpanKind.INTERNAL, startTime: new Date(startedMs),
-    attributes: { 'matelot.job.id': job.id, 'matelot.job.kind': job.type, 'matelot.pipeline.id': job.pipelineId ?? '', 'matelot.runner.name': principal.runner.name, 'matelot.pool': principal.pool.slug, 'matelot.claim.polls': polls, 'matelot.claim.waited_ms': Date.now() - startedMs, 'matelot.claim.result': 'job' },
+    kind: SpanKind.INTERNAL, startTime: queuedAt(job),
+    attributes: { 'matelot.job.id': job.id, 'matelot.job.kind': job.type, 'matelot.pipeline.id': job.pipelineId ?? '', 'matelot.runner.name': principal.runner.name, 'matelot.pool': principal.pool.slug, 'matelot.claim.polls': polls, 'matelot.claim.waited_ms': Date.now() - pollStartedMs, 'matelot.claim.result': 'job' },
   }, contextFromTraceparent(job.traceParent));
   span.end();
 }

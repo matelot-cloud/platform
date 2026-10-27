@@ -9,7 +9,7 @@
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b",
     "preview": "vite preview",
-    "test": "node test/render.mjs && node test/oauth-consent-flow.mjs && node test/keyless-verify.mjs && node test/onboarding-card.mjs && node test/members-flow.mjs"
+    "test": "node test/render.mjs && node test/oauth-consent-flow.mjs && node test/keyless-verify.mjs && node test/onboarding-card.mjs && node test/members-flow.mjs && node test/poll-header.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.59.0",

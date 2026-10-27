@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The observability delivery on the local kind cluster (docs/observability.md): kube-prometheus-stack (Prometheus with
 # exemplars, Grafana with Tempo / Loki datasources), Tempo, Loki and Alloy from their charts in namespace monitoring,
-# then the cell switched on — ServiceMonitor, exporters, OTLP to Tempo — through its values file and `apply`.
+# then the cell switched on — ServiceMonitor, PrometheusRule, exporters, dashboards, OTLP to Tempo — through its values
+# file and `apply`.
 #   make kind-observability TENANT=acme          (the cell exists: make provision / cell-provision.sh new + apply)
 #   scripts/kind-observability.sh <slug> [--print] --print only prints the helm commands (to run them by hand)
 # Versions are pinned (the ones the drop was validated against); values in deploy/observability/kind/.
@@ -33,10 +34,14 @@ cat <<EOT
 The stack runs in namespace $NS and the cell "$TENANT" is wired to it. To look:
   kubectl -n $NS port-forward svc/kube-prometheus-stack-grafana 3000:80 &      → http://localhost:3000  (admin / matelot-kind)
   kubectl -n $NS port-forward svc/kube-prometheus-stack-prometheus 9090:9090 & → http://localhost:9090/targets
-Checks (the acceptance of docs/observability.md, drop 2):
+Checks (the acceptance of docs/observability.md, drops 2 and 3):
   every serviceMonitor/tenant-$TENANT/$TENANT/* target UP     (Prometheus → Status → Targets)
   count by (job) (matelot_build_info)                        → matelot-api, matelot-worker, matelot-runner
   pg_up{namespace="tenant-$TENANT"}  redis_up{…}  jvm_memory_used_bytes{job="matelot-keycloak"}  go_goroutines{job="matelot-registry"}
   run a pipeline, then Grafana → Explore → Tempo → service "matelot-pipeline" → the trace → "Logs for this span" (Loki)
+  Grafana → Dashboards → folder Matelot: Cell overview, Pipelines, Security posture, Integrations (from the cell's ConfigMaps)
+  Prometheus → Alerts: groups matelot and matelot-kubernetes (the cell's PrometheusRule); scale the runners to 0 with a
+  job queued → MatelotNoRunnerOnline after 10 m; make the backup CronJob fail (kubectl create job … --from=cronjob/$TENANT-backup
+  with a wrong PGHOST) → MatelotBackupFailed after its report
 Without the stack again: empty the observability block in $VALUES and apply; helm uninstall alloy loki tempo kube-prometheus-stack -n $NS.
 EOT

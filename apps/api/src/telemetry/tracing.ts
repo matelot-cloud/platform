@@ -141,7 +141,8 @@ export function startTracing(env: NodeJS.ProcessEnv = process.env): TracingHandl
       new HttpInstrumentation({
         ignoreIncomingRequestHook: (req: { url?: string }) => ignoredIncomingPath((req.url ?? '').split('?')[0]),
         // no query strings in span attributes: tokens travel in them (registry token, OAuth); the redaction rule applies to spans too
-        startIncomingSpanHook: (req: { url?: string }) => ({ 'url.path': (req.url ?? '').split('?')[0] }),
+        // `matelot.poll` from the x-matelot-poll header: what the sampler reads to drop a client's background refetch
+        startIncomingSpanHook: (req: { url?: string; headers?: Record<string, string | string[] | undefined> }) => ({ 'url.path': (req.url ?? '').split('?')[0], ...(String(req.headers?.['x-matelot-poll'] ?? '') === '1' ? { 'matelot.poll': true } : {}) }),
       }),
       // express: only the route template on the http span (one span per request, not one per middleware layer)
       new ExpressInstrumentation({ ignoreLayersType: [ExpressLayerType.MIDDLEWARE, ExpressLayerType.REQUEST_HANDLER, ExpressLayerType.ROUTER] }),

@@ -120,6 +120,19 @@ assert {"matelot-api", "matelot-worker", "matelot-runner", "matelot-postgres", "
 ds = {d["uid"]: d for d in yaml.safe_load(open(o / "grafana/datasources/datasources.yaml"))["datasources"]}
 assert ds["prometheus"]["jsonData"]["exemplarTraceIdDestinations"][0]["datasourceUid"] == "tempo"
 assert ds["tempo"]["jsonData"]["tracesToLogsV2"]["datasourceUid"] == "loki" and 'cell="acme"' in ds["tempo"]["jsonData"]["tracesToLogsV2"]["query"]
+# drop 3: the dashboards are provisioned with their inputs resolved to those datasources; Prometheus loads the rules and
+# labels every cell target with cell="<slug>" (what the rules and the $cell variable group on)
+dash = sorted(p.name for p in (o / "grafana/dashboards").glob("*.json"))
+assert dash == ["cell-overview.json", "integrations.json", "pipelines.json", "security-posture.json"], dash
+for f in dash:
+    body = (o / "grafana/dashboards" / f).read_text(); assert "${DS_" not in body, f
+    j = json.loads(body); assert {t["datasource"]["uid"] for p in j["panels"] for t in p.get("targets", [])} == {"prometheus"}, f
+prov = yaml.safe_load(open(o / "grafana/dashboards/dashboards.yaml"))["providers"][0]
+assert prov["options"]["path"] == "/matelot/observability/grafana/dashboards" and prov["folder"] == "Matelot"
+assert prom["rule_files"] == ["/matelot/observability/rules/matelot.yaml"] and (o / "rules/matelot.yaml").exists()
+for j in prom["scrape_configs"]:
+    if j["job_name"].startswith("matelot-"): assert j["static_configs"][0]["labels"] == {"cell": "acme"}, j
+rules = yaml.safe_load(open(o / "rules/matelot.yaml")); assert rules["groups"][0]["name"] == "matelot"
 PY
 MATELOT_PROFILES=observability bash compose-init.sh show | grep -q "Grafana" || { echo "FAIL: show prints Grafana" >&2; exit 1; }
 # without the profile nothing of it is rendered into the Caddyfile or Keycloak

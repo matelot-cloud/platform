@@ -14,6 +14,11 @@ import { emitCompletedSpan } from './spans';
  * nothing lives in memory across requests or replicas. Metrics are recorded at the same points, exemplars pointing
  * at the pipeline's trace.
  */
+/** When the job last became claimable (jobs.queued_at), never before its creation (rows older than the column). */
+export function queuedAt(job: Pick<Job, 'createdAt' | 'queuedAt'>): Date {
+  return job.queuedAt && job.queuedAt.getTime() >= job.createdAt.getTime() ? job.queuedAt : job.createdAt;
+}
+
 @Injectable()
 export class PipelineTelemetry {
   constructor(private readonly metrics: Metrics) {}
@@ -41,7 +46,7 @@ export class PipelineTelemetry {
     const exemplar = ids ? { traceId: ids.traceId, spanId: ids.spanId } : null;
     if (started && status !== 'skipped') {
       this.metrics.pipelineJobDuration.record(Math.max(0, (finishedAt.getTime() - started.getTime()) / 1000), { kind: job.type }, exemplar);
-      this.metrics.pipelineJobQueueWait.record(Math.max(0, (started.getTime() - job.createdAt.getTime()) / 1000), { kind: job.type }, exemplar);
+      this.metrics.pipelineJobQueueWait.record(Math.max(0, (started.getTime() - queuedAt(job).getTime()) / 1000), { kind: job.type }, exemplar);
     }
     if (!ids) return;
     const attributes: Attributes = { 'matelot.job.id': job.id, 'matelot.job.kind': job.type, 'matelot.job.name': job.name ?? '', 'matelot.job.stage': job.stage ?? '', 'matelot.job.status': status, 'matelot.job.attempts': job.attempts, 'matelot.pipeline.id': job.pipelineId ?? '', 'matelot.project.id': job.projectId, 'matelot.organization.id': job.organizationId };
@@ -50,6 +55,7 @@ export class PipelineTelemetry {
     if (runnerName) attributes['matelot.runner.name'] = runnerName;
     if (pipeline?.number) attributes['matelot.pipeline.number'] = pipeline.number;
     const events = [];
+    if (job.queuedAt && job.queuedAt.getTime() > job.createdAt.getTime()) events.push({ name: 'queued', time: job.queuedAt });   // a later stage: queued when the stage opened
     if (job.assignedAt) events.push({ name: 'claimed', time: job.assignedAt });
     if (job.startedAt) events.push({ name: 'started', time: job.startedAt });
     // a skipped job (an earlier stage failed) is a span too, so the pipeline trace shows every job of the template

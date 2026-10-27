@@ -105,10 +105,22 @@ export function serializeMetric(out: string[], metric: MetricData, exemplars: Ex
  *  being observed, Prometheus semantics want them gone — a pool that vanished must not report its last runner count. */
 export interface GaugeFamily { name: string; unit?: string; description?: string; series: { attributes: Attributes; value: number }[] }
 
+/** A histogram's label sets published at zero until observed (the SDK omits what was never recorded). */
+export interface HistogramSeeds { name: string; unit?: string; description?: string; boundaries: readonly number[]; seeds: Attributes[] }
+
+function zeroHistogram(out: string[], name: string, boundaries: readonly number[], attributes: Attributes): void {
+  for (const b of boundaries) out.push(`${name}_bucket${labels(attributes, { le: num(b) })} 0`);
+  out.push(`${name}_bucket${labels(attributes, { le: '+Inf' })} 0`);
+  out.push(`${name}_sum${labels(attributes)} 0`);
+  out.push(`${name}_count${labels(attributes)} 0`);
+}
+
 /** The whole page; `openMetrics` adds exemplars and the `# EOF` trailer. */
-export function serialize(resourceMetrics: ResourceMetrics, exemplars?: ExemplarLookup, openMetrics = false, gauges: GaugeFamily[] = []): string {
+export function serialize(resourceMetrics: ResourceMetrics, exemplars?: ExemplarLookup, openMetrics = false, gauges: GaugeFamily[] = [], seeded: HistogramSeeds[] = []): string {
   const out: string[] = [];
   const seen = new Set<string>();
+  const seedsByName = new Map(seeded.map((s) => [s.name, s]));
+  const seriesKey = (a: Attributes) => JSON.stringify(Object.entries(a).sort());
   for (const g of gauges) {
     const name = prometheusName(g.name, g.unit);
     seen.add(name);
@@ -122,7 +134,20 @@ export function serialize(resourceMetrics: ResourceMetrics, exemplars?: Exemplar
       if (seen.has(key)) continue; // two instruments rendering the same family would be an invalid page: first wins
       seen.add(key);
       serializeMetric(out, metric, exemplars, openMetrics);
+      const sd = metric.dataPointType === DataPointType.HISTOGRAM ? seedsByName.get(metric.descriptor.name) : undefined;
+      if (sd) {   // seeded sets not yet observed, after the real series of the same family
+        const have = new Set(metric.dataPoints.map((dp) => seriesKey(dp.attributes)));
+        for (const a of sd.seeds) if (!have.has(seriesKey(a))) zeroHistogram(out, key, sd.boundaries, a);
+      }
     }
+  }
+  for (const sd of seeded) {   // histograms nothing has observed yet: the whole family at zero
+    const name = prometheusName(sd.name, sd.unit);
+    if (seen.has(name)) continue;
+    seen.add(name);
+    if (sd.description) out.push(`# HELP ${name} ${escapeValue(sd.description).replace(/\\"/g, '"')}`);
+    out.push(`# TYPE ${name} histogram`);
+    for (const a of sd.seeds) zeroHistogram(out, name, sd.boundaries, a);
   }
   if (openMetrics) out.push('# EOF');
   return out.join('\n') + '\n';

@@ -132,9 +132,12 @@ modified; `keycloak.seedAdmins: false` leaves user creation to the operator or t
 
 ## 6. Day 2
 
-* **Upgrade one cell:** change the tag in `deploy/cells/<slug>.values.yaml` and `scripts/cell-provision.sh apply
-  --slug <slug>` (or `apply --tag X` for a one-off). `apply` takes a **pre-upgrade backup** first (`--no-backup` to
-  skip), then upgrades. Migrations run in the API's init container. An image release rolls only the api, worker, web
+* **Upgrade one cell:** `scripts/cell-provision.sh apply --slug <slug> --tag X` — the tag is written into
+  `deploy/cells/<slug>.values.yaml` (all four images) before the upgrade, so commit the file: it stays the source of
+  truth and every later `apply` without `--tag` keeps X. An `apply` without `--tag` on a release that runs a different
+  tag than the file names is refused with the two ways out (`--tag <running>` to keep it, `--tag <new>` to upgrade):
+  the alternative was a silent move of every image to the chart's default `appVersion`. `apply` takes a **pre-upgrade
+  backup** first (`--no-backup` to skip), then upgrades. Migrations run in the API's init container. An image release rolls only the api, worker, web
   and managed-runner pods: Postgres, Keycloak, Redis and the registry keep running (their pod templates carry no
   version label; `make helm-lint` asserts it).
 * **Upgrade all cells:** `for f in deploy/cells/*.values.yaml; do s=$(basename "$f" .values.yaml); [ "$s" = _template ] ||

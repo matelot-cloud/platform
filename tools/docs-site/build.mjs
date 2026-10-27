@@ -42,12 +42,14 @@ export const SITE = [
     { src: 'backup-restore.md', slug: 'backup-restore', title: 'Backup and restore' },
     { src: 'usage-and-limits.md', slug: 'usage-and-limits', title: 'Usage and rate limits' },
     { src: 'endpoints.md', slug: 'endpoints', title: 'Endpoints of a cell' },
+    { src: 'observability.md', slug: 'observability', title: 'Observability: metrics, traces, logs, alerts' },
   ] },
   { title: 'Reference', pages: [
     { src: 'parity-matrix.md', slug: 'parity-matrix', title: 'UI / API / CLI / MCP parity' },
     { src: 'adr/0001-tenancy-and-stack.md', slug: 'adr-0001', title: 'ADR 1: tenancy and stack' },
     { src: 'adr/0002-web-app.md', slug: 'adr-0002', title: 'ADR 2: web app' },
     { src: 'adr/0003-rbac-two-levels.md', slug: 'adr-0003', title: 'ADR 3: two-level RBAC' },
+    { src: 'adr/0004-observability.md', slug: 'adr-0004', title: 'ADR 4: observability' },
   ] },
 ];
 // files other than pages that links may point at: copied verbatim

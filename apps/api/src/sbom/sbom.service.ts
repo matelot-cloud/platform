@@ -1,3 +1,4 @@
+import { getMetrics } from '../telemetry/metrics';
 import { uniqueVulnerabilities } from '../vulnerabilities/severity';
 import { projectCondition, ProjectScope } from '../rbac/scope-projects';
 import { BadRequestException, forwardRef, Inject, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
@@ -84,6 +85,12 @@ export class SbomService {
 
   /** Stores a document, normalizes its components, links it to the release / image tag it describes. */
   async ingest(input: IngestInput) {
+    const started = process.hrtime.bigint();
+    try { return await this.ingestTimed(input); }
+    finally { getMetrics().sbomIngestDuration.record(Number(process.hrtime.bigint() - started) / 1e9, { source: input.source }); }
+  }
+
+  private async ingestTimed(input: IngestInput) {
     const raw = Buffer.from(JSON.stringify(input.document));
     if (raw.length > 30 * 1024 * 1024) throw new BadRequestException('SBOM larger than 30 MB');
     let parsed: ParsedSbom;

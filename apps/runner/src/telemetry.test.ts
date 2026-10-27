@@ -78,6 +78,11 @@ test('tracerFromEnv: off without an endpoint or with MATELOT_TRACING_ENABLED=fal
 
 test('metrics page: build_info, counters, gauge, the job histogram with the pipeline buckets and an exemplar for OpenMetrics', async () => {
   const m = new Metrics({ version: '0.3.3', commit: 'abc', node_version: process.version, component: 'runner' });
+  m.seedKnownSeries();
+  const fresh = m.page(false).split('\n');
+  assert.ok(fresh.includes('matelot_runner_jobs_total{kind="sast",status="failed"} 0'), 'every kind × status at zero before the first job');
+  assert.ok(fresh.includes('matelot_runner_job_duration_seconds_count{kind="sast",phase="total"} 0'));
+  assert.ok(fresh.includes('matelot_runner_job_duration_seconds_bucket{kind="sast",le="+Inf",phase="total"} 0'));
   m.inc('matelot_runner_jobs_total', { kind: 'sbom', status: 'succeeded' });
   m.inc('matelot_runner_jobs_total', { kind: 'sbom', status: 'succeeded' });
   m.set('matelot_runner_busy', {}, 1);
@@ -85,6 +90,8 @@ test('metrics page: build_info, counters, gauge, the job histogram with the pipe
   const open = m.page(true).split('\n');
   assert.ok(open.includes(`matelot_build_info{commit="abc",component="runner",node_version="${process.version}",version="0.3.3"} 1`));
   assert.ok(open.includes('matelot_runner_jobs_total{kind="sbom",status="succeeded"} 2'));
+  assert.ok(open.includes('matelot_runner_job_duration_seconds_count{kind="sbom",phase="total"} 1'), 'the seed is not an observation');
+  assert.equal(open.filter((l) => l.startsWith('# TYPE matelot_runner_job_duration_seconds ')).length, 1);
   assert.ok(open.includes('matelot_runner_busy 1'));
   for (const b of JOB_BUCKETS) assert.ok(open.some((l) => l.startsWith(`matelot_runner_job_duration_seconds_bucket{kind="sbom",le="${b}",phase="total"}`)), `bucket ${b}`);
   const sixty = open.find((l) => l.startsWith('matelot_runner_job_duration_seconds_bucket{kind="sbom",le="60",phase="total"}'))!;

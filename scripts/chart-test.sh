@@ -216,7 +216,13 @@ PY
 # the target simply never appears). metrics-off: nothing.
 run otlp --set observability.otlp.endpoint=http://jaeger.observability:4318 --set observability.otlp.headersSecret=grafana-cloud-otlp --set observability.otlp.metrics=true
 run metrics-off --set observability.metrics.enabled=false
-run observability-all --set observability.metrics.serviceMonitor.enabled=true --set observability.metrics.serviceMonitor.labels.release=kube-prometheus-stack --set observability.metrics.exporters.enabled=true --set observability.otlp.endpoint=http://tempo.monitoring:4318 --set backup.enabled=true
+run observability-all --set observability.metrics.serviceMonitor.enabled=true --set observability.metrics.serviceMonitor.labels.release=kube-prometheus-stack --set observability.metrics.exporters.enabled=true --set observability.otlp.endpoint=http://tempo.monitoring:4318 --set backup.enabled=true --set observability.prometheusRules.enabled=true --set observability.prometheusRules.labels.release=kube-prometheus-stack --set observability.prometheusRules.runbookBaseUrl=https://docs.example.com/obs.html/ --set observability.grafana.dashboards.enabled=true --set observability.grafana.dashboards.datasources.tempo=tempo-main
+run rules-no-kube --set observability.prometheusRules.enabled=true --set observability.prometheusRules.kubernetes=false
+# drop 3: the dashboards and rules the chart ships are the copies of deploy/observability (built by tools/dashboards/build.py)
+for f in rules/matelot.yaml rules/matelot-kubernetes.yaml dashboards/cell-overview.json dashboards/pipelines.json dashboards/security-posture.json dashboards/integrations.json; do cmp -s "$CHART/files/observability/$f" "deploy/observability/$f" || { echo "$CHART/files/observability/$f differs from deploy/observability/$f (copy it over)" >&2; exit 1; }; done
+cmp -s deploy/compose/init/observability/rules/matelot.yaml deploy/observability/rules/matelot.yaml || { echo "deploy/compose/init/observability/rules/matelot.yaml differs from deploy/observability/rules/matelot.yaml (copy it over)" >&2; exit 1; }
+for f in cell-overview pipelines security-posture integrations; do cmp -s "deploy/compose/init/observability/grafana/dashboards/$f.json" "deploy/observability/dashboards/$f.json" || { echo "deploy/compose/init/observability/grafana/dashboards/$f.json differs from deploy/observability/dashboards/$f.json (copy it over)" >&2; exit 1; }; done
+if helm template acme "$CHART" --set observability.metrics.enabled=false --set observability.prometheusRules.enabled=true > /dev/null 2>&1; then echo "a PrometheusRule without metrics must be refused" >&2; exit 1; fi
 run observability-external --set observability.metrics.serviceMonitor.enabled=true --set observability.metrics.exporters.enabled=true --set postgres.bundled=false --set postgres.externalUrl=postgresql://u:p@db:5432/platform --set postgres.externalKeycloakJdbcUrl=jdbc:postgresql://db:5432/keycloak --set redis.bundled=false --set redis.externalUrl=redis://redis.example:6379
 if helm template acme "$CHART" --set observability.otlp.headers.Authorization=x > "$OUT/headers.err" 2>&1; then echo "observability.otlp.headers (tokens in values) must be refused" >&2; exit 1; fi
 grep -q "observability.otlp.headers was removed" "$OUT/headers.err" || { echo "the headers refusal must say what to do: $(cat "$OUT/headers.err")" >&2; exit 1; }
@@ -343,6 +349,35 @@ for kind, name, c in WORKLOADS:
     assert not any(p["name"] == "metrics" for p in container(m, kind, name, c).get("ports", [])), name
 assert env(container(m, "StatefulSet", "acme-runner", "runner"))["RUNNER_METRICS_PORT"] == "0"
 assert not metrics_services(m) and not any(x["kind"] == "NetworkPolicy" and x["metadata"]["name"] == "acme-allow-metrics-scrape" for x in m)
+# drop 3: PrometheusRule (both groups, the runbook base rewritten, the operator's labels) and one ConfigMap per dashboard
+# for Grafana's sidecar, inputs resolved to datasource uids; nothing of it by default
+import json
+pr = kinds(a, "PrometheusRule"); assert len(pr) == 1, len(pr)
+pr = pr[0]; assert pr["metadata"]["labels"]["release"] == "kube-prometheus-stack" and pr["metadata"]["labels"]["matelot.cloud/cell"] == "acme"
+assert [g["name"] for g in pr["spec"]["groups"]] == ["matelot", "matelot-kubernetes"], pr["spec"]["groups"]
+rules = [r for g in pr["spec"]["groups"] for r in g["rules"]]
+assert {r["alert"] for r in rules} >= {"MatelotApiDown", "MatelotNoRunnerOnline", "MatelotQueueBacklog", "MatelotBackupFailed", "MatelotBackupTooOld", "MatelotDiskAlmostFull"}, sorted(r["alert"] for r in rules)
+for r in rules:
+    assert r["annotations"]["runbook_url"] == f"https://docs.example.com/obs.html#alert-{r['alert'].lower()}", r["annotations"]["runbook_url"]   # the trailing slash of the value is dropped
+    assert r["labels"]["severity"] in ("critical", "warning") and r["annotations"]["summary"] and r["annotations"]["description"], r["alert"]
+src = yaml.safe_load(open("deploy/observability/rules/matelot.yaml"))["groups"][0]["rules"]
+assert [r["expr"] for r in pr["spec"]["groups"][0]["rules"]] == [r["expr"] for r in src], "the chart renders the rules' expressions byte for byte"
+nk = docs("rules-no-kube"); nkp = kinds(nk, "PrometheusRule")[0]
+assert [g["name"] for g in nkp["spec"]["groups"]] == ["matelot"], "prometheusRules.kubernetes=false drops the Kubernetes group"
+dash = [x for x in kinds(a, "ConfigMap") if x["metadata"]["name"].startswith("acme-dashboard-")]
+assert sorted(x["metadata"]["name"] for x in dash) == ["acme-dashboard-cell-overview", "acme-dashboard-integrations", "acme-dashboard-pipelines", "acme-dashboard-security-posture"], [x["metadata"]["name"] for x in dash]
+for x in dash:
+    assert x["metadata"]["labels"]["grafana_dashboard"] == "1" and x["metadata"]["annotations"]["grafana_folder"] == "Matelot", x["metadata"]
+    (key, body), = x["data"].items()
+    assert key.startswith("matelot-") and key.endswith(".json"), key
+    assert "${DS_" not in body, f"{key}: an unresolved datasource input"
+    j = json.loads(body)
+    uids = {t["datasource"]["uid"] for p in j["panels"] for t in p.get("targets", [])}
+    assert uids == {"prometheus"}, (key, uids)
+    assert j["uid"] == key[:-5] and all(v["name"] != "x" for v in j["templating"]["list"])
+    if key == "matelot-pipelines.json": assert "tempo-main" in body or "${DS_TEMPO}" not in open(f"deploy/observability/dashboards/pipelines.json").read(), "the Tempo input resolves to grafana.dashboards.datasources.tempo"
+assert not kinds(d, "PrometheusRule") and not [x for x in kinds(d, "ConfigMap") if "dashboard" in x["metadata"]["name"]], "no rules / dashboards by default"
+print("   observability drop 3: PrometheusRule with both groups (Kubernetes group optional), runbook base rewritten, operator labels; four dashboard ConfigMaps for the sidecar with inputs resolved; nothing by default")
 print("   observability: metrics Services ↔ container ports ↔ the ServiceMonitor all line up (7 targets all-on, 5 with an external database / Redis, 3 by default); exporters, Keycloak and registry metrics only when asked; OTLP headers only from a Secret; the backup job reports every run; nothing with metrics off")
 PY
 # the realm-sync hook: post-install + post-upgrade, mounts the realm ConfigMap, runs the shared script; Keycloak's import

@@ -22,6 +22,29 @@ curl -fsS -o /dev/null -w '%{redirect_url}\n' "$BASE/grafana/login/generic_oauth
   || { echo "Grafana's sign-in does not redirect to the cell's Keycloak" >&2; curl -sS -D - -o /dev/null "$BASE/grafana/login/generic_oauth" >&2; exit 1; }
 echo "   sign-in: redirects to the cell's Keycloak (client grafana)"
 
+log "Grafana: the four dashboards provisioned in folder Matelot; Prometheus: the alert rules loaded"
+gf "$BASE/grafana/api/search?type=dash-db&tag=matelot" | python3 -c '
+import sys, json
+d = {x["uid"]: x for x in json.load(sys.stdin)}
+assert set(d) == {"matelot-cell-overview", "matelot-pipelines", "matelot-security-posture", "matelot-integrations"}, sorted(d)
+assert all(x.get("folderTitle") == "Matelot" for x in d.values()), {k: v.get("folderTitle") for k, v in d.items()}
+print("   dashboards:", ", ".join(sorted(x["title"] for x in d.values())))'
+gf "$BASE/grafana/api/dashboards/uid/matelot-cell-overview" | python3 -c '
+import sys, json
+j = json.load(sys.stdin)["dashboard"]
+uids = {t["datasource"]["uid"] for p in j["panels"] for t in p.get("targets", [])}
+assert uids == {"prometheus"}, uids
+print("   cell overview: %d panels, datasource inputs resolved" % len(j["panels"]))'
+gf "$DS/prometheus/api/v1/rules" | python3 -c '
+import sys, json
+groups = {g["name"]: g for g in json.load(sys.stdin)["data"]["groups"]}
+assert "matelot" in groups, sorted(groups)
+names = sorted(r["name"] for r in groups["matelot"]["rules"])
+assert {"MatelotApiDown", "MatelotNoRunnerOnline", "MatelotQueueBacklog", "MatelotBackupFailed", "MatelotBackupTooOld"} <= set(names), names
+bad = [r["name"] for r in groups["matelot"]["rules"] if r.get("health") not in ("ok", "unknown")]
+assert not bad, f"rules in error: {bad}"
+print("   alert rules loaded:", len(names), "in group matelot; none in error")'
+
 log "Prometheus: every target up (api, worker, runner, postgres, redis, keycloak, registry and the stack itself)"
 targets_ok() {
   gf "$DS/prometheus/api/v1/targets?state=active" | python3 -c '
@@ -43,7 +66,7 @@ assert {"matelot-api", "matelot-worker", "matelot-runner"} <= jobs, jobs
 print("   matelot_build_info:", ", ".join(sorted(jobs)))'
 # one series per exporter, scoped to its job: the database / cache seen by its exporter, Keycloak's management
 # endpoint (KC_METRICS_ENABLED), the registry's debug listener
-for q in 'pg_up{job="matelot-postgres"} == 1' 'redis_up{job="matelot-redis"} == 1' 'jvm_memory_used_bytes{job="matelot-keycloak"}' 'go_goroutines{job="matelot-registry"}'; do
+for q in 'pg_up{job="matelot-postgres"} == 1' 'redis_up{job="matelot-redis"} == 1' 'jvm_memory_used_bytes{job="matelot-keycloak"}' 'go_goroutines{job="matelot-registry"}' 'count(up{cell="main"}) >= 7' 'matelot_pipeline_jobs_total{status="failed",kind="sbom"} == 0'; do
   gf -G "$DS/prometheus/api/v1/query" --data-urlencode "query=$q" | python3 -c 'import sys, json; r = json.load(sys.stdin)["data"]["result"]; assert r, sys.argv[1]; print("  ", sys.argv[1], "present")' "$q" \
     || { echo "no series for $q" >&2; exit 1; }
 done
@@ -78,7 +101,7 @@ sys.exit(0 if "matelot-pipeline" in services and "matelot-runner" in services an
 done
 [ "$ok" = 1 ] || { echo "the pipeline trace $TRACE_ID is not complete in Tempo after 120 s" >&2; docker compose logs --tail 30 otel-collector tempo >&2; exit 1; }
 ok=0; for _ in $(seq 1 24); do   # Alloy tails the containers' logs; trace_id is structured metadata
-  if gf -G "$DS/loki/loki/api/v1/query_range" --data-urlencode "query={cell=~\".+\"} | trace_id=\"$TRACE_ID\"" --data-urlencode "since=1h" --data-urlencode "limit=200" 2> /dev/null | python3 -c '
+  if gf -G "$DS/loki/loki/api/v1/query_range" --data-urlencode "query={cell=\"main\"} | trace_id=\"$TRACE_ID\"" --data-urlencode "since=1h" --data-urlencode "limit=200" 2> /dev/null | python3 -c '
 import sys, json
 r = json.load(sys.stdin)["data"]["result"]
 lines = sum(len(s["values"]) for s in r); services = sorted({s["stream"].get("compose_service", "?") for s in r})

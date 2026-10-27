@@ -224,5 +224,23 @@ observability:
     headersSecretKey: OTEL_EXPORTER_OTLP_HEADERS   # the key in it; never put tokens in values (`headers` was removed)
     tracesSampler: parentbased_always_on
     tracesSamplerArg: ""
+    getRatio: 0.1                 # share of a client's own GET requests recorded as traces (background polls never, mutations always)
     metrics: false                   # also push the metrics over OTLP (OTEL_METRICS_EXPORTER=prometheus,otlp)
+  # the alert rules (deploy/observability/rules, copied into files/observability/rules) as a PrometheusRule the
+  # operator loads — needs the prometheus-operator CRDs, like the ServiceMonitor
+  prometheusRules:
+    enabled: false
+    labels: {}                       # e.g. release: kube-prometheus-stack (what the Prometheus's ruleSelector wants)
+    kubernetes: true                 # also the rules that need kube-state-metrics / kubelet / cert-manager metrics (matelot-kubernetes.yaml)
+    runbookBaseUrl: https://matelot-cloud.github.io/website/docs/latest/observability.html   # every alert's runbook_url points into it (#alert-<name>)
+  grafana:
+    dashboards:
+      enabled: false                 # one ConfigMap per dashboard for Grafana's sidecar (kube-prometheus-stack: label grafana_dashboard=1)
+      label: grafana_dashboard
+      labelValue: "1"
+      folder: Matelot                # the folder the sidecar files them under (annotation grafana_folder; needs sidecar.dashboards.folderAnnotation)
+      folderAnnotation: grafana_folder
+      datasources:                   # the dashboards' ${DS_PROMETHEUS} / ${DS_TEMPO} inputs are resolved to these datasource uids
+        prometheus: prometheus       # kube-prometheus-stack's default uid
+        tempo: tempo                 # deploy/observability/kind/kube-prometheus-stack.values.yaml names it so
   environment: production            # deployment.environment on every signal

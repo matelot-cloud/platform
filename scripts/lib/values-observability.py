@@ -6,8 +6,8 @@ present, appended when absent; everything else in the file is left byte for byte
 
   values-observability.py <values.yaml> <endpoint> [protocol]          traces only (kind-jaeger); empty endpoint = off
   values-observability.py <values.yaml> <endpoint> [protocol] --stack [--label release=kube-prometheus-stack]
-      the whole delivery (kind-observability): ServiceMonitor with the labels the Prometheus selects, the exporters
-      (postgres / redis sidecars, Keycloak and registry metrics) and the OTLP endpoint
+      the whole delivery (kind-observability): ServiceMonitor and PrometheusRule with the labels the Prometheus selects,
+      the exporters (postgres / redis sidecars, Keycloak and registry metrics), the dashboards and the OTLP endpoint
 """
 import re
 import sys
@@ -27,6 +27,12 @@ def render(endpoint: str, protocol: str, stack: bool = False, labels: dict | Non
             "      labels:" + ("\n" + "".join(f"        {k}: {_q(v)}\n" for k, v in (labels or {}).items()) if labels else " {}\n")
             + "    exporters:\n"
             "      enabled: true   # postgres_exporter / redis_exporter sidecars, Keycloak and registry metrics\n"
+            "  prometheusRules:\n"
+            "    enabled: true   # the alert rules as a PrometheusRule (the same labels select it)\n"
+            "    labels:" + ("\n" + "".join(f"      {k}: {_q(v)}\n" for k, v in (labels or {}).items()) if labels else " {}\n")
+            + "  grafana:\n"
+            "    dashboards:\n"
+            "      enabled: true   # the four dashboards as ConfigMaps for Grafana's sidecar\n"
         )
     out += (
         "  otlp:\n"
@@ -67,7 +73,7 @@ def main(argv: list[str]) -> None:
         text = f.read()
     with open(path, "w", encoding="utf-8") as f:
         f.write(set_observability(text, endpoint, protocol, stack, labels))
-    print(f"{path}: observability.otlp.endpoint = {endpoint or '(off)'}" + (f"; ServiceMonitor on (labels {labels or '{}'}), exporters on" if stack else ""))
+    print(f"{path}: observability.otlp.endpoint = {endpoint or '(off)'}" + (f"; ServiceMonitor + PrometheusRule on (labels {labels or '{}'}), exporters on, dashboards on" if stack else ""))
 
 
 if __name__ == "__main__":

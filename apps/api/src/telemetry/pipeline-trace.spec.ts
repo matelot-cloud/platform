@@ -70,6 +70,9 @@ const url = process.env.TEST_DATABASE_URL;
       expect(ids.spanId).not.toBe(root.spanId);        // with its own span id
     }
     expect(new Set(rows.map((j) => j.traceParent)).size).toBe(2);
+    // the first stage is claimable at creation (same clock as created_at); the second only when its stage opens
+    expect(rows.find((j) => j.type === 'repository_check')!.queuedAt?.getTime()).toBe(rows.find((j) => j.type === 'repository_check')!.createdAt.getTime());
+    expect(rows.find((j) => j.type === 'sbom')!.queuedAt).toBeNull();
     expect(exporter.getFinishedSpans()).toHaveLength(0);   // nothing emitted yet: nothing has ended
 
     // the runner claims the checkout job: the claim response carries the job's traceparent
@@ -103,6 +106,9 @@ const url = process.env.TEST_DATABASE_URL;
     const names = exporter.getFinishedSpans().map((s) => s.name);
     expect(names).toEqual(['job repository_check', 'job sbom', 'pipeline Custom pipeline']);
     const sbomSpan = exporter.getFinishedSpans()[1];
+    const [sbomRow] = await db.select().from(schema.jobs).where(eq(schema.jobs.id, second!.id));
+    expect(sbomRow!.queuedAt!.getTime()).toBeGreaterThan(sbomRow!.createdAt.getTime());   // queued when the first stage finished
+    expect(sbomSpan.events.map((e) => e.name)).toEqual(['queued', 'claimed', 'started']);  // the span starts at creation, the queued event marks the stage opening
     expect(sbomSpan.status.code).toBe(2);
     expect(sbomSpan.status.message).toBe('syft exited with 2');
     expect(sbomSpan.attributes['matelot.job.exit_code']).toBe(2);

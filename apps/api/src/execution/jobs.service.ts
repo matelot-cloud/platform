@@ -88,6 +88,7 @@ export class JobsService {
         requestedPoolId: dto.poolId ?? null,
         payload: dto.payload ?? {},
         timeoutSeconds: dto.timeoutSeconds ?? 1800,
+        queuedAt: sql`now()`,
         createdById: userIdOrNull(user),
       })
       .returning();
@@ -353,7 +354,7 @@ export class JobsService {
       const overTime = job.startedAt && now.getTime() - job.startedAt.getTime() > job.timeoutSeconds * 1000;
       if (!overTime && job.attempts < job.maxAttempts) {
         // back to the requested binding (null = any eligible pool), not the pool of the runner that lost it
-        await this.db.update(jobs).set({ status: 'queued', runnerId: null, poolId: job.requestedPoolId, assignedAt: null, leaseExpiresAt: null, startedAt: null }).where(eq(jobs.id, job.id));
+        await this.db.update(jobs).set({ status: 'queued', queuedAt: now, runnerId: null, poolId: job.requestedPoolId, assignedAt: null, leaseExpiresAt: null, startedAt: null }).where(eq(jobs.id, job.id));
         await this.appendSystemLog(job.id, `lease expired on attempt ${job.attempts}; requeued${job.requestedPoolId ? '' : ' for any eligible runner'}`);
         requeued++;
       } else {

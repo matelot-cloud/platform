@@ -9,11 +9,11 @@ set -euo pipefail
 export STARTED_AT="${STARTED_AT:-$(date +%s)}"
 # shellcheck source=backup-report.sh
 . "$(dirname "$0")/backup-report.sh"
-LAST_STEP="starting"
+LAST_STEP="starting"; LAST_ERROR=""
 on_exit() {
   local rc=$?
   rm -rf "${WORK:-/nonexistent}"
-  [ "$rc" = 0 ] || report_backup failed dump "" "" "${DESTINATION:-}" "backup.sh exited with $rc while $LAST_STEP"
+  [ "$rc" = 0 ] || report_backup failed dump "" "" "${DESTINATION:-}" "backup.sh exited with $rc while $LAST_STEP${LAST_ERROR:+: $LAST_ERROR}"
 }
 trap on_exit EXIT
 # Connection: PGHOST/PGUSER/PGPASSWORD (bundled Postgres), or DATABASE_URL (external): postgresql://user:pass@host[:port]/db[?…]
@@ -36,10 +36,24 @@ NAME="$CELL-$STAMP"
 WORK="$(mktemp -d)"
 mkdir -p "$WORK/$NAME/db" "$WORK/$NAME/secrets" "$OUT_DIR"
 
+# Postgres may not be there yet: right after a node or cluster restart the CronJob fires before the Service's DNS
+# record and the database are back ("could not translate host name"), so wait for both — up to WAIT_SECONDS (120) —
+# and report the last error (the reason goes to the API, so BackupFailed carries it) when they do not come.
+LAST_STEP="waiting for postgres at $PGHOST"
+deadline=$(( $(date +%s) + ${WAIT_SECONDS:-120} ))
+until LAST_ERROR="$(pg_isready -h "$PGHOST" ${PGPORT:+-p "$PGPORT"} -U "$PGUSER" -t 5 2>&1)"; do
+  if ! getent hosts "$PGHOST" > /dev/null 2>&1; then LAST_ERROR="could not resolve host name \"$PGHOST\" (${LAST_ERROR:-no answer})"; fi
+  if [ "$(date +%s)" -ge "$deadline" ]; then echo "postgres at $PGHOST not reachable after ${WAIT_SECONDS:-120}s: $LAST_ERROR" >&2; exit 1; fi
+  echo "postgres at $PGHOST not ready yet ($LAST_ERROR); retrying"
+  sleep 5
+done
+LAST_ERROR=""
+
 for db in $DATABASES; do
   LAST_STEP="dumping database $db"
   echo "dumping database $db"
-  pg_dump --format=custom --no-owner --no-privileges --file "$WORK/$NAME/db/$db.dump" "$db"
+  pg_dump --format=custom --no-owner --no-privileges --file "$WORK/$NAME/db/$db.dump" "$db" 2> "$WORK/pg_dump.err" || { LAST_ERROR="$(tail -c 400 "$WORK/pg_dump.err" | tr '\n' ' ')"; cat "$WORK/pg_dump.err" >&2; exit 1; }
+  [ -s "$WORK/pg_dump.err" ] && cat "$WORK/pg_dump.err" >&2   # warnings
 done
 
 # Secrets: one directory per Secret (mounted by name), each key a file. Kubernetes mounts keys through a ..data symlink

@@ -71,6 +71,7 @@ try {
     NODE_ENV: 'production', DATABASE_URL, REDIS_URL, PORT: String(PORT), KEYCLOAK_ISSUER: `http://localhost:${IDP_PORT}/realms/platform`, KEYCLOAK_AUDIENCE: 'platform-api',
     CELL_ENCRYPTION_KEY: '0000000000000000000000000000000000000000000000000000000000000001', BOOTSTRAP_ORG_SLUG: 'acme', BOOTSTRAP_ADMIN_EMAILS: 'admin@acme.local',
     MANAGED_RUNNER_SECRET: MANAGED_SECRET, MATELOT_METRICS_ENABLED: 'false', MATELOT_TRACING_ENABLED: 'true', OTEL_TRACES_EXPORTER: 'file', LOG_LEVEL: 'warn', APP_VERSION: 'span-budget',
+    MATELOT_TRACES_GET_RATIO: '1',   // every GET of the test is a root (the default keeps one in ten) — so a poll that slipped through would show
   };
   execFileSync(process.execPath, ['dist/migrate.js'], { cwd: API_DIR, env: { ...process.env, ...env }, stdio: 'pipe' });
   start('api', ['-r', './dist/telemetry/tracing.js', 'dist/main.js'], { ...env, MATELOT_COMPONENT: 'api', OTEL_TRACES_FILE: files.api });
@@ -139,6 +140,15 @@ try {
     await api(`/pipelines/${pipeline.id}/jobs`, undefined, token, i % 2 ? {} : { traceparent: unsampled() }).catch(() => undefined);
   }
 
+  // a web session: one open tab refetches its queries on the dashboard interval and marks them x-matelot-poll: 1 —
+  // ten polls per route must add 0 root spans (the sampler); the first, unmarked request of each is the user's own
+  const WEB_ROUTES = [`/organizations/${orgId}/jobs/active`, `/organizations/${orgId}/audit-events`, `/organizations/${orgId}`, `/organizations/${orgId}/workspaces`];
+  const WEB_POLLS = 10;
+  for (const route of WEB_ROUTES) {
+    await api(route).catch(() => undefined);
+    for (let i = 0; i < WEB_POLLS; i++) await api(route, undefined, token, { 'x-matelot-poll': '1' }).catch(() => undefined);
+  }
+
   // 4. flush (SIGTERM → the 5 s-capped shutdown flush) and count
   for (const c of children.slice(1)) await stop(c);
   const spans = [files.api, files.worker].filter(existsSync).flatMap((f) => readFileSync(f, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)));
@@ -168,6 +178,16 @@ try {
     if (claim.length !== 1) problems.push(`job ${kind}: ${claim.length} claim span(s) in the pipeline trace, expected 1`);
     else if (claim[0].parentSpanId !== jobSpan.spanId) problems.push(`job ${kind}: the claim span is not under the job span`);
   }
+  // a span never starts before its parent nor ends after it (within the clock skew of two processes): the claim span
+  // once began at the runner's long-poll, seconds before the job it belongs to existed, and stuck out of the pipeline
+  const byId = new Map(trace.map((x) => [x.spanId, x]));
+  const SKEW_MS = 50;
+  const outside = trace.filter((x) => { const p = x.parentSpanId && byId.get(x.parentSpanId); return p && (x.startMs < p.startMs - SKEW_MS || x.endMs > p.endMs + SKEW_MS); });
+  if (outside.length) problems.push(`${outside.length} span(s) outside their parent's time range: ${outside.slice(0, 4).map((x) => { const p = byId.get(x.parentSpanId); return `${x.name} [${(x.startMs - p.startMs).toFixed(0)}ms … +${(x.endMs - p.endMs).toFixed(0)}ms of ${p.name}]`; }).join(', ')}`);
+  for (const kind of runnerKinds) {
+    const claim = trace.find((x) => x.name === 'claim' && x.attributes['matelot.job.kind'] === kind);
+    if (claim && typeof claim.attributes['matelot.claim.waited_ms'] !== 'number') problems.push(`job ${kind}: the claim span carries no matelot.claim.waited_ms`);
+  }
   const startsInTrace = trace.filter((x) => x.name.endsWith('/:jobId/start')).length;
   const completesInTrace = trace.filter((x) => x.name.endsWith('/:jobId/complete')).length;
   if (startsInTrace !== runnerKinds.length || completesInTrace !== runnerKinds.length) problems.push(`${startsInTrace} /start and ${completesInTrace} /complete spans in the pipeline trace, expected ${runnerKinds.length} each`);
@@ -179,17 +199,26 @@ try {
   if (pollRoots.length) problems.push(`${pollRoots.length} claim poll span(s) exported (${EMPTY_POLLS} empty polls must add 0 spans)`);
   const waitPolls = spans.filter((x) => /^GET \/api\/v1\/pipelines\/:pipelineId(\/jobs)?$/.test(x.name) || (x.name.startsWith('GET') && /\/pipelines\/[0-9a-f-]{36}(\/jobs)?$/.test(String(x.attributes['url.path'] ?? ''))));
   if (waitPolls.length) problems.push(`${waitPolls.length} span(s) from ${WAIT_POLLS} --wait polls (must be 0: unsampled by the CLI, dropped by the sampler)`);
+  const webRoots = spans.filter((x) => !x.parentSpanId && x.name.startsWith('GET') && WEB_ROUTES.some((r) => String(x.attributes['url.path'] ?? '').endsWith(r.replace(/^\//, '/api/v1/').replace('/api/v1//', '/api/v1/'))));
+  // one unmarked request per route (recorded: ratio 1 here), none of the marked polls
+  if (webRoots.length !== WEB_ROUTES.length) problems.push(`${webRoots.length} root span(s) from the web session (expected ${WEB_ROUTES.length}: the first request of each route; ${WEB_POLLS} marked polls per route must add 0)`);
+  if (webRoots.some((x) => x.attributes['matelot.poll'])) problems.push('a request marked x-matelot-poll became a root span');
   // every root span is a request, a worker loop or the pipeline's root — an orphan `pg.query` root was a worker timer
   // running outside any span
   const ROOT_OK = /^((GET|POST|PUT|PATCH|DELETE) |worker |pipeline )/;
   const badRoots = spans.filter((x) => !x.parentSpanId && !ROOT_OK.test(x.name));
   if (badRoots.length) problems.push(`${badRoots.length} orphan root span(s): ${[...new Set(badRoots.map((x) => `${x.service} · ${x.name}`))].slice(0, 6).join(', ')}`);
   if (!trace.some((x) => x.name === 'gate evaluate' && x.service === 'matelot-worker')) problems.push('the worker\'s gate evaluation is not in the trace');
+  // only the pipeline's root and job spans belong to service matelot-pipeline (a Tempo search of that service must list pipelines, not worker loops)
+  const notPipeline = spans.filter((x) => x.service === 'matelot-pipeline' && !/^(pipeline |job )/.test(x.name));
+  if (notPipeline.length) problems.push(`${notPipeline.length} span(s) under service matelot-pipeline that are not pipeline / job spans: ${[...new Set(notPipeline.map((x) => x.name))].slice(0, 5).join(', ')}`);
+  const workerLoops = spans.filter((x) => /^worker /.test(x.name));
+  if (workerLoops.some((x) => x.service !== 'matelot-worker')) problems.push(`worker loop span(s) under ${[...new Set(workerLoops.filter((x) => x.service !== 'matelot-worker').map((x) => x.service))].join(', ')} instead of matelot-worker`);
   const redis = trace.filter((x) => x.scope === '@opentelemetry/instrumentation-ioredis');
   if (redis.some((x) => x.durationMs < 5)) problems.push(`${redis.filter((x) => x.durationMs < 5).length} sub-5 ms Redis span(s) survived the trimming`);
   if (trace.some((x) => x.name === 'pg-pool.connect')) problems.push('pg-pool.connect spans survived the trimming');
   if (problems.length) { console.error(`\nspan budget FAILED:\n  ${problems.join('\n  ')}`); process.exitCode = 1; }
-  else log(`\nspan budget ok: ${trace.length} ≤ ${BUDGET}; root "${root.name}" under ${root.service}; ${jobSpans.length} job spans; no /logs, claim-poll or --wait-poll spans; ${spans.filter((x) => !x.parentSpanId).length} root spans, all requests / worker loops / the pipeline`);
+  else log(`\nspan budget ok: ${trace.length} ≤ ${BUDGET}; root "${root.name}" under ${root.service}; ${jobSpans.length} job spans; no /logs, claim-poll or --wait-poll spans; every span inside its parent; a web session's polls add 0 roots; ${spans.filter((x) => !x.parentSpanId).length} root spans, all requests / worker loops / the pipeline`);
 } finally {
   for (const c of children) await stop(c);
   if (orgId) await db.query('delete from organizations where id = $1', [orgId]).catch(() => undefined);

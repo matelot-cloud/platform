@@ -50,7 +50,7 @@ export class CliError extends Error {
  * writes. Waits for Retry-After (at most 60 s, at most 3 times; progress on stderr) and gives up with the API's message.
  */
 export interface RequestOptions {
-  /** A poll (`--wait` loops): sent with a W3C traceparent whose sampled flag is off, so the cell records no trace for it. */
+  /** A poll (`--wait` loops): sent with `x-matelot-poll: 1` and a W3C traceparent whose sampled flag is off, so the cell records no trace for it (either alone is enough; older cells read the traceparent). */
   poll?: boolean;
 }
 
@@ -82,7 +82,7 @@ async function requestOnce<T = unknown>(config: Config, method: string, path: st
     try {
       response = await fetch(`${config.url}${path}`, {
         method,
-        headers: { ...(config.anonymous ? {} : { Authorization: config.token ? `Bearer ${config.token}` : signatureHeader(config.keyId, config.secret, method, path, raw) }), 'Content-Type': 'application/json', 'User-Agent': `secops-cli/${VERSION}`, ...(options.poll ? { traceparent: unsampledTraceparent() } : {}) },
+        headers: { ...(config.anonymous ? {} : { Authorization: config.token ? `Bearer ${config.token}` : signatureHeader(config.keyId, config.secret, method, path, raw) }), 'Content-Type': 'application/json', 'User-Agent': `secops-cli/${VERSION}`, ...(options.poll ? { traceparent: unsampledTraceparent(), 'x-matelot-poll': '1' } : {}) },
         body: raw.length ? raw : undefined,
         signal: controller.signal,
       });

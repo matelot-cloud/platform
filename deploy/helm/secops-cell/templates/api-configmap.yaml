@@ -20,6 +20,7 @@ data:
   {{- with $.Values.observability.otlp.tracesSamplerArg }}
   OTEL_TRACES_SAMPLER_ARG: {{ . | quote }}
   {{- end }}
+  MATELOT_TRACES_GET_RATIO: {{ $.Values.observability.otlp.getRatio | quote }}
   {{- if $.Values.observability.otlp.metrics }}
   OTEL_METRICS_EXPORTER: "prometheus,otlp"
   {{- end }}

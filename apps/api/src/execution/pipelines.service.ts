@@ -62,6 +62,7 @@ export class PipelinesService {
         name: job.name,
         type: job.type,
         status: (order === 0 ? 'queued' : 'pending') as Job['status'],
+        queuedAt: order === 0 ? sql`now()` : null,   // the same clock as created_at: the first stage is queued at creation
         // policy_eval runs inside the platform (worker), so it carries a tag no runner has.
         requiredTags: job.type === 'policy_eval' ? ['__platform__'] : (input.requiredTags ?? []),
         poolId: input.poolId ?? null,
@@ -127,7 +128,7 @@ export class PipelinesService {
       return;
     }
     const nextOrder = Math.min(...nextPending.map((j) => j.stageOrder));
-    await this.db.update(jobs).set({ status: 'queued' }).where(and(eq(jobs.pipelineId, pipelineId), eq(jobs.stageOrder, nextOrder), eq(jobs.status, 'pending')));
+    await this.db.update(jobs).set({ status: 'queued', queuedAt: new Date() }).where(and(eq(jobs.pipelineId, pipelineId), eq(jobs.stageOrder, nextOrder), eq(jobs.status, 'pending')));
   }
 
   private async finish(pipeline: Pipeline, status: Pipeline['status']) {
@@ -153,7 +154,7 @@ export class PipelinesService {
     if (!TERMINAL.includes(job.status)) throw new BadRequestException('Only finished jobs can be retried');
     const [pipeline] = job.pipelineId ? await this.db.select({ traceParent: pipelines.traceParent }).from(pipelines).where(eq(pipelines.id, job.pipelineId)).limit(1) : [];
     // a new attempt is a new span in the pipeline's trace
-    await this.db.update(jobs).set({ status: 'queued', runnerId: null, poolId: job.requestedPoolId, result: null, error: null, exitCode: null, startedAt: null, finishedAt: null, assignedAt: null, leaseExpiresAt: null, attempts: 0, traceParent: this.tele.jobTraceparentFor(pipeline?.traceParent) }).where(eq(jobs.id, job.id));
+    await this.db.update(jobs).set({ status: 'queued', queuedAt: new Date(), runnerId: null, poolId: job.requestedPoolId, result: null, error: null, exitCode: null, startedAt: null, finishedAt: null, assignedAt: null, leaseExpiresAt: null, attempts: 0, traceParent: this.tele.jobTraceparentFor(pipeline?.traceParent) }).where(eq(jobs.id, job.id));
     if (job.pipelineId) {
       await this.db.update(jobs).set({ status: 'pending', error: null, finishedAt: null }).where(and(eq(jobs.pipelineId, job.pipelineId), eq(jobs.status, 'skipped'), sql`${jobs.stageOrder} > ${job.stageOrder}`));
       await this.db.update(pipelines).set({ status: 'running', finishedAt: null }).where(eq(pipelines.id, job.pipelineId));

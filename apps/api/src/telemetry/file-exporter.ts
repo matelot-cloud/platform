@@ -13,6 +13,7 @@ export class FileSpanExporter implements SpanExporter {
       const lines = spans.map((s) => JSON.stringify({
         traceId: s.spanContext().traceId, spanId: s.spanContext().spanId, parentSpanId: s.parentSpanContext?.spanId ?? null, name: s.name,
         service: s.resource.attributes['service.name'], scope: s.instrumentationScope.name, durationMs: s.duration[0] * 1000 + s.duration[1] / 1e6,
+        startMs: s.startTime[0] * 1000 + s.startTime[1] / 1e6, endMs: s.endTime[0] * 1000 + s.endTime[1] / 1e6,
         status: s.status.code, attributes: s.attributes, events: s.events.map((e) => e.name),
       }));
       appendFileSync(this.path, lines.join('\n') + '\n');

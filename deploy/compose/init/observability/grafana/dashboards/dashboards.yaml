@@ -1,0 +1,14 @@
+# Grafana dashboard provisioning (the Compose `observability` profile): the four Matelot dashboards next to this file —
+# copies of deploy/observability/dashboards (built by tools/dashboards/build.py; chart-test fails when they differ),
+# their ${DS_PROMETHEUS} / ${DS_TEMPO} inputs resolved by compose-init to the provisioned datasources' uids.
+apiVersion: 1
+providers:
+  - name: matelot
+    folder: Matelot
+    type: file
+    disableDeletion: false
+    allowUiUpdates: false
+    updateIntervalSeconds: 60
+    options:
+      path: /matelot/observability/grafana/dashboards
+      foldersFromFilesStructure: false

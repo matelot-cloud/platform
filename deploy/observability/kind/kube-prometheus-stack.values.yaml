@@ -2,13 +2,15 @@
 # cluster keeps everything here and adds persistence / retention / ingress for Grafana (see the doc).
 #   helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack --version 92.11.0 \
 #     -n monitoring --create-namespace -f deploy/observability/kind/kube-prometheus-stack.values.yaml
-# The release name matters: with serviceMonitorSelectorNilUsesHelmValues (default) the Prometheus selects
-# ServiceMonitors labelled release=<release name> — the label the cell's ServiceMonitor gets from
-# observability.metrics.serviceMonitor.labels.
+# The release name matters: with serviceMonitorSelectorNilUsesHelmValues / ruleSelectorNilUsesHelmValues (defaults) the
+# Prometheus selects ServiceMonitors and PrometheusRules labelled release=<release name> — the label the cell's objects
+# get from observability.metrics.serviceMonitor.labels and observability.prometheusRules.labels. Grafana's sidecar
+# loads every ConfigMap labelled grafana_dashboard=1 (the cell's four dashboards).
 prometheus:
   prometheusSpec:
     enableFeatures: [exemplar-storage]        # exemplars on the pipeline / job / HTTP histograms → Tempo
     serviceMonitorNamespaceSelector: {}       # every namespace (the cells live in tenant-<slug>)
+    ruleNamespaceSelector: {}                 # the cells' PrometheusRules too (observability.prometheusRules, label release=<this release>)
     retention: 2d
     resources: { requests: { cpu: 100m, memory: 512Mi } }
 alertmanager:
@@ -16,6 +18,9 @@ alertmanager:
 grafana:
   adminPassword: matelot-kind                 # kind only — a real cluster sets admin.existingSecret
   sidecar:
+    dashboards:
+      folderAnnotation: grafana_folder       # the cells' dashboard ConfigMaps say which folder (observability.grafana.dashboards.folder)
+      provider: { foldersFromFilesStructure: true }
     datasources:
       exemplarTraceIdDestinations:            # Prometheus exemplar → the trace in Tempo
         datasourceUid: tempo

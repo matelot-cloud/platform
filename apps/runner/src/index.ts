@@ -110,6 +110,7 @@ async function main() {
   const metricsPort = Number(process.env.RUNNER_METRICS_PORT ?? 0);
   if (metricsPort > 0) await metrics.listen(metricsPort).then((p) => logger.info(`metrics on :${p}/metrics${tracer.enabled ? '; tracing on' : '; tracing off'}`)).catch((e: Error) => logger.warn(`metrics listener not started: ${e.message}`));
   metrics.set('matelot_runner_busy', {}, 0);
+  metrics.seedKnownSeries();
 
   const heartbeat = setInterval(() => void client.heartbeat(metadata, autoTags).then((r) => applyConfig(r?.config)).catch((e: Error) => logger.error(`heartbeat failed: ${e.message}`)), 15_000);
   await retryTransient('heartbeat', () => client.heartbeat(metadata, autoTags), { until: () => stopping }).then((r) => applyConfig(r?.config)).catch((e: Error) => logger.error(`heartbeat failed: ${e.message}`));

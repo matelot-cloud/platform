@@ -80,7 +80,9 @@ backup:
 Every run reports its outcome to the cell's API (a generated `BACKUP_REPORT_TOKEN`; the S3 upload reports too), so
 `matelot_backup_last_success_timestamp_seconds`, `matelot_backup_last_failure_timestamp_seconds` and
 `matelot_backup_last_duration_seconds` are on the worker's `/metrics` — alert on the first growing older than a day
-(docs/observability.md). A report that cannot be delivered never fails the backup. Docker Compose reports the same way.
+(docs/observability.md). A report that cannot be delivered never fails the backup. Docker Compose reports the same way. The run waits up to
+2 minutes for the database's DNS name and `pg_isready` before dumping (a CronJob firing right after a node restart
+used to fail with "could not translate host name"); when it still fails, the report carries the last error.
 
 `make deploy` (or `helm upgrade`) creates the CronJob `<release>-backup`, the PVC `<release>-backups` (kept on
 uninstall) and the script ConfigMap. On a StorageClass with `volumeBindingMode: WaitForFirstConsumer` (kind, EKS gp3,

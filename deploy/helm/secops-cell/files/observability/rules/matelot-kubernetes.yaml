@@ -1,0 +1,31 @@
+# Alert rules that need the cluster's own metrics — kube-state-metrics, kubelet volume stats, cert-manager — all part
+# of kube-prometheus-stack. Rendered into the chart's PrometheusRule next to matelot.yaml; not loaded on Compose.
+groups:
+  - name: matelot-kubernetes
+    rules:
+      - alert: MatelotBackupJobFailed
+        expr: max by (namespace) (kube_job_status_failed{namespace=~"tenant-.+", job_name=~".+-backup-[0-9]+"}) > 0
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.namespace }}: a backup Job failed"
+          description: "A pod of the backup CronJob ended in failure: kubectl -n {{ $labels.namespace }} logs job/<name> (pg_dump, the secrets, or the S3 upload)."
+          runbook_url: https://matelot-cloud.github.io/website/docs/latest/observability.html#alert-matelotbackupjobfailed
+      - alert: MatelotCertificateExpiring
+        expr: certmanager_certificate_expiration_timestamp_seconds{namespace=~"tenant-.+"} - time() < 14 * 24 * 3600
+        for: 1h
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.namespace }}: certificate {{ $labels.name }} expires in {{ $value | humanizeDuration }}"
+          description: "cert-manager has not renewed it: check the Certificate's status and the issuer (ACME challenge failing? the DNS names changed?)."
+          runbook_url: https://matelot-cloud.github.io/website/docs/latest/observability.html#alert-matelotcertificateexpiring
+      - alert: MatelotDiskAlmostFull
+        expr: |
+          kubelet_volume_stats_available_bytes{namespace=~"tenant-.+"}
+            / kubelet_volume_stats_capacity_bytes{namespace=~"tenant-.+"} < 0.10
+        for: 15m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.namespace }}: volume {{ $labels.persistentvolumeclaim }} has less than 10 % free"
+          description: "Postgres, the registry or the backups volume is almost full ({{ $value | humanizePercentage }} free): grow the PVC (the storage class must allow expansion) or prune (backup retention, registry garbage collection)."
+          runbook_url: https://matelot-cloud.github.io/website/docs/latest/observability.html#alert-matelotdiskalmostfull

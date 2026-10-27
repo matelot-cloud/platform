@@ -66,6 +66,7 @@ make check-layout   fail on stale top-level directories (CI does too)
 make kind-up / kind-load / deploy TENANT=acme   kind-up installs ingress-nginx + cert-manager + ClusterIssuer `selfsigned`; deploy uses it (HTTPS: browsers sign in only in a secure context)
 make kind-jaeger TENANT=acme   Jaeger all-in-one on kind, the cell exporting traces to it (one trace per pipeline; docs/observability.md)
 make kind-observability TENANT=acme   kube-prometheus-stack + Tempo + Loki + Alloy on kind, the cell's ServiceMonitor / exporters / OTLP on
+make dashboards     rebuild the Grafana dashboards from tools/dashboards/build.py (+ chart / Compose copies) and check them with the alert rules
 make backup TENANT=acme / restore TENANT=acme ARCHIVE=…   cell backup (CronJob in the chart) and restore; docs/backup-restore.md
 deploy/compose/smoke.sh   the Compose quick start end to end (up → doctor → project → backup → down -v → restore); CI job `compose`
 make provision TENANT=globex / decommission TENANT=globex   real cells from deploy/cells/<slug>.values.yaml; docs/cell-provisioning.md
@@ -150,6 +151,14 @@ mirror this layout exactly — nothing at the root that is not in the repository
   port on the host or the ingress. OTLP headers only from a Secret (`observability.otlp.headersSecret`). Anything
   compose-init reads from the environment must be in compose.yaml's `x-config-env` (compose-init.test.sh checks).
   Keycloak clients added after a realm's first import carry `matelot.createIfMissing: "true"` (realm-sync creates them).
+  Dashboards and alerts (drop 3): the dashboards are generated — edit `tools/dashboards/build.py`, run `make dashboards`
+  (writes `deploy/observability/dashboards` and the chart / Compose copies); the rules live in
+  `deploy/observability/rules` (`make dashboards` copies them too; `rules/matelot_test.yaml` is their promtool unit
+  test; every alert has a `#### Alert: <Name>` runbook in docs/observability.md — `tools/dashboards/test.py` checks all
+  of it in CI). A new counter / histogram label set goes into `KNOWN_LABEL_SETS` (metrics.ts) so it exists at zero
+  from the first scrape; a GET a client polls on its own sends `x-matelot-poll: 1` (web: a `refetchInterval` query is
+  marked by hooks.ts; CLI: `poll: true`). The cell's image tag lives in `deploy/cells/<slug>.values.yaml` — `apply --tag`
+  writes it; never `--set` it by hand.
 
 ## v1 focus (read first)
 

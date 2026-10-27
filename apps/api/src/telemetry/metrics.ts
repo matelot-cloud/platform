@@ -14,6 +14,8 @@ import { resourceFromAttributes } from '@opentelemetry/resources';
 import { createServer, type Server } from 'node:http';
 import { serialize, wantsOpenMetrics, OPENMETRICS_CONTENT_TYPE, TEXT_CONTENT_TYPE, type Exemplar, type GaugeFamily } from './exposition';
 import { resourceAttributes } from './tracing';
+import { jobTypeEnum, pipelineTriggerEnum, sbomSourceEnum } from '../database/schema';
+import { QUEUES } from '../jobs/queues';
 
 /** Histogram boundaries, in seconds — the three shapes of latency a cell has. */
 export const BUCKETS = {
@@ -40,6 +42,28 @@ export const ALLOWED_LABELS = new Set(['db_namespace', 'error_type', 'http_reque
  *  pg's query-duration histogram, kept with our buckets and only its bounded attributes; it exists while tracing is on
  *  (the instrumentations load with the tracing preload). */
 const DROPPED_METERS = ['@opentelemetry/instrumentation-http', '@opentelemetry/instrumentation-ioredis', '@opentelemetry/instrumentation-undici', '@opentelemetry/instrumentation-express'];
+
+/**
+ * The label sets every process publishes from its first scrape, at zero (`seedKnownSeries`): a counter or histogram
+ * that first appears at its observed value gives `rate()` / `increase()` nothing for that first event — the alert on
+ * the first failed job and the p95 after the first pipeline were both NaN. Everything whose labels are a finite
+ * enumeration is listed here; the HTTP histogram (route templates × methods × statuses) and the per-pool gauges stay
+ * lazy — their label sets are not known at startup (dashboards use `or vector(0)` / `absent()` for those).
+ */
+export const KNOWN_LABEL_SETS = {
+  jobKinds: jobTypeEnum.enumValues,
+  jobTerminalStatuses: ['succeeded', 'failed', 'cancelled', 'timed_out', 'skipped'] as const,   // PipelineTelemetry.jobFinished
+  pipelineTerminalStatuses: ['succeeded', 'failed', 'cancelled'] as const,
+  pipelineTriggers: pipelineTriggerEnum.enumValues,
+  claimResults: ['job', 'empty', 'disconnected'] as const,
+  gateResults: ['pass', 'warn', 'fail'] as const,
+  queues: Object.values(QUEUES),
+  queueResults: ['completed', 'failed'] as const,
+  correlationSources: ['loop'] as const,
+  sbomSources: sbomSourceEnum.enumValues,
+  syncFailureKinds: ['source'] as const,
+  webhookProviders: ['github'] as const,
+};
 
 /** A gauge whose series are replaced wholesale by whoever computes them (the worker's timers): absent series vanish. */
 export class GaugeSet {
@@ -85,7 +109,10 @@ export class ExemplarStore {
 
 /** A histogram that also records an exemplar when a sampled span is active. */
 export class TracedHistogram {
-  constructor(readonly name: string, private readonly histogram: Histogram, private readonly exemplars: ExemplarStore) {}
+  /** label sets published at zero until observed (the SDK omits an unobserved histogram entirely) */
+  readonly seeds: Attributes[] = [];
+  constructor(readonly name: string, private readonly histogram: Histogram, private readonly exemplars: ExemplarStore, readonly description: string) {}
+  seed(attributes: Attributes): void { check(attributes); this.seeds.push(attributes); }
   /** `exemplar` names the trace the sample belongs to when it is not the active span's (a pipeline job finished by
    *  an HTTP call from the runner belongs to the pipeline's trace, not to that request's). */
   record(valueSeconds: number, attributes: Attributes = {}, exemplar?: { traceId: string; spanId: string } | null): void {
@@ -107,6 +134,8 @@ export interface MetricsOptions {
   env?: NodeJS.ProcessEnv;
   /** extra readers (tests pass an in-memory one); the OTLP push reader is added from the env */
   readers?: IMetricReader[];
+  /** false: no zero series (tests that assert an empty page) */
+  seed?: boolean;
 }
 
 /** The cell's instruments. One per process (`getMetrics()`); tests build their own with `new Metrics({ env })`. */
@@ -149,6 +178,7 @@ export class Metrics {
   readonly backupLastFailure: GaugeSet;
   readonly buildInfo: GaugeSet;
   private readonly gaugeSets: GaugeSet[] = [];
+  private readonly histograms: TracedHistogram[] = [];
 
   constructor(options: MetricsOptions = {}) {
     this.env = options.env ?? process.env;
@@ -162,7 +192,7 @@ export class Metrics {
     this.provider = new MeterProvider({ resource: resourceFromAttributes(resourceAttributes(this.env)), views, readers });
     this.meter = this.provider.getMeter('matelot');
     const m = this.meter;
-    const hist = (name: string, description: string) => new TracedHistogram(name, m.createHistogram(name, { description, unit: 's' }), this.exemplars);
+    const hist = (name: string, description: string) => { const h = new TracedHistogram(name, m.createHistogram(name, { description, unit: 's' }), this.exemplars, description); this.histograms.push(h); return h; };
     const gauge = (name: string, description: string, unit?: string) => { const g = new GaugeSet(name, m, { description, unit }); this.gaugeSets.push(g); return g; };
 
     this.httpRequestDuration = hist('http.server.request.duration', 'API request duration by method, route template and status');
@@ -193,6 +223,30 @@ export class Metrics {
     this.backupLastFailure = gauge('matelot.backup.last_failure.timestamp', 'Unix time of the last failed backup', 's');
     this.buildInfo = gauge('matelot.build.info', 'Always 1; the version labels identify the build');
     this.buildInfo.set(1, { version: this.env.APP_VERSION ?? '0.0.0', commit: this.env.APP_COMMIT ?? 'unknown', node_version: process.version, component: String(resourceAttributes(this.env)['matelot.component']) });
+    if (options.seed !== false) this.seedKnownSeries();
+  }
+
+  /** Every enumerable series at zero from the first scrape (KNOWN_LABEL_SETS). Both the api and the worker publish
+   *  the pipeline families: jobs finish through the runner API, the worker runs policy_eval, times jobs out and
+   *  cancels, so either process can be the one that counts a given (kind, status). */
+  seedKnownSeries(): void {
+    const K = KNOWN_LABEL_SETS;
+    for (const kind of K.jobKinds) {
+      for (const status of K.jobTerminalStatuses) this.counterAdd(this.pipelineJobs, 0, { kind, status });
+      this.pipelineJobDuration.seed({ kind });
+      this.pipelineJobQueueWait.seed({ kind });
+    }
+    for (const status of K.pipelineTerminalStatuses) {
+      for (const trigger of K.pipelineTriggers) this.counterAdd(this.pipelines, 0, { status, trigger });
+      this.pipelineDuration.seed({ status });
+    }
+    for (const result of K.claimResults) this.counterAdd(this.runnerClaims, 0, { result });
+    for (const result of K.gateResults) this.counterAdd(this.gateEvaluations, 0, { result });
+    for (const queue of K.queues) for (const result of K.queueResults) this.counterAdd(this.queueJobsProcessed, 0, { queue, result });
+    for (const source of K.correlationSources) this.sbomCorrelationDuration.seed({ source });
+    for (const source of K.sbomSources) this.sbomIngestDuration.seed({ source });
+    for (const kind of K.syncFailureKinds) this.counterAdd(this.integrationSyncFailures, 0, { kind });
+    for (const provider of K.webhookProviders) this.webhookLag.seed({ provider });
   }
 
   counterAdd(counter: Counter, value: number, attributes: Attributes): void {
@@ -205,7 +259,7 @@ export class Metrics {
     const { resourceMetrics } = await this.scrape.collect();
     const open = wantsOpenMetrics(accept);
     this.lastScrapeAt = new Date();
-    return { body: serialize(resourceMetrics, this.exemplars.lookup, open, this.gaugeSets.map((g) => g.family())), contentType: open ? OPENMETRICS_CONTENT_TYPE : TEXT_CONTENT_TYPE };
+    return { body: serialize(resourceMetrics, this.exemplars.lookup, open, this.gaugeSets.map((g) => g.family()), this.histograms.filter((h) => h.seeds.length).map((h) => ({ name: h.name, unit: 's', description: h.description, boundaries: HISTOGRAMS[h.name] ?? [], seeds: h.seeds }))), contentType: open ? OPENMETRICS_CONTENT_TYPE : TEXT_CONTENT_TYPE };
   }
 
   async collect(): Promise<ResourceMetrics> {

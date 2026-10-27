@@ -517,6 +517,9 @@ export const jobs = pgTable(
     createdById: uuid('created_by_id').references(() => users.id, { onDelete: 'set null' }),
     createdByActor: actorTypeEnum('created_by_actor').notNull().default('USER'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    /** when the job last became claimable: creation for the first stage, the stage opening for later ones, a retry
+     *  or a lost lease afterwards — the queue wait and the claim span start here, never at creation */
+    queuedAt: timestamp('queued_at', { withTimezone: true }),
     assignedAt: timestamp('assigned_at', { withTimezone: true }),
     startedAt: timestamp('started_at', { withTimezone: true }),
     finishedAt: timestamp('finished_at', { withTimezone: true }),

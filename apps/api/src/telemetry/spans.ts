@@ -51,6 +51,9 @@ export interface CompletedSpan {
   events?: { name: string; time: Date; attributes?: Attributes }[];
   error?: string | null;
   kind?: SpanKind;
+  /** `pipeline` (default): service matelot-pipeline, for the pipeline's root and job spans only; `process`: this
+   *  process's own service (a worker loop emitted after the fact belongs to matelot-worker, not next to pipelines) */
+  service?: 'pipeline' | 'process';
 }
 
 /**
@@ -60,7 +63,7 @@ export interface CompletedSpan {
  */
 export function emitCompletedSpan(s: CompletedSpan): void {
   const parent = contextFromTraceparent(s.parentTraceparent);
-  const t = pipelineTracer() ?? tracer();   // service "matelot-pipeline" whichever process emits (tracing.ts)
+  const t = (s.service ?? 'pipeline') === 'pipeline' ? pipelineTracer() ?? tracer() : tracer();   // "matelot-pipeline" whichever process emits (tracing.ts), or this process
   const span = withPinnedIds(s.traceId, s.spanId, () => t.startSpan(s.name, { startTime: s.startTime, attributes: s.attributes, kind: s.kind ?? SpanKind.INTERNAL }, parent));
   for (const e of s.events ?? []) span.addEvent(e.name, e.attributes, e.time);
   span.setStatus(s.error ? { code: SpanStatusCode.ERROR, message: s.error } : { code: SpanStatusCode.OK });

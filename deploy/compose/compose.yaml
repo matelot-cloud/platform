@@ -33,6 +33,7 @@ x-config-env: &config-env
   MATELOT_OTLP_PROTOCOL: ${MATELOT_OTLP_PROTOCOL:-http/protobuf}
   MATELOT_OTLP_HEADERS: ${MATELOT_OTLP_HEADERS:-}
   MATELOT_OTLP_METRICS: ${MATELOT_OTLP_METRICS:-0}
+  MATELOT_TRACES_GET_RATIO: ${MATELOT_TRACES_GET_RATIO:-}
   MATELOT_TRACES_SAMPLER: ${MATELOT_TRACES_SAMPLER:-parentbased_always_on}
   # the profiles of this stack: with `observability` in COMPOSE_PROFILES (.env) init wires the cell to the bundled
   # collector, Prometheus, Grafana (docs/observability.md)

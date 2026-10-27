@@ -278,6 +278,7 @@ if [ -n "${MATELOT_OTLP_ENDPOINT:-}" ]; then
   kv "$E" OTEL_EXPORTER_OTLP_PROTOCOL "${MATELOT_OTLP_PROTOCOL:-http/protobuf}"
   [ -n "${MATELOT_OTLP_HEADERS:-}" ] && kv "$E" OTEL_EXPORTER_OTLP_HEADERS "$MATELOT_OTLP_HEADERS"
   kv "$E" OTEL_TRACES_SAMPLER "${MATELOT_TRACES_SAMPLER:-parentbased_always_on}"
+  kv "$E" MATELOT_TRACES_GET_RATIO "${MATELOT_TRACES_GET_RATIO:-0.1}"
   [ "${MATELOT_OTLP_METRICS:-0}" = 1 ] && kv "$E" OTEL_METRICS_EXPORTER "prometheus,otlp"
 fi
 kv "$E" MATELOT_LICENSE "${MATELOT_LICENSE:-}"
@@ -301,6 +302,8 @@ if [ "$OBS" = 1 ]; then
   mkdir -p "$M/observability"; cp -R "$OBS_SRC/." "$M/observability/"
   cell_re="$(printf '%s' "$ORG_SLUG" | sed 's/[&/\\]/\\&/g')"
   find "$M/observability" -type f -exec sed -i "s/__CELL__/$cell_re/g" {} +
+  # the dashboards' datasource inputs → the provisioned datasources (uids in grafana/datasources/datasources.yaml)
+  find "$M/observability/grafana/dashboards" -name '*.json' -exec sed -i -e 's/\${DS_PROMETHEUS}/prometheus/g' -e 's/\${DS_TEMPO}/tempo/g' {} +
   G="$M/env/grafana.env"; : > "$G"
   kv "$G" GF_SERVER_ROOT_URL "$BASE_URL/grafana/"
   kv "$G" GF_SERVER_SERVE_FROM_SUB_PATH true

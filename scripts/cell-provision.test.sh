@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 # work on a copy of the repo's deploy/cells so the real folder stays untouched; a fake kubectl answers the kind context
 mkdir -p "$T/bin" "$T/repo/scripts/lib" "$T/repo/deploy/cells"
-cp scripts/cell-provision.sh "$T/repo/scripts/"; cp scripts/lib/wait.sh scripts/lib/split-hooks.py "$T/repo/scripts/lib/"; cp deploy/cells/_template.values.yaml "$T/repo/deploy/cells/"
+cp scripts/cell-provision.sh "$T/repo/scripts/"; cp scripts/lib/wait.sh scripts/lib/split-hooks.py scripts/lib/values-image-tag.py "$T/repo/scripts/lib/"; cp deploy/cells/_template.values.yaml "$T/repo/deploy/cells/"
 printf '#!/usr/bin/env bash\n[ "$1 $2" = "config current-context" ] && { echo "${FAKE_CONTEXT:-kind-secops}"; exit 0; }\nexit 1\n' > "$T/bin/kubectl"; chmod +x "$T/bin/kubectl"
 export PATH="$T/bin:$PATH"
 cd "$T/repo"
@@ -147,6 +147,31 @@ pending='1\tMon Oct 13 10:00:00 2026\tsuperseded\tsecops-cell-0.1.0\t0.1.0-rc.11
 HELM_STATUS=pending-upgrade HELM_HISTORY="$pending" release_recoverable > "$T/r.out" || { echo "FAIL: pending-upgrade with a good revision must roll back and pass" >&2; exit 1; }
 grep -q "rollback globex 2 -n tenant-globex --wait --timeout 5m" "$HELM_LOG" || { echo "FAIL: expected a rollback to revision 2: $(cat "$HELM_LOG")" >&2; exit 1; }
 
+# 5b. pin_tag: --tag is written into the values file (all four images); without --tag an existing release that runs
+#     another tag than the file says is refused with both ways out; the same tag passes; a new release passes
+sed -n '/^release_tag()/,/^}/p;/^pin_tag()/,/^}/p' scripts/cell-provision.sh > "$T/pin.sh"
+# shellcheck disable=SC1091
+source "$T/pin.sh"
+cat > "$T/bin/helm" <<'FAKE'
+#!/usr/bin/env bash
+# fake helm: status → exit HELM_ABSENT; get values → the stored values with HELM_TAG
+case "$1" in
+  status) [ "${HELM_ABSENT:-0}" = 1 ] && exit 1; echo '{"name":"globex","info":{"status":"deployed"}}';;
+  get) printf '{"tenant":{"slug":"globex"}%s}\n' "${HELM_TAG:+,\"image\":{\"tag\":\"$HELM_TAG\"}}";;
+esac
+FAKE
+chmod +x "$T/bin/helm"
+cp deploy/cells/acme.values.yaml "$T/pin.values.yaml"; export VALUES="$T/pin.values.yaml" SLUG=globex
+TAG=0.1.0-rc.21 pin_tag > "$T/pin.out" || { echo "FAIL: --tag must pass" >&2; exit 1; }
+grep -q "image.tag \"0.1.0\" → 0.1.0-rc.21" "$T/pin.out" && grep -q "managedRunners.image.tag \"0.1.0\" → 0.1.0-rc.21" "$T/pin.out" || { echo "FAIL: $(cat "$T/pin.out")" >&2; exit 1; }
+[ "$(values_get image tag)" = "0.1.0-rc.21" ] && [ "$(values_get web image tag)" = "0.1.0-rc.21" ] || { echo "FAIL: tag not written: $(grep tag "$VALUES")" >&2; exit 1; }
+TAG="" HELM_TAG=0.1.0-rc.21 pin_tag > /dev/null || { echo "FAIL: the release runs the file's tag: must pass" >&2; exit 1; }
+if TAG="" HELM_TAG=0.1.0-rc.20 pin_tag > /dev/null 2> "$T/pin.err"; then echo "FAIL: a release on another tag must be refused without --tag" >&2; exit 1; fi
+grep -q "runs image tag '0.1.0-rc.20' but .* says '0.1.0-rc.21'" "$T/pin.err" && grep -q -- "--tag 0.1.0-rc.20" "$T/pin.err" || { echo "FAIL: $(cat "$T/pin.err")" >&2; exit 1; }
+TAG="" HELM_TAG="" pin_tag > /dev/null || { echo "FAIL: a release without a stored tag must pass" >&2; exit 1; }
+TAG="" HELM_ABSENT=1 HELM_TAG=0.1.0-rc.20 pin_tag > /dev/null || { echo "FAIL: a new release must pass" >&2; exit 1; }
+export VALUES=deploy/cells/acme.values.yaml
+
 # 6. dry_run_rendered: the upgrade case — the realm-sync hook Job exists from the previous run (immutable
 #    spec.template), the rendered chart carries the same Job; the fake kubectl rejects an APPLY of any Job that exists
 #    (what the API server does) and accepts CREATE of a new name. Without the hook split the check fails; with it, passes.
@@ -219,4 +244,4 @@ grep -q "^kind: ConfigMap" "$T/rest.yaml" || { echo "FAIL: the ConfigMap is miss
 grep -q "^  name: globex-realm-sync-dryrun-7$" "$T/hooks.yaml" && grep -q "helm.sh/hook: post-install" "$T/hooks.yaml" || { echo "FAIL: hook not renamed: $(cat "$T/hooks.yaml")" >&2; exit 1; }
 unset EXISTING_JOBS
 
-echo "cell-provision ok (new picks the issuer per context; values_get reads the generated file with PyYAML and without; checks skip terminating and replaced pods; readiness probe retries with backoff and reports the last status; failed / pending releases are recovered or explained; the server-side dry run passes over an existing hook Job; a probe pod without a verdict is retried inside the budget, with diagnostics when it persists)"
+echo "cell-provision ok (new picks the issuer per context; values_get reads the generated file with PyYAML and without; checks skip terminating and replaced pods; readiness probe retries with backoff and reports the last status; failed / pending releases are recovered or explained; the server-side dry run passes over an existing hook Job; --tag is pinned in the values file and a release on another tag is refused without it; a probe pod without a verdict is retried inside the budget, with diagnostics when it persists)"

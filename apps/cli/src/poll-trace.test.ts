@@ -15,12 +15,12 @@ test('unsampledTraceparent: W3C format with the sampled flag off', () => {
 });
 
 test('pipeline --wait: the polls carry an unsampled traceparent (no trace at the cell); the run request carries none', async () => {
-  const seen: { url: string; traceparent?: string }[] = [];
+  const seen: { url: string; traceparent?: string; poll?: string }[] = [];
   let polls = 0;
   const server = createServer((req, res) => {
     let raw = ''; req.on('data', (c) => (raw += c));
     req.on('end', () => {
-      seen.push({ url: req.url!, traceparent: req.headers.traceparent as string | undefined });
+      seen.push({ url: req.url!, traceparent: req.headers.traceparent as string | undefined, poll: req.headers['x-matelot-poll'] as string | undefined });
       res.writeHead(200, { 'content-type': 'application/json' });
       if (req.method === 'POST') res.end(JSON.stringify({ id: ID, number: 7, status: 'running', jobs: [{ name: 'checkout', status: 'queued' }] }));
       else { polls++; res.end(JSON.stringify({ id: ID, number: 7, status: polls >= 2 ? 'succeeded' : 'running', jobs: [{ name: 'checkout', status: polls >= 2 ? 'succeeded' : 'running' }] })); }
@@ -32,8 +32,10 @@ test('pipeline --wait: the polls carry an unsampled traceparent (no trace at the
     assert.match(stdout, /pipeline #7: succeeded/);
     assert.equal(seen[0].url, `/api/v1/services/${ID}/pipelines`);
     assert.equal(seen[0].traceparent, undefined);                 // the run itself may be traced by the cell
+    assert.equal(seen[0].poll, undefined);
     const pollRequests = seen.filter((s) => s.url === `/api/v1/pipelines/${ID}`);
     assert.equal(pollRequests.length, 2);
     for (const p of pollRequests) assert.match(p.traceparent ?? '', /^00-[0-9a-f]{32}-[0-9a-f]{16}-00$/);
+    for (const p of pollRequests) assert.equal(p.poll, '1', 'every poll says so in x-matelot-poll');
   } finally { server.close(); }
 });

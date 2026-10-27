@@ -3,7 +3,7 @@ import { Queue } from 'bullmq';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type IORedis from 'ioredis';
 import { DATABASE, Database } from '../database/database.module';
-import { backupReports, codeFindings, findings, jobs, runnerPools, runners } from '../database/schema';
+import { backupReports, codeFindings, findings, jobs, remediations, runnerPools, runners } from '../database/schema';
 import { QUEUES } from '../jobs/queues';
 import { Metrics } from './metrics';
 
@@ -110,6 +110,9 @@ export class WorkerGauges {
         ...dep.map((r) => ({ value: Number(r.count), attributes: { severity: r.severity, kind: 'dependency' } })),
         ...code.map((r) => ({ value: Number(r.count), attributes: { severity: r.severity, kind: 'code' } })),
       ]);
+      // SLA breaches: open remediations past their due date, by severity (the digest notifies daily; the gauge every 10 min)
+      const breaches = await this.db.select({ severity: remediations.severity, count: sql<number>`count(*)::int` }).from(remediations).where(and(inArray(remediations.status, ['open', 'in_progress']), sql`${remediations.dueAt} < now()`)).groupBy(remediations.severity);
+      this.metrics.slaBreaches.replace(breaches.map((r) => ({ value: Number(r.count), attributes: { severity: r.severity } })));
     } catch (error) {
       this.logger.warn(`findings gauge failed: ${error instanceof Error ? error.message : String(error)}`);
     }

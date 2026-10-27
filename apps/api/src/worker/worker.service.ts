@@ -97,7 +97,7 @@ export class WorkerService implements OnModuleInit, OnApplicationShutdown {
     this.sweeper = setInterval(() => void this.quiet(async () => {
       const started = new Date();
       const r = await this.jobs.sweep();
-      if (r.requeued || r.failed || r.offline) emitCompletedSpan({ name: 'worker sweep', traceId: newTraceId(), spanId: newSpanId(), startTime: started, endTime: new Date(), attributes: { 'matelot.sweep.requeued': r.requeued, 'matelot.sweep.failed': r.failed, 'matelot.sweep.offline': r.offline } });
+      if (r.requeued || r.failed || r.offline) emitCompletedSpan({ name: 'worker sweep', service: 'process', traceId: newTraceId(), spanId: newSpanId(), startTime: started, endTime: new Date(), attributes: { 'matelot.sweep.requeued': r.requeued, 'matelot.sweep.failed': r.failed, 'matelot.sweep.offline': r.offline } });
     }).catch((e: Error) => this.logger.error(`sweep failed: ${e.message}`)), 15_000);
     if (this.registry.available) {
       const run = () => void this.loop('registry reconcile', () => this.registry.reconcile()).then((r) => r.newTags && this.logger.log(`registry reconcile: ${r.newTags} new tags across ${r.repositories} repositories`)).catch((e: Error) => this.logger.warn(`registry reconcile failed: ${e.message}`));

@@ -3,7 +3,7 @@
  */
 import { context, trace } from '@opentelemetry/api';
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
-import { ALLOWED_LABELS, BUCKETS, Metrics } from './metrics';
+import { ALLOWED_LABELS, BUCKETS, KNOWN_LABEL_SETS, Metrics } from './metrics';
 import { labels, prometheusName, wantsOpenMetrics } from './exposition';
 
 const ENV = { APP_VERSION: '0.1.0-rc.15', APP_COMMIT: 'abc1234', MATELOT_COMPONENT: 'api', BOOTSTRAP_ORG_SLUG: 'globex', OTEL_METRICS_EXPORTER: 'prometheus' } as NodeJS.ProcessEnv;
@@ -31,6 +31,42 @@ describe('metrics exposition', () => {
     expect(labels({ q: 'a"b\\c\nd' })).toBe('{q="a\\"b\\\\c\\nd"}');
     expect(wantsOpenMetrics(PROMETHEUS_ACCEPT)).toBe(true);
     expect(wantsOpenMetrics('*/*')).toBe(false);
+  });
+
+  it('every enumerable series exists at zero before any work (rate() sees the first event; p95 after the first pipeline is a number)', async () => {
+    const body = (await m.render(PROMETHEUS_ACCEPT)).body;
+    const L = lines(body);
+    for (const kind of KNOWN_LABEL_SETS.jobKinds) {
+      for (const status of KNOWN_LABEL_SETS.jobTerminalStatuses) expect(L).toContain(`matelot_pipeline_jobs_total{kind="${kind}",status="${status}"} 0`);
+      expect(L).toContain(`matelot_pipeline_job_duration_seconds_bucket{kind="${kind}",le="1"} 0`);
+      expect(L).toContain(`matelot_pipeline_job_duration_seconds_bucket{kind="${kind}",le="+Inf"} 0`);
+      expect(L).toContain(`matelot_pipeline_job_duration_seconds_count{kind="${kind}"} 0`);
+      expect(L).toContain(`matelot_pipeline_job_queue_wait_seconds_sum{kind="${kind}"} 0`);
+    }
+    expect(L.filter((l) => l.startsWith('matelot_pipeline_jobs_total{'))).toHaveLength(KNOWN_LABEL_SETS.jobKinds.length * KNOWN_LABEL_SETS.jobTerminalStatuses.length);
+    expect(L).not.toContain(expect.stringMatching(/^matelot_pipeline_jobs_total\{kind="[a-z_]+",status="(queued|running|assigned|pending)"\}/));
+    expect(L).toContain('matelot_pipelines_total{status="failed",trigger="push"} 0');
+    expect(L).toContain('matelot_pipeline_duration_seconds_bucket{le="1800",status="succeeded"} 0');
+    expect(L).toContain('matelot_runner_claims_total{result="disconnected"} 0');
+    expect(L).toContain('matelot_gate_evaluations_total{result="fail"} 0');
+    expect(L).toContain('matelot_queue_jobs_processed_total{queue="github-webhooks",result="failed"} 0');
+    expect(L).toContain('matelot_sbom_correlation_duration_seconds_count{source="loop"} 0');
+    expect(L).toContain('matelot_integration_sync_failures_total{kind="source"} 0');
+    expect(L).toContain('matelot_webhook_lag_seconds_count{provider="github"} 0');
+    expect(L.filter((l) => l.startsWith('# TYPE matelot_pipeline_job_duration_seconds '))).toHaveLength(1);
+    expect(body).not.toContain('http_server_request_duration_seconds_bucket');   // route templates are not enumerable: lazy, documented
+    // observed series replace their zero; the untouched ones stay at zero in the same family, once
+    m.pipelineJobDuration.record(3, { kind: 'sbom' });
+    m.counterAdd(m.pipelineJobs, 1, { kind: 'sbom', status: 'succeeded' });
+    const after = lines((await m.render(PROMETHEUS_ACCEPT)).body);
+    expect(after).toContain('matelot_pipeline_job_duration_seconds_bucket{kind="sbom",le="5"} 1');
+    expect(after).toContain('matelot_pipeline_job_duration_seconds_count{kind="sbom"} 1');
+    expect(after).toContain('matelot_pipeline_job_duration_seconds_count{kind="sast"} 0');
+    expect(after.filter((l) => l.startsWith('matelot_pipeline_job_duration_seconds_count{kind="sbom"}'))).toHaveLength(1);
+    expect(after).toContain('matelot_pipeline_jobs_total{kind="sbom",status="succeeded"} 1');
+    expect(after).toContain('matelot_pipeline_jobs_total{kind="sbom",status="failed"} 0');
+    expect(after.filter((l) => l.startsWith('# TYPE matelot_pipeline_job_duration_seconds '))).toHaveLength(1);
+    expect(after[after.length - 1]).toBe('# EOF');
   });
 
   it('build_info is 1 with the version labels; counters carry _total; gauges replace their series', async () => {

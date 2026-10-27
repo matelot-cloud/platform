@@ -6,6 +6,9 @@
 #   scripts/cell-provision.sh apply --slug globex [--tag 0.2.0] [--dry-run] [--no-wait] [--no-backup]
 #       preflight → (existing cell: pre-upgrade backup) → helm upgrade --install → wait for the workloads (progress
 #       every 15 s) → (new cell: first backup, which also binds the backups PVC) → checks
+#       --tag X is written into the values file first (the four image tags; scripts/lib/values-image-tag.py), so later
+#       applies without --tag keep it; an apply without --tag refuses to move an existing release to a different tag
+#       than the one it runs (the values file disagrees with the release: pass --tag to say which one is right)
 #       (helm's own --wait is not used: it also waits for the backups PVC, which on WaitForFirstConsumer storage —
 #       kind, EKS gp3, GKE, AKS — binds only when the first backup mounts it, so a plain `helm install --wait` hangs)
 #   scripts/cell-provision.sh check --slug globex
@@ -151,8 +154,37 @@ preflight() {
 }
 
 # ---- apply --------------------------------------------------------------------------------------
+# The image tag the release runs now (helm's stored values: what the last apply passed through the values file or
+# --set; empty when the release does not exist or never set a tag).
+release_tag() {
+  helm get values "$RELEASE" -n "$NAMESPACE" -o json 2>/dev/null | python3 -c 'import json,sys
+try: d = json.load(sys.stdin) or {}
+except Exception: d = {}
+print(((d.get("image") or {}).get("tag") or ""))' 2>/dev/null || true
+}
+
+# pin_tag: --tag goes into the values file (the source of truth for every later apply); without --tag, an existing
+# release keeps running the tag it has only if the file names the same one — the chart default would otherwise roll
+# every image to the chart's appVersion silently (a kind cell lost its realm-sync image that way).
+pin_tag() {
+  if [ -n "$TAG" ]; then
+    python3 scripts/lib/values-image-tag.py "$VALUES" "$TAG" | sed 's/^/   /'
+    echo "   (commit $VALUES: the tag is part of the cell's definition now)"
+    return 0
+  fi
+  helm status "$RELEASE" -n "$NAMESPACE" > /dev/null 2>&1 || return 0
+  local running file; running="$(release_tag)"; file="$(values_get image tag)"
+  [ -n "$running" ] || return 0
+  [ "$running" = "$file" ] && return 0
+  echo "release $RELEASE runs image tag '$running' but $VALUES says '${file:-<unset: the chart default>}': an apply without --tag would move every image to '${file:-the chart default}'." >&2
+  echo "   keep it:    scripts/cell-provision.sh apply --slug $SLUG --tag $running      (writes the tag into the values file)" >&2
+  echo "   upgrade it: scripts/cell-provision.sh apply --slug $SLUG --tag <new tag>" >&2
+  return 1
+}
+
 cmd_apply() {
   preflight
+  pin_tag || exit 1
   FILLED="$(mktemp)"; trap 'rm -f "$FILLED"' EXIT
   # fill ${VAR} placeholders from the environment: only the variables the file names, values taken literally
   local content v; content="$(cat "$VALUES")"

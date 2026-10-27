@@ -1,7 +1,22 @@
 import { useEffect, useMemo, useRef } from 'react';
-import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery as useQueryBase, useQueryClient, type QueryFunction, type QueryKey, type UseQueryOptions } from '@tanstack/react-query';
 import { useDashboard } from '../state/DashboardContext';
-import { ApiError, useApi } from './client';
+import { ApiError, asPoll, useApi } from './client';
+
+/**
+ * useQuery for this file: once a query with a refresh interval has its data, every further fetch of it is a background
+ * refetch — the interval, the window regaining focus, an invalidation when a job finished — and goes out as a poll
+ * (client.ts asPoll: `x-matelot-poll: 1`, which the cell never records as a trace of its own). The first fetch, and
+ * queries without an interval, are the user's own requests and stay traced (sampled by the cell's ratio).
+ */
+function useQuery<TQueryFnData = unknown, TError = Error, TData = TQueryFnData, TQueryKey extends QueryKey = QueryKey>(options: UseQueryOptions<TQueryFnData, TError, TData, TQueryKey>) {
+  const client = useQueryClient();
+  const { queryFn, refetchInterval } = options;
+  const polled: typeof queryFn = refetchInterval && typeof queryFn === 'function'
+    ? (ctx) => (client.getQueryState(ctx.queryKey)?.dataUpdatedAt ? asPoll(() => (queryFn as QueryFunction<TQueryFnData, TQueryKey>)(ctx)) : (queryFn as QueryFunction<TQueryFnData, TQueryKey>)(ctx))
+    : queryFn;
+  return useQueryBase({ ...options, queryFn: polled });
+}
 import type {
   MemberScopeType, MembersResponse, RoleInfo, MemberCandidate, AddMembersResult, ServiceAccount, TokenRow, CreatedToken, AdminCapabilities, AdminUserDetail, IssuedLink, InviteInfo,
   CoverageCheckId,

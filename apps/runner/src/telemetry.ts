@@ -174,6 +174,10 @@ export function tracerFromEnv(env: NodeJS.ProcessEnv, resource: Record<string, A
 
 // ---------------------------------------------------------------- metrics
 export const JOB_BUCKETS = [1, 2, 5, 10, 30, 60, 120, 300, 600, 900, 1200, 1800];
+/** The job kinds this runner executes (executor.ts) and the statuses a run ends in: every series exists at zero from
+ *  the first scrape, so `rate()` counts the first job and the duration quantiles are numbers after it. */
+export const RUNNER_JOB_KINDS = ['repository_check', 'sbom', 'sca', 'sast', 'secrets', 'iac', 'kubernetes_inventory', 'custom'];
+export const RUNNER_JOB_STATUSES = ['succeeded', 'failed', 'skipped'];
 type Labels = Record<string, string>;
 const key = (l: Labels) => JSON.stringify(Object.entries(l).sort());
 const render = (l: Labels, extra: Labels = {}) => { const e = [...Object.entries(l), ...Object.entries(extra)].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)); return e.length ? `{${e.map(([k, v]) => `${k}="${String(v).replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/"/g, '\\"')}"`).join(',')}}` : ''; };
@@ -186,6 +190,14 @@ export class Metrics {
   private server: Server | null = null;
   constructor(private readonly buildInfo: Labels) {}
 
+  /** Known series at zero: a counter at 0, a histogram with empty buckets (never counted as an observation). */
+  seedKnownSeries(): void {
+    for (const kind of RUNNER_JOB_KINDS) {
+      for (const status of RUNNER_JOB_STATUSES) this.inc('matelot_runner_jobs_total', { kind, status }, 0);
+      const k = `matelot_runner_job_duration_seconds|${key({ kind, phase: 'total' })}`;
+      if (!this.histograms.has(k)) this.histograms.set(k, { labels: { kind, phase: 'total' }, counts: new Array(JOB_BUCKETS.length + 1).fill(0), sum: 0, count: 0, exemplars: new Map() });
+    }
+  }
   inc(name: string, labels: Labels, by = 1): void { const k = `${name}|${key(labels)}`; const c = this.counters.get(k) ?? { labels, value: 0 }; c.value += by; this.counters.set(k, c); }
   set(name: string, labels: Labels, value: number): void { this.gauges.set(`${name}|${key(labels)}`, { labels, value }); }
   observe(name: string, labels: Labels, value: number, exemplar?: { traceId: string; spanId: string }): void {

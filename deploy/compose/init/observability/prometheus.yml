@@ -1,19 +1,23 @@
 # Prometheus of the Compose `observability` profile: every metrics endpoint of the cell on the compose network (none is
 # published on the host). Exemplars on (--enable-feature=exemplar-storage): a slow p95 bar in Grafana links to its
-# trace in Tempo. Job names are the chart's (matelot.cloud/job), so dashboards and alert rules work on both.
+# trace in Tempo. Job names are the chart's (matelot.cloud/job), so dashboards and alert rules work on both; every
+# series of the cell carries cell="<slug>" as a target label (what the chart's ServiceMonitor relabel adds — an
+# external label would not reach the rules and the dashboards' $cell variable). The alert rules are the chart's too.
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
   external_labels:
     cell: "__CELL__"
+rule_files:
+  - /matelot/observability/rules/matelot.yaml
 scrape_configs:
-  - { job_name: matelot-api, static_configs: [{ targets: ["api:9464"] }] }
-  - { job_name: matelot-worker, static_configs: [{ targets: ["worker:9464"] }] }
-  - { job_name: matelot-runner, static_configs: [{ targets: ["runner:9464"] }] }
-  - { job_name: matelot-postgres, static_configs: [{ targets: ["postgres-exporter:9187"] }] }
-  - { job_name: matelot-redis, static_configs: [{ targets: ["redis-exporter:9121"] }] }
-  - { job_name: matelot-keycloak, static_configs: [{ targets: ["keycloak:9000"] }] }
-  - { job_name: matelot-registry, static_configs: [{ targets: ["registry:5001"] }] }
+  - { job_name: matelot-api, static_configs: [{ targets: ["api:9464"], labels: { cell: "__CELL__" } }] }
+  - { job_name: matelot-worker, static_configs: [{ targets: ["worker:9464"], labels: { cell: "__CELL__" } }] }
+  - { job_name: matelot-runner, static_configs: [{ targets: ["runner:9464"], labels: { cell: "__CELL__" } }] }
+  - { job_name: matelot-postgres, static_configs: [{ targets: ["postgres-exporter:9187"], labels: { cell: "__CELL__" } }] }
+  - { job_name: matelot-redis, static_configs: [{ targets: ["redis-exporter:9121"], labels: { cell: "__CELL__" } }] }
+  - { job_name: matelot-keycloak, static_configs: [{ targets: ["keycloak:9000"], labels: { cell: "__CELL__" } }] }
+  - { job_name: matelot-registry, static_configs: [{ targets: ["registry:5001"], labels: { cell: "__CELL__" } }] }
   - { job_name: otel-collector, static_configs: [{ targets: ["otel-collector:8888"] }] }
   - { job_name: tempo, static_configs: [{ targets: ["tempo:3200"] }] }
   - { job_name: loki, static_configs: [{ targets: ["loki:3100"] }] }

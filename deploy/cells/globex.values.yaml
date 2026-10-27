@@ -8,13 +8,13 @@ tenant:
 
 image:
   repository: ghcr.io/matelot-cloud/api
-  tag: "0.1.0"                  # all four images move together: scripts/cell-provision.sh apply --tag X
+  tag: "0.1.0-rc.21"                  # all four images move together: scripts/cell-provision.sh apply --tag X
 worker:
-  image: { repository: ghcr.io/matelot-cloud/worker, tag: "0.1.0" }
+  image: { repository: ghcr.io/matelot-cloud/worker, tag: "0.1.0-rc.21" }
 web:
-  image: { repository: ghcr.io/matelot-cloud/web, tag: "0.1.0" }
+  image: { repository: ghcr.io/matelot-cloud/web, tag: "0.1.0-rc.21" }
 managedRunners:
-  image: { repository: ghcr.io/matelot-cloud/runner, tag: "0.1.0" }
+  image: { repository: ghcr.io/matelot-cloud/runner, tag: "0.1.0-rc.21" }
   replicas: 1
 imagePullSecrets: []            # e.g. [{ name: ghcr-pull }] — create the Secret in tenant-globex first
 
@@ -59,6 +59,13 @@ observability:
         release: "kube-prometheus-stack"
     exporters:
       enabled: true   # postgres_exporter / redis_exporter sidecars, Keycloak and registry metrics
+  prometheusRules:
+    enabled: true   # the alert rules as a PrometheusRule (the same labels select it)
+    labels:
+      release: "kube-prometheus-stack"
+  grafana:
+    dashboards:
+      enabled: true   # the four dashboards as ConfigMaps for Grafana's sidecar
   otlp:
     endpoint: "http://tempo.monitoring:4318"   # OTLP traces (docs/observability.md); empty = tracing off
     protocol: http/protobuf

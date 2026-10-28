@@ -8,13 +8,13 @@ tenant:
 
 image:
   repository: ghcr.io/matelot-cloud/api
-  tag: "0.1.0-rc.20"                  # all four images move together: scripts/cell-provision.sh apply --tag X
+  tag: "0.1.0-rc.21"                  # all four images move together: scripts/cell-provision.sh apply --tag X
 worker:
-  image: { repository: ghcr.io/matelot-cloud/worker, tag: "0.1.0-rc.20" }
+  image: { repository: ghcr.io/matelot-cloud/worker, tag: "0.1.0-rc.21" }
 web:
-  image: { repository: ghcr.io/matelot-cloud/web, tag: "0.1.0-rc.20" }
+  image: { repository: ghcr.io/matelot-cloud/web, tag: "0.1.0-rc.21" }
 managedRunners:
-  image: { repository: ghcr.io/matelot-cloud/runner, tag: "0.1.0-rc.20" }
+  image: { repository: ghcr.io/matelot-cloud/runner, tag: "0.1.0-rc.21" }
   replicas: 1
 imagePullSecrets: []            # e.g. [{ name: ghcr-pull }] — create the Secret in tenant-globex first
 

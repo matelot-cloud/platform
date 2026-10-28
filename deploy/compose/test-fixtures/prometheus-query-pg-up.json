@@ -1,0 +1,1 @@
+{"status":"success","data":{"resultType":"vector","result":[{"metric":{"__name__":"pg_up","cell":"main","instance":"127.0.0.1:19187","job":"matelot-postgres"},"value":[1793192633.068,"1"]}]}}

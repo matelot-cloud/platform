@@ -1,0 +1,37 @@
+{
+ "id": "9b0e6c1e-6f7c-4a3e-9f2a-2b1c0d4e5f60",
+ "organizationId": "0a6b\u2026",
+ "projectId": "p",
+ "serviceId": "s",
+ "repositoryId": "r",
+ "number": 1,
+ "name": "Checkout",
+ "ref": "main",
+ "commitSha": null,
+ "trigger": "manual",
+ "status": "failed",
+ "stages": [
+  {
+   "name": "source",
+   "jobs": [
+    {
+     "name": "checkout",
+     "type": "repository_check"
+    }
+   ]
+  }
+ ],
+ "traceParent": "00-83a0a354d529136f29e45fe1a889baf1-1a2b3c4d5e6f7a8b-01",
+ "createdAt": "2026-10-28T13:00:00.000Z",
+ "startedAt": "2026-10-28T13:00:00.050Z",
+ "finishedAt": "2026-10-28T13:00:09.000Z",
+ "jobs": [
+  {
+   "id": "j1",
+   "name": "checkout",
+   "type": "repository_check",
+   "status": "failed",
+   "runnerName": "compose-runner"
+  }
+ ]
+}

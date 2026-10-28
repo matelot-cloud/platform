@@ -156,4 +156,7 @@ assert {"otel-collector", "prometheus", "tempo", "loki", "grafana", "alloy", "po
 for n in obs:
     assert not compose["services"][n].get("ports"), f"{n} publishes a port"
 PY
+# the smoke tests' checks against recorded answers, and every Python snippet in the shell scripts compiles as bash hands
+# it over (a \" in single quotes made the "every target up" step a SyntaxError in CI): no Docker needed
+python3 ../smoke_checks_test.py
 echo "compose-init ok (incl. the observability profile)"

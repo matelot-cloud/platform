@@ -1,0 +1,5 @@
+{
+ "issuer": "http://localhost",
+ "authorization_endpoint": "http://api:3000/api/v1/oauth/authorize",
+ "token_endpoint": "http://localhost:80/api/v1/oauth/token"
+}

@@ -189,6 +189,8 @@ providers · 17 provisioning control plane.
   environment cannot do either (helm download or image registries blocked), the drop says so in its first line, with
   what was run instead, and is not called green. Every generated secret has a values override (`"value" .Values.…`)
   so chart-test can pin it; chart-test asserts that too.
+  No Python inside bash quotes in the smoke scripts: a check goes into `deploy/compose/smoke_checks.py` with a recorded
+  answer in `test-fixtures/` (`smoke_checks_test.py` also compiles any snippet left in a shell script).
 - The web app is tested in jsdom (test/render.mjs) and has been used in a real browser on kind; no full visual pass yet.
 - Product name is a placeholder ("Security Platform" / `secops`).
 - MCP server: apps/api/src/mcp (tools generated from OpenAPI; docs/mcp.md). CLI: `matelot mcp`.

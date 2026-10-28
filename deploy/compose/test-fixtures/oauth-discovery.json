@@ -1,0 +1,11 @@
+{
+ "issuer": "http://localhost",
+ "authorization_endpoint": "http://localhost/api/v1/oauth/authorize",
+ "token_endpoint": "http://localhost/api/v1/oauth/token",
+ "response_types_supported": [
+  "code"
+ ],
+ "code_challenge_methods_supported": [
+  "S256"
+ ]
+}

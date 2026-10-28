@@ -4,6 +4,28 @@
 
 Images `ghcr.io/matelot-cloud/{api,web,worker,runner}` and the chart `oci://ghcr.io/matelot-cloud/charts/secops-cell`, signed, with SBOM attestations; install guide at https://matelot-cloud.github.io/website/docs/latest/install.html. The sections below are the drops that make up the release, newest first.
 
+### Compose smoke: the checks are Python files with recorded answers; the "every target up" step really checks
+
+- **The red step.** `smoke-observability.sh` checked the Prometheus targets with a `python3 -c '…'` snippet whose
+  f-strings carried `\"`: inside bash single quotes that reaches Python as a backslash, so every attempt was a
+  `SyntaxError` and the targets were never checked (the Caddy diagnostic snippet had the same flaw). All the inline
+  Python of `smoke.sh` and `smoke-observability.sh` moved to `deploy/compose/smoke_checks.py`: one subcommand per check
+  (discovery, token, Grafana datasources / dashboards / inputs, rules, targets, build_info, series, the pipeline's
+  trace id, Tempo, Loki, the backup gauge, Caddy's running routes), the answer on stdin, a one-line verdict, a reason
+  on failure — never a traceback.
+- **Tested without Docker.** `deploy/compose/smoke_checks_test.py` (run by `compose-init.test.sh`, CI job `layout`)
+  runs every check against recorded answers in `deploy/compose/test-fixtures/` — Prometheus 3.15.0 (targets all up and
+  with the registry down, rules, the smoke's queries), Tempo 2.9.0 (`/api/traces` and `/api/v2/traces` of a
+  pipeline-shaped trace), Loki 3.6.12 (`query_range` by `trace_id` structured metadata), Caddy 2.9.1's admin API,
+  recorded from the real binaries running the profile's own configs; Grafana's answers are built from the
+  provisioning files compose-init renders. Each check passes its good answer and fails its broken one with the
+  expected reason. The same test extracts every Python snippet still in a shell script of the stack and the
+  operator scripts (`python3 -c '…'` / `"…"`, heredocs, cli_json expressions, with bash's quoting and `'…'"$VAR"'…'`
+  concatenation) and compiles it as bash hands it over — it reports the CI failure on the previous
+  `smoke-observability.sh` (line 86: "unexpected character after line continuation character").
+- The steps after the targets (build_info per job, the exporters' series, the pipeline trace in Tempo, its logs in
+  Loki, the backup gauge) have now run against those recorded answers; they have not yet run in CI.
+
 ### Compose: Caddy reloads its rewritten Caddyfile; smoke.sh really tears down between passes; Grafana without plugin downloads; helm pinned
 
 - **Root cause of the red compose job (`/grafana` answered by the web app).** `smoke.sh`'s cleanup deleted

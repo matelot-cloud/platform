@@ -51,7 +51,7 @@ if [ "$CHECK" = 1 ]; then printf 'CLI command: %q' "${CLI[0]}"; printf ' %q' "${
 # run ("couldn't find env file") — the old order failed silently, left the whole stack running, and the next pass
 # (--observability) came up over it: caddy was not recreated and kept routes without /grafana.
 cleanup() {
-  rm -rf ./.smoke-login.err ./.smoke-cli.err ./.smoke-gf.body* ./.smoke-credentials.json ./.smoke-Dockerfile ./.smoke-context.txt ./.smoke-ctx
+  rm -rf ./.smoke-login.err ./.smoke-cli.err ./.smoke-gf.body* ./.smoke-discovery.json ./.smoke-credentials.json ./.smoke-Dockerfile ./.smoke-context.txt ./.smoke-ctx
   [ "$KEEP" = 0 ] || return 0
   log "down -v"
   docker compose down -v --remove-orphans > ./.smoke-down.log 2>&1 || { echo "WARNING: docker compose down -v failed — the stack may still be running:" >&2; cat ./.smoke-down.log >&2; }
@@ -76,7 +76,7 @@ wait_ready() { # through the proxy, as a browser would
 token() { # password grant on the web client (enabled for evaluation installs): the CLI accepts the Keycloak token as MATELOT_TOKEN
   local pw; pw="$(docker compose run --rm --no-deps init show | sed -n 's/^Admin password: *//p')"
   curl -fsS -X POST "$BASE/auth/realms/platform/protocol/openid-connect/token" -d client_id=platform-web -d grant_type=password -d "username=admin" --data-urlencode "password=$pw" \
-    | python3 -c 'import sys,json; print(json.load(sys.stdin)["access_token"])'
+    | python3 smoke_checks.py access-token
 }
 
 diagnose() { # every container that is not running and healthy: its state and the last log lines — the root cause, not "dependency failed"
@@ -107,18 +107,9 @@ export MATELOT_URL="$BASE"
 export MATELOT_CREDENTIALS="$PWD/.smoke-credentials.json"; rm -f "$MATELOT_CREDENTIALS"
 cli doctor || true
 log "OAuth discovery through the proxy"
-curl -fsS "$BASE/.well-known/oauth-authorization-server" | python3 -c '
-import sys, json
-from urllib.parse import urlsplit
-def origin(u):  # same rule as the CLI: scheme + lower-case host, default port dropped
-    p = urlsplit(u); port = p.port
-    if port in (None, 80 if p.scheme == "http" else 443): return f"{p.scheme}://{p.hostname}"
-    return f"{p.scheme}://{p.hostname}:{port}"
-m = json.load(sys.stdin); print(json.dumps(m, indent=1))
-base = origin(sys.argv[1])
-bad = [k for k in ("authorization_endpoint", "token_endpoint") if origin(m.get(k, "http://-")) != base]
-assert not bad, f"endpoints not on {base}: {bad} ({[m.get(k) for k in bad]}) — API_PUBLIC_URL is wrong on the cell"
-print("discovery ok: endpoints on", base)' "$BASE"
+curl -fsS "$BASE/.well-known/oauth-authorization-server" > ./.smoke-discovery.json
+python3 -m json.tool ./.smoke-discovery.json
+python3 smoke_checks.py oauth-discovery "$BASE" < ./.smoke-discovery.json; rm -f ./.smoke-discovery.json
 log "matelot login through the proxy (OAuth code flow, consent approved with the administrator's session)"
 # `matelot login --no-browser` prints the authorize link and waits for the browser callback on 127.0.0.1; this script
 # plays the browser: follow the link (API → consent page redirect), approve with the signed-in administrator, call back.
@@ -130,8 +121,8 @@ AUTH_URL=""; for _ in $(seq 1 30); do AUTH_URL="$(grep -o 'http[^ ]*/api/v1/oaut
 echo "authorize link: $AUTH_URL"
 CONSENT="$(curl -sS -o /dev/null -w '%{redirect_url}' "$AUTH_URL")" || { echo "could not follow the authorize link $AUTH_URL (curl exit $?)" >&2; echo "discovery document:" >&2; curl -sS "$BASE/.well-known/oauth-authorization-server" >&2 || true; kill $LOGIN_PID 2>/dev/null; exit 1; }
 case "$CONSENT" in *"/oauth/consent?"*) echo "consent page: ${CONSENT%%\?*}" ;; *) echo "authorize did not redirect to the consent page: [$CONSENT]" >&2; curl -sS -D - -o /dev/null "$AUTH_URL" >&2 || true; kill $LOGIN_PID 2>/dev/null; exit 1;; esac
-APPROVE_BODY="$(python3 -c 'import sys,json,urllib.parse; q=urllib.parse.parse_qs(urllib.parse.urlsplit(sys.argv[1]).query); print(json.dumps({k: q[k][0] for k in ("client_id","redirect_uri","scope","state","code_challenge") if k in q}))' "$CONSENT")"
-REDIRECT="$(curl -fsS -X POST "$BASE/api/v1/oauth/approve" -H "Authorization: Bearer $KC_TOKEN" -H 'content-type: application/json' -d "$APPROVE_BODY" | python3 -c 'import sys,json; print(json.load(sys.stdin)["redirect"])')"
+APPROVE_BODY="$(python3 smoke_checks.py approve-body "$CONSENT")"
+REDIRECT="$(curl -fsS -X POST "$BASE/api/v1/oauth/approve" -H "Authorization: Bearer $KC_TOKEN" -H 'content-type: application/json' -d "$APPROVE_BODY" | python3 smoke_checks.py field redirect)"
 curl -fsS -o /dev/null "$REDIRECT"            # the CLI's local callback: it exchanges the code and stores the login
 wait $LOGIN_PID || { echo "matelot login failed:" >&2; cat ./.smoke-login.err >&2; exit 1; }
 rm -f ./.smoke-login.err
@@ -177,9 +168,9 @@ if cli service-accounts list --scope "projects/$PROJECT" > /dev/null 2>&1 && cli
 grep -q "membership:write" ./.smoke-cli.err || { echo "unexpected refusal:" >&2; cat ./.smoke-cli.err >&2; exit 1; }; rm -f ./.smoke-cli.err
 ADMIN_SESSION="$(token)"   # the administrator's Keycloak session token: full rights, like the web app
 SAT_JSON="$(MATELOT_TOKEN="$ADMIN_SESSION" cli access-token create --scope "projects/$PROJECT" --name smoke-bot --role DEVELOPER --token-scope read --days 1 --json)"
-BOT_ID="$(printf '%s' "$SAT_JSON" | python3 -c 'import sys,json; print(json.load(sys.stdin)["serviceAccount"]["id"])')"
-BOT_TOKEN_ID="$(printf '%s' "$SAT_JSON" | python3 -c 'import sys,json; print(json.load(sys.stdin)["token"]["id"])')"
-BOT_TOKEN="$(printf '%s' "$SAT_JSON" | python3 -c 'import sys,json; print(json.load(sys.stdin)["token"]["token"])')"
+BOT_ID="$(printf '%s' "$SAT_JSON" | python3 smoke_checks.py field serviceAccount.id)"
+BOT_TOKEN_ID="$(printf '%s' "$SAT_JSON" | python3 smoke_checks.py field token.id)"
+BOT_TOKEN="$(printf '%s' "$SAT_JSON" | python3 smoke_checks.py field token.token)"
 MATELOT_TOKEN="$BOT_TOKEN" cli_json 'assert d["slug"]=="payments", d; print("bot reads project:", d["name"])' -- request GET "/api/v1/projects/$PROJECT"
 MATELOT_TOKEN="$ADMIN_SESSION" cli_json 'm=[r for r in d["members"] if r["user"]["kind"]=="service_account"]; assert m and m[0]["role"]=="DEVELOPER", d; print("listed as a member:", m[0]["user"]["displayName"], m[0]["roleLabel"])' -- members list --scope "projects/$PROJECT"
 MATELOT_TOKEN="$ADMIN_SESSION" cli service-accounts token-revoke --id "$BOT_ID" --token-id "$BOT_TOKEN_ID" > /dev/null

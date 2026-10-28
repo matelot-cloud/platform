@@ -50,4 +50,8 @@ if RETRY_DELAYS="0 0" retry "always" sh -c 'exit 7' 2> "$T/err"; then echo "chec
 rc=0; RETRY_DELAYS="0 0" retry "always" sh -c 'exit 7' 2> /dev/null || rc=$?
 [ "$rc" = 7 ] || { echo "check-workflows: retry.sh must return the last exit code (got $rc)" >&2; exit 1; }
 grep -q '::error::always: failed 3 times (last exit 7)' "$T/err" || { echo "check-workflows: retry.sh final error: $(cat "$T/err")" >&2; exit 1; }
-echo "workflows ok (timeouts on every job, pack dir created, worker from the api job, release re-run safe, cosign / gh release retried)"
+# helm is pinned, and to the same version in CI and release: "latest" moved under us once (the chart job is the gate)
+helm_versions="$(grep -h -A1 'uses: azure/setup-helm' .github/workflows/*.yml | grep -o 'version: v[0-9][0-9.]*' | sort -u)"
+[ "$(grep -c 'uses: azure/setup-helm' .github/workflows/*.yml | awk -F: '{s+=$2} END {print s}')" = "$(grep -h -A1 'uses: azure/setup-helm' .github/workflows/*.yml | grep -c 'version: v[0-9]')" ] || { echo "check-workflows: every azure/setup-helm step needs a pinned version (with: { version: vX.Y.Z })" >&2; exit 1; }
+[ "$(printf '%s\n' "$helm_versions" | grep -c .)" = 1 ] || { echo "check-workflows: CI and release pin different helm versions: $helm_versions" >&2; exit 1; }
+echo "workflows ok (timeouts on every job, pack dir created, worker from the api job, release re-run safe, cosign / gh release retried, helm pinned)"

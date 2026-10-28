@@ -312,6 +312,10 @@ if [ "$OBS" = 1 ]; then
   [ "$SCHEME" = https ] && kv "$G" GF_SECURITY_COOKIE_SECURE true
   kv "$G" GF_ANALYTICS_REPORTING_ENABLED false
   kv "$G" GF_ANALYTICS_CHECK_FOR_UPDATES false
+  kv "$G" GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES false
+  # no plugin downloads at start (Grafana 12 preinstalls pyroscope, exploretraces, metricsdrilldown from the internet on
+  # every start): an air-gapped cell starts clean and fast; the bundled datasources need no plugin
+  kv "$G" GF_PLUGINS_PREINSTALL_DISABLED true
   kv "$G" GF_USERS_ALLOW_SIGN_UP false
   kv "$G" GF_USERS_AUTO_ASSIGN_ORG_ROLE Viewer
   # sign-in with the cell's Keycloak: the browser goes to the public realm URL, Grafana exchanges the code on the compose

@@ -20,4 +20,3 @@ dist/
 .env.smoke
 .smoke-*
 smoke-backups/
-__pycache__/

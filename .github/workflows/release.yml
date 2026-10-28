@@ -176,6 +176,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: azure/setup-helm@v5
+        with: { version: v4.3.1 }   # pinned: the version the chart job ran green with; bump deliberately (CI and release together)
       - uses: sigstore/cosign-installer@v3
       - uses: docker/login-action@v4   # cosign reads Docker's credential store; `helm registry login` does not write it
         with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }

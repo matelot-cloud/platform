@@ -47,8 +47,24 @@ cli_json() {
   printf '%s' "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); $expr"
 }
 if [ "$CHECK" = 1 ]; then printf 'CLI command: %q' "${CLI[0]}"; printf ' %q' "${CLI[@]:1}"; echo; cli --version; exit 0; fi
-cleanup() { rm -rf ./.smoke-login.err ./.smoke-cli.err ./.smoke-gf.body* ./.smoke-credentials.json ./.smoke-Dockerfile ./.smoke-context.txt ./.smoke-ctx; if [ "$KEEP" = 0 ]; then rm -f ./.env.smoke; log "down -v"; docker compose down -v --remove-orphans > /dev/null 2>&1 || true; fi; }
+# down -v BEFORE removing .env.smoke: every compose call reads it (COMPOSE_ENV_FILES), and without it compose refuses to
+# run ("couldn't find env file") — the old order failed silently, left the whole stack running, and the next pass
+# (--observability) came up over it: caddy was not recreated and kept routes without /grafana.
+cleanup() {
+  rm -rf ./.smoke-login.err ./.smoke-cli.err ./.smoke-gf.body* ./.smoke-credentials.json ./.smoke-Dockerfile ./.smoke-context.txt ./.smoke-ctx
+  [ "$KEEP" = 0 ] || return 0
+  log "down -v"
+  docker compose down -v --remove-orphans > ./.smoke-down.log 2>&1 || { echo "WARNING: docker compose down -v failed — the stack may still be running:" >&2; cat ./.smoke-down.log >&2; }
+  rm -f ./.env.smoke ./.smoke-down.log
+}
 trap cleanup EXIT
+# start from nothing: a stack left over by an earlier run (same project name) would be reused by `up`, and its
+# containers keep what they started with — the test would not be a fresh install
+# (by project label, not `compose ps`: that lists only the active profiles' services, not a previous pass's others)
+if [ -n "$(docker ps -aq --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME:-matelot}" 2> /dev/null)" ]; then
+  log "a stack of project ${COMPOSE_PROJECT_NAME:-matelot} is already there: down -v first"
+  docker compose down -v --remove-orphans || { echo "could not remove the leftover stack" >&2; exit 1; }
+fi
 
 wait_ready() { # through the proxy, as a browser would
   for _ in $(seq 1 90); do

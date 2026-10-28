@@ -32,7 +32,13 @@ for _ in $(seq 1 36); do
 done
 if [ "$up" = 0 ]; then
   echo "Grafana did not answer $BASE/grafana/api/health with its health JSON in 180 s: $(cat "$GF_BODY.why")" >&2
-  echo "---- Caddyfile route for /grafana (missing = init ran without the observability profile):" >&2; docker compose exec -T caddy cat /matelot/caddy/Caddyfile 2>/dev/null | grep -n -A2 "grafana" >&2 || true
+  echo "---- Caddyfile on disk, route for /grafana (missing = init ran without the observability profile):" >&2; docker compose exec -T caddy cat /matelot/caddy/Caddyfile 2>/dev/null | grep -n -A2 "grafana" >&2 || true
+  echo "---- routes Caddy is RUNNING (admin API; a file/running mismatch = Caddy did not reload the rewritten file):" >&2
+  docker compose exec -T caddy wget -qO- http://127.0.0.1:2019/config/apps/http/servers 2>/dev/null | python3 -c '
+import sys, json
+for name, srv in json.load(sys.stdin).items():
+    paths = [m.get("path") for r in srv.get("routes", []) for m in (r.get("match") or []) if "path" in m]
+    print(f"  {name} {srv.get("listen")}: {paths}")' >&2 || echo "  (admin API not reachable)" >&2
   echo "---- grafana container (OOMKilled / restarts: a memory limit too small shows here):" >&2; docker compose ps -a grafana >&2
   docker inspect --format 'state={{.State.Status}} oomkilled={{.State.OOMKilled}} exit={{.State.ExitCode}} restarts={{.RestartCount}} health={{if .State.Health}}{{.State.Health.Status}}{{end}}' "$(docker compose ps -aq grafana)" >&2 2>/dev/null || true
   docker compose logs --tail 60 grafana >&2; docker compose logs --tail 20 caddy >&2

@@ -99,6 +99,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: azure/setup-helm@v5
+        with: { version: v4.3.1 }   # pinned: the version the chart job ran green with; bump deliberately (CI and release together)
       - run: python3 -c 'import yaml' 2>/dev/null || pip install pyyaml
       - name: helm lint + render in every supported configuration
         run: bash scripts/chart-test.sh

@@ -17,6 +17,8 @@ alertmanager:
   enabled: false                              # kind: nothing to page; a real cluster keeps it
 grafana:
   adminPassword: matelot-kind                 # kind only — a real cluster sets admin.existingSecret
+  env:
+    GF_PLUGINS_PREINSTALL_DISABLED: "true"    # no plugin downloads at every start (air-gapped clusters; the dashboards need none)
   sidecar:
     dashboards:
       folderAnnotation: grafana_folder       # the cells' dashboard ConfigMaps say which folder (observability.grafana.dashboards.folder)

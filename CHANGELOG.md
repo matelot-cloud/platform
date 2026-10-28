@@ -4,6 +4,25 @@
 
 Images `ghcr.io/matelot-cloud/{api,web,worker,runner}` and the chart `oci://ghcr.io/matelot-cloud/charts/secops-cell`, signed, with SBOM attestations; install guide at https://matelot-cloud.github.io/website/docs/latest/install.html. The sections below are the drops that make up the release, newest first.
 
+### Compose: Caddy reloads its rewritten Caddyfile; smoke.sh really tears down between passes; Grafana without plugin downloads; helm pinned
+
+- **Root cause of the red compose job (`/grafana` answered by the web app).** `smoke.sh`'s cleanup deleted
+  `.env.smoke` and *then* ran `docker compose down -v`; every compose call reads that file (`COMPOSE_ENV_FILES`), so
+  compose refused ("couldn't find env file"), the error went to /dev/null and the plain pass's stack stayed up. The
+  `--observability` pass then came up over it: `init` was recreated (its environment changed) and rewrote the
+  Caddyfile with the `/grafana` route, but compose does not recreate Caddy (its own config did not change), and Caddy
+  kept the routes it had loaded — `/grafana/api/health` went to the catch-all, our `index.html`. Reproduced with
+  Caddy 2.9.1 (file with the route, running config without it, the SPA answering).
+- **Fixes.** Caddy runs with `--watch` and reloads the Caddyfile whenever `init` rewrites it — this was a product bug
+  too: turning the observability profile on (or changing the domain) on an existing Compose cell left Caddy on its old
+  routes until a restart. `smoke.sh` tears down before deleting its env file and says so when `down` fails, and starts
+  by removing any stack of the project left over by an earlier run. On a Grafana failure the step prints the routes
+  Caddy is *running* (admin API) next to the file's.
+- **Grafana:** `GF_PLUGINS_PREINSTALL_DISABLED=true` and no plugin update checks on Compose; the same in the
+  kube-prometheus-stack values (`grafana.env`), documented — no downloads at every start, air-gapped cells start clean.
+- **helm pinned** to v4.3.1 in `ci.yml` and `release.yml` (`check-workflows.sh` fails on an unpinned `setup-helm` or
+  on CI and release disagreeing).
+
 ### CI fix after drops 2–3: generated BACKUP_REPORT_TOKEN pinned in chart-test; Grafana step of the Compose smoke readable
 
 - **chart job, "generated secrets: install == upgrade".** Drop 2's `BACKUP_REPORT_TOKEN` went through the

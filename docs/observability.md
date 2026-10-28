@@ -315,7 +315,9 @@ observability:
     protocol: http/protobuf
 ```
 
-What matters in the stack's values: `prometheus.prometheusSpec.enableFeatures: [exemplar-storage]` (the trace links
+Grafana gets `GF_PLUGINS_PREINSTALL_DISABLED=true` there and on Compose: Grafana 12 otherwise downloads plugins
+(pyroscope, exploretraces, metricsdrilldown) from the internet on every start, which an air-gapped cluster cannot do
+and none of our dashboards needs. What matters in the stack's values: `prometheus.prometheusSpec.enableFeatures: [exemplar-storage]` (the trace links
 on the histograms) and `serviceMonitorNamespaceSelector: {}` (cells live in `tenant-<slug>`); Grafana's
 `sidecar.datasources.exemplarTraceIdDestinations` (`trace_id` → Tempo) and the Tempo / Loki datasources with
 trace → logs by `trace_id`; Alloy turning our JSON log lines' `trace_id` / `span_id` into Loki structured metadata.
@@ -327,7 +329,9 @@ the API-based tailing is too much load, and Grafana's ingress behind your SSO.
 
 ### Docker Compose
 
-`COMPOSE_PROFILES=observability` in `.env` (or `docker compose --profile observability up -d`) adds:
+`COMPOSE_PROFILES=observability` in `.env` (or `docker compose --profile observability up -d`) — on a new cell or an
+existing one: `init` rewrites the Caddyfile on every `up` and Caddy reloads it (`caddy run --watch`), so `/grafana/`
+appears without recreating anything — adds:
 
 | Service | Image | Role |
 |---|---|---|

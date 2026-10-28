@@ -98,6 +98,7 @@ check_env "$M/env/api.env" OTEL_EXPORTER_OTLP_ENDPOINT "http://otel-collector:43
 check_env "$M/env/runner.env" OTEL_EXPORTER_OTLP_ENDPOINT "http://otel-collector:4318"
 check_env "$M/env/runner.env" MATELOT_CELL acme
 check_env "$M/env/grafana.env" GF_SERVER_ROOT_URL "https://matelot.example.com/grafana/"
+check_env "$M/env/grafana.env" GF_PLUGINS_PREINSTALL_DISABLED true
 check_env "$M/env/grafana.env" GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET__FILE /matelot/secrets/grafana/GRAFANA_OIDC_CLIENT_SECRET
 python3 - "$M" <<'PY'
 import json, sys, yaml, pathlib

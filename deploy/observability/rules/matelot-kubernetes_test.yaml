@@ -1,0 +1,56 @@
+# promtool test rules matelot-kubernetes_test.yaml — the rules that read kube-state-metrics (CI: tools/dashboards/test.py).
+rule_files:
+  - matelot-kubernetes.yaml
+evaluation_interval: 1m
+tests:
+  # a nightly backup failed (day 1), the next nights succeeded: the old failed Job is kept by the CronJob
+  # (failedJobsHistoryLimit) but the alert must stop as soon as a newer run exists — it once fired for 5 days
+  - interval: 1m
+    input_series:
+      - series: 'kube_job_status_start_time{namespace="tenant-acme", job_name="acme-backup-29100000"}'
+        values: '1000x100'
+      - series: 'kube_job_status_failed{namespace="tenant-acme", job_name="acme-backup-29100000", reason="BackoffLimitExceeded"}'
+        values: '1x100'
+      - series: 'kube_job_status_start_time{namespace="tenant-acme", job_name="acme-backup-29101440"}'
+        values: '_x30 5000x70'      # the next run appears at minute 30 and succeeds
+      - series: 'kube_job_status_failed{namespace="tenant-acme", job_name="acme-backup-29101440"}'
+        values: '_x30 0x70'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: MatelotBackupJobFailed
+        exp_alerts:
+          - exp_labels: { severity: critical, namespace: tenant-acme }
+            exp_annotations:
+              summary: "tenant-acme: the latest backup Job failed"
+              description: "The newest backup Job ended in failure (no later run has started): kubectl -n tenant-acme get jobs, then logs of the failed one (pg_dump, the secrets, or the S3 upload)."
+              runbook_url: https://matelot.cloud/docs/latest/observability.html#alert-matelotbackupjobfailed
+      - eval_time: 40m
+        alertname: MatelotBackupJobFailed
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: MatelotBackupJobFailed
+        exp_alerts: []
+  # succeeded, then the newest run (a manual one, `acme-backup-now`) failed: fires; another cell with only good runs: quiet
+  - interval: 1m
+    input_series:
+      - series: 'kube_job_status_start_time{namespace="tenant-acme", job_name="acme-backup-29100000"}'
+        values: '1000x30'
+      - series: 'kube_job_status_failed{namespace="tenant-acme", job_name="acme-backup-29100000"}'
+        values: '0x30'
+      - series: 'kube_job_status_start_time{namespace="tenant-acme", job_name="acme-backup-now"}'
+        values: '2000x30'
+      - series: 'kube_job_status_failed{namespace="tenant-acme", job_name="acme-backup-now"}'
+        values: '1x30'
+      - series: 'kube_job_status_start_time{namespace="tenant-globex", job_name="globex-backup-29100000"}'
+        values: '1000x30'
+      - series: 'kube_job_status_failed{namespace="tenant-globex", job_name="globex-backup-29100000"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: MatelotBackupJobFailed
+        exp_alerts:
+          - exp_labels: { severity: critical, namespace: tenant-acme }
+            exp_annotations:
+              summary: "tenant-acme: the latest backup Job failed"
+              description: "The newest backup Job ended in failure (no later run has started): kubectl -n tenant-acme get jobs, then logs of the failed one (pg_dump, the secrets, or the S3 upload)."
+              runbook_url: https://matelot.cloud/docs/latest/observability.html#alert-matelotbackupjobfailed

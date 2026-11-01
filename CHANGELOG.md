@@ -4,6 +4,30 @@
 
 Images `ghcr.io/matelot-cloud/{api,web,worker,runner}` and the chart `oci://ghcr.io/matelot-cloud/charts/secops-cell`, signed, with SBOM attestations; install guide at https://matelot-cloud.github.io/website/docs/latest/install.html. The sections below are the drops that make up the release, newest first.
 
+### Observability drop 3 acceptance fixes (kind rc.21): latest-backup rule, one alert per cell, no NaN series, Alertmanager on kind, canonical runbook URLs
+
+- **`MatelotBackupJobFailed`** fires only when the *newest* backup Job (by `kube_job_status_start_time`, scheduled or
+  `-backup-now`) failed: the CronJob keeps its last failed Jobs, and one failure followed by good nightly runs kept the
+  old rule firing for days. promtool test: failed then succeeded → quiet; succeeded then failed → fires; a second cell
+  stays quiet (`rules/matelot-kubernetes_test.yaml`, run with the other rule tests).
+- **One alert per cell:** `MatelotApiDown`, `MatelotWorkerDown`, `MatelotKeycloakDown` are `min by (cell) (up{…}) == 0`
+  (a rollout has two `up` series and produced two alerts); the other rules already aggregate by cell or are per object
+  (a certificate, a PVC). promtool test with two api and two Keycloak series → one alert each.
+- **Dashboards:** every `histogram_quantile` drops NaN (`… >= 0`), so the kinds that never ran (all fourteen exist at
+  zero) draw no empty series; the Pipelines `kind` variable lists only the kinds with at least one finished job.
+  `tools/dashboards/test.py` fails on a quantile without the filter.
+- **kind:** the kube-prometheus-stack values run a minimal Alertmanager (v0.34.1, the chart's) with a `matelot` route
+  for `Matelot*` alerts and the stack's Watchdog to a null receiver — `PrometheusNotConnectedToAlertmanagers` no longer
+  fires; config and routing checked with amtool. `kind-observability.sh` prints its port-forward.
+- **Runbook and dashboard links** point at the canonical docs, `https://matelot.cloud/docs/latest/…`, not the github.io
+  mirror: one constant, `DOCS_URL` in `tools/docs-site/build.mjs`, read by `tools/dashboards/build.py`; the checker fails
+  on any docs link in the rules, dashboards, the chart's `runbookBaseUrl` / `web.docsUrl` or the Compose default that
+  is not under it.
+- **Stray `deploy/deploy/` tree:** `tools/dashboards/build.py` (drop 3) wrote its chart / Compose copies under
+  `deploy/deploy/…` (its repository root was one level short), so drops 3 and later carried that tree and nothing
+  compared it. It writes to the real copies now, refuses a destination that does not exist, and the checker fails if
+  `deploy/deploy` exists. **Remove it from the repository: `git rm -r deploy/deploy`** (rsync does not delete).
+
 ### Compose smoke: the checks are Python files with recorded answers; the "every target up" step really checks
 
 - **The red step.** `smoke-observability.sh` checked the Prometheus targets with a `python3 -c '…'` snippet whose

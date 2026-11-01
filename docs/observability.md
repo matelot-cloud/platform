@@ -424,7 +424,7 @@ its provisioned datasources, because provisioning does not resolve inputs.
 | Dashboard (uid) | Rows |
 |---|---|
 | **Cell overview** (`matelot-cell-overview`) | Components (api, worker, Keycloak, Postgres, Redis, registry up; runners online; version) · Traffic RED (requests/s by route, 5xx ratio, p50/p95/p99) · Queues and runners (pipeline jobs queued by kind, oldest queued job by pool, runners online/busy, BullMQ by queue and state) · Pipelines (per hour by status, success rate, jobs finished) · Database and cache (pool connections per process, query p95, Postgres transactions and size, Redis commands and memory) · Backups, storage and certificates (backup age, duration, last failure; PVC usage and certificate expiry from the cluster — empty on Compose) |
-| **Pipelines** (`matelot-pipelines`, variable `kind`) | Jobs (duration p95/p50 by kind with exemplars, finished per hour by status, failures by kind, queue wait p95, the runners' own duration) · Runners (utilisation, claims/s by result, online by pool) · Pipelines (duration p95 by status, per hour by trigger, a 24 h table by kind). The traces: the exemplar dots open the job's trace in Tempo; a text panel gives the TraceQL for the failed pipelines |
+| **Pipelines** (`matelot-pipelines`, variable `kind`: only the kinds that ran at least once; every quantile drops NaN with `>= 0`, so a kind without runs in the window draws no empty line) | Jobs (duration p95/p50 by kind with exemplars, finished per hour by status, failures by kind, queue wait p95, the runners' own duration) · Runners (utilisation, claims/s by result, online by pool) · Pipelines (duration p95 by status, per hour by trigger, a 24 h table by kind). The traces: the exemplar dots open the job's trace in Tempo; a text panel gives the TraceQL for the failed pipelines |
 | **Security posture** (`matelot-security-posture`) | Findings (open by severity and kind, critical/high stats, SLA breaches, total) · Gates and SLAs (evaluations per hour by result, fail ratio, breaches by severity) · SBOMs (ingested per hour by source, ingest p95, correlation run p95) |
 | **Integrations** (`matelot-integrations`) | Source and issue trackers (sync failures by kind, worker queue jobs by result, webhook lag p95, failed BullMQ jobs) · Built-in registry (requests/s by handler and method = pulls and pushes, 4xx/5xx, p95) · Keycloak (active requests, JVM heap, Agroal pool) |
 
@@ -441,7 +441,9 @@ duration histograms plus the TraceQL panel.
 group that needs kube-state-metrics / kubelet / cert-manager; `runbookBaseUrl` rewrites every `runbook_url`);
 `observability.grafana.dashboards.enabled` renders one ConfigMap per dashboard with `grafana_dashboard: "1"` and the
 `grafana_folder: Matelot` annotation for the sidecar (`deploy/observability/kind/kube-prometheus-stack.values.yaml`
-sets `sidecar.dashboards.folderAnnotation` and `ruleNamespaceSelector: {}`). Both need `metrics.enabled` and the
+sets `sidecar.dashboards.folderAnnotation` and `ruleNamespaceSelector: {}`, and runs a minimal Alertmanager whose
+`matelot` route collects the cell's alerts — without one, the stack's own `PrometheusNotConnectedToAlertmanagers` fires
+forever). Both need `metrics.enabled` and the
 operator's CRDs; `make kind-observability` switches them on with the rest. **Compose:** the profile's Prometheus loads
 `rules/matelot.yaml` (its `/alerts` page shows them; Grafana's alert list too) and Grafana provisions the four
 dashboards into folder *Matelot*; `smoke.sh --observability` asserts the dashboards, the rules and that the inputs
@@ -455,10 +457,10 @@ alert links here (`runbook_url`, `#alert-<name>`); severities: *critical* = user
 
 | Alert | Condition | Severity |
 |---|---|---|
-| `MatelotApiDown` | `up{job="matelot-api"} == 0` for 2 m | critical |
+| `MatelotApiDown` | `min by (cell) (up{job="matelot-api"}) == 0` for 2 m — one alert per cell, whatever the replica count | critical |
 | `MatelotApiAbsent` | no `matelot-api` target at all for 5 m | critical |
-| `MatelotWorkerDown` | `up{job="matelot-worker"} == 0` for 5 m | critical |
-| `MatelotKeycloakDown` | `up{job="matelot-keycloak"} == 0` for 2 m | critical |
+| `MatelotWorkerDown` | `min by (cell) (up{job="matelot-worker"}) == 0` for 5 m | critical |
+| `MatelotKeycloakDown` | `min by (cell) (up{job="matelot-keycloak"}) == 0` for 2 m | critical |
 | `MatelotNoRunnerOnline` | runners online = 0 (or none ever reported) while `matelot_pipeline_jobs_queued > 0`, for 10 m | warning |
 | `MatelotQueueBacklog` | oldest queued pipeline job or BullMQ job older than 600 s, for 10 m | warning |
 | `MatelotPipelineFailureRate` | failed / total pipelines over 1 h > 50 % with ≥ 5 pipelines, for 15 m | warning |
@@ -466,7 +468,7 @@ alert links here (`runbook_url`, `#alert-<name>`); severities: *critical* = user
 | `MatelotBackupFailed` | the last backup report is a failure newer than the last success, for 5 m | critical |
 | `MatelotBackupTooOld` | last success older than 36 h, for 1 h | warning |
 | `MatelotLicenseExpiring` | `matelot_license_expiry_timestamp_seconds - time() < 14 d` (absent until M13) | warning |
-| `MatelotBackupJobFailed` (k8s) | `kube_job_status_failed` of a `*-backup-*` Job in a `tenant-*` namespace | critical |
+| `MatelotBackupJobFailed` (k8s) | the **newest** `*-backup-*` Job of a `tenant-*` namespace (by `kube_job_status_start_time`) failed, for 5 m — an older failed Job the CronJob keeps does not count | critical |
 | `MatelotCertificateExpiring` (k8s) | `certmanager_certificate_expiration_timestamp_seconds - time() < 14 d` | warning |
 | `MatelotDiskAlmostFull` (k8s) | a `tenant-*` PVC under 10 % free (kubelet volume stats), for 15 m | critical |
 
@@ -535,7 +537,7 @@ The licence expires within 14 days (M13 licensing; the metric does not exist bef
 License; the cell falls back to the Free tier otherwise.
 
 #### Alert: MatelotBackupJobFailed
-Kubernetes saw a backup Job pod fail (kube-state-metrics). Same as `MatelotBackupFailed`, from the cluster's side:
+The newest backup Job failed and no later run has started (kube-state-metrics); it clears with the next good run. Same as `MatelotBackupFailed`, from the cluster's side:
 `kubectl -n <namespace> get jobs` and the failed pod's log.
 
 #### Alert: MatelotCertificateExpiring

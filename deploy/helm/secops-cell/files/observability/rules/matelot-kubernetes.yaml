@@ -3,14 +3,22 @@
 groups:
   - name: matelot-kubernetes
     rules:
+      # the MOST RECENT backup Job failed — not "a failed Job exists": the CronJob keeps its last failed Jobs
+      # (failedJobsHistoryLimit), so one failure followed by good nightly runs must not keep this firing. The newest Job
+      # by start time (scheduled `<release>-backup-<n>` or created by hand `<release>-backup-now`) is the failed one.
       - alert: MatelotBackupJobFailed
-        expr: max by (namespace) (kube_job_status_failed{namespace=~"tenant-.+", job_name=~".+-backup-[0-9]+"}) > 0
+        expr: |
+          max by (namespace) (
+            kube_job_status_start_time{namespace=~"tenant-.+", job_name=~".+-backup-.+"}
+              and on (namespace, job_name) (max by (namespace, job_name) (kube_job_status_failed{namespace=~"tenant-.+", job_name=~".+-backup-.+"}) > 0)
+          )
+            >= max by (namespace) (kube_job_status_start_time{namespace=~"tenant-.+", job_name=~".+-backup-.+"})
         for: 5m
         labels: { severity: critical }
         annotations:
-          summary: "{{ $labels.namespace }}: a backup Job failed"
-          description: "A pod of the backup CronJob ended in failure: kubectl -n {{ $labels.namespace }} logs job/<name> (pg_dump, the secrets, or the S3 upload)."
-          runbook_url: https://matelot-cloud.github.io/website/docs/latest/observability.html#alert-matelotbackupjobfailed
+          summary: "{{ $labels.namespace }}: the latest backup Job failed"
+          description: "The newest backup Job ended in failure (no later run has started): kubectl -n {{ $labels.namespace }} get jobs, then logs of the failed one (pg_dump, the secrets, or the S3 upload)."
+          runbook_url: https://matelot.cloud/docs/latest/observability.html#alert-matelotbackupjobfailed
       - alert: MatelotCertificateExpiring
         expr: certmanager_certificate_expiration_timestamp_seconds{namespace=~"tenant-.+"} - time() < 14 * 24 * 3600
         for: 1h
@@ -18,7 +26,7 @@ groups:
         annotations:
           summary: "{{ $labels.namespace }}: certificate {{ $labels.name }} expires in {{ $value | humanizeDuration }}"
           description: "cert-manager has not renewed it: check the Certificate's status and the issuer (ACME challenge failing? the DNS names changed?)."
-          runbook_url: https://matelot-cloud.github.io/website/docs/latest/observability.html#alert-matelotcertificateexpiring
+          runbook_url: https://matelot.cloud/docs/latest/observability.html#alert-matelotcertificateexpiring
       - alert: MatelotDiskAlmostFull
         expr: |
           kubelet_volume_stats_available_bytes{namespace=~"tenant-.+"}
@@ -28,4 +36,4 @@ groups:
         annotations:
           summary: "{{ $labels.namespace }}: volume {{ $labels.persistentvolumeclaim }} has less than 10 % free"
           description: "Postgres, the registry or the backups volume is almost full ({{ $value | humanizePercentage }} free): grow the PVC (the storage class must allow expansion) or prune (backup retention, registry garbage collection)."
-          runbook_url: https://matelot-cloud.github.io/website/docs/latest/observability.html#alert-matelotdiskalmostfull
+          runbook_url: https://matelot.cloud/docs/latest/observability.html#alert-matelotdiskalmostfull

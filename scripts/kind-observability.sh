@@ -34,6 +34,7 @@ cat <<EOT
 The stack runs in namespace $NS and the cell "$TENANT" is wired to it. To look:
   kubectl -n $NS port-forward svc/kube-prometheus-stack-grafana 3000:80 &      → http://localhost:3000  (admin / matelot-kind)
   kubectl -n $NS port-forward svc/kube-prometheus-stack-prometheus 9090:9090 & → http://localhost:9090/targets
+  kubectl -n $NS port-forward svc/kube-prometheus-stack-alertmanager 9093:9093 & → http://localhost:9093  (Matelot* alerts on route "matelot")
 Checks (the acceptance of docs/observability.md, drops 2 and 3):
   every serviceMonitor/tenant-$TENANT/$TENANT/* target UP     (Prometheus → Status → Targets)
   count by (job) (matelot_build_info)                        → matelot-api, matelot-worker, matelot-runner

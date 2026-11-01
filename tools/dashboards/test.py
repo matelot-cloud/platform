@@ -117,6 +117,24 @@ def main() -> int:
         for alert, anchor in re.findall(r"- alert: (\w+)[\s\S]*?runbook_url: \S+#([a-z0-9-]+)", rules.read_text()):
             if anchor != f"alert-{alert.lower()}": problems.append(f"{rules.name}: {alert}'s runbook_url anchor is #{anchor}, expected #alert-{alert.lower()}")
             if anchor not in headings: problems.append(f"{rules.name}: {alert}'s runbook heading '#### Alert: {alert}' is missing from docs/observability.md")
+    # one canonical docs address (tools/docs-site/build.mjs DOCS_URL): runbooks, dashboard links, the chart's
+    # runbookBaseUrl and web.docsUrl, the Compose docs default — the runbooks pointed at the github.io mirror once
+    docs = re.search(r"export const DOCS_URL = '([^']+)'", (ROOT / "tools/docs-site/build.mjs").read_text()).group(1)
+    scanned = [*RULES.glob("*.yaml"), *DASH.glob("*.json"), ROOT / "deploy/helm/secops-cell/values.yaml", ROOT / "deploy/helm/secops-cell/templates/prometheusrule.yaml", ROOT / "deploy/compose/init/compose-init.sh"]
+    for f in scanned:
+        for url in re.findall(r"https?://[^\s\"'#)]*?/docs/(?:latest|v[0-9.]+)/[^\s\"'#)]*", f.read_text()):
+            if not url.startswith(docs + "/"): problems.append(f"{f.relative_to(ROOT)}: {url} is not under the canonical docs address {docs}/ (tools/docs-site/build.mjs DOCS_URL)")
+    values = (ROOT / "deploy/helm/secops-cell/values.yaml").read_text()
+    for needle in (f"docsUrl: {docs}/latest/", f"runbookBaseUrl: {docs}/latest/observability.html"):
+        if needle not in values: problems.append(f"values.yaml: expected `{needle}`")
+    if f'DOCS_URL="${{MATELOT_DOCS_URL:-{docs}/latest/}}"' not in (ROOT / "deploy/compose/init/compose-init.sh").read_text(): problems.append("compose-init.sh: the DOCS_URL default is not the canonical docs address")
+    # build.py writes its copies into the chart and the Compose stack, never a stray tree (it once wrote deploy/deploy/)
+    if (ROOT / "deploy/deploy").exists(): problems.append("deploy/deploy exists: a stray copy tree (remove it)")
+    # every histogram_quantile in a panel drops NaN (kinds that never ran): `… >= 0`
+    for name, body in rendered.items():
+        for p in json.loads(body)["panels"]:
+            for t in p.get("targets", []):
+                if "histogram_quantile" in t["expr"] and not t["expr"].rstrip().endswith(">= 0"): problems.append(f"{name} · {p['title']}: histogram_quantile without the NaN filter (`>= 0`)")
     promtool = os.environ.get("PROMTOOL") or shutil.which("promtool")
     if not promtool: problems.append("promtool not found (PROMTOOL=… or on PATH): the expressions were not parsed")
     else:
@@ -132,7 +150,8 @@ def main() -> int:
             files = [str(f) for f in sorted(RULES.glob("*.yaml")) if not f.name.endswith("_test.yaml")]
             r = subprocess.run([promtool, "check", "rules", *files], capture_output=True, text=True)
             if r.returncode != 0: problems.append("rules do not parse:\n" + r.stdout + r.stderr)
-            r = subprocess.run([promtool, "test", "rules", str(RULES / "matelot_test.yaml")], capture_output=True, text=True, cwd=str(RULES))
+            tests = sorted(f.name for f in RULES.glob("*_test.yaml"))
+            r = subprocess.run([promtool, "test", "rules", *tests], capture_output=True, text=True, cwd=str(RULES))
             if r.returncode != 0: problems.append("rule unit tests failed:\n" + r.stdout + r.stderr)
     if problems:
         print("dashboards/rules check FAILED:\n  " + "\n  ".join(problems)); return 1

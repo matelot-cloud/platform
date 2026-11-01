@@ -8,8 +8,13 @@ JSON imports into any Grafana; every query is filtered on the `cell` variable.
 """
 import json
 import pathlib
+import re
+import sys
 
-OUT = pathlib.Path(__file__).resolve().parents[2] / "deploy/observability/dashboards"
+REPO = pathlib.Path(__file__).resolve().parents[2]
+OUT = REPO / "deploy/observability/dashboards"
+# the public docs' canonical address: one place, the docs build (tools/docs-site/build.mjs DOCS_URL)
+DOCS = re.search(r"export const DOCS_URL = '([^']+)'", (REPO / "tools/docs-site/build.mjs").read_text()).group(1) + "/latest"
 DS = {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
 TEMPO = {"type": "tempo", "uid": "${DS_TEMPO}"}
 RATE = "$__rate_interval"
@@ -116,14 +121,16 @@ def dashboard(uid: str, title: str, tags: list, panels: list, variables: list, d
         "timezone": "browser", "time": {"from": "now-6h", "to": "now"}, "refresh": "30s", "schemaVersion": 39, "version": 1,
         "templating": {"list": [cell_var, *variables]},
         "annotations": {"list": [{"builtIn": 1, "datasource": {"type": "grafana", "uid": "-- Grafana --"}, "enable": True, "hide": True, "iconColor": "rgba(0, 211, 255, 1)", "name": "Annotations & Alerts", "type": "dashboard"}]},
-        "links": [{"title": "Matelot dashboards", "type": "dashboards", "tags": ["matelot"], "asDropdown": True, "includeVars": True, "keepTime": True}, {"title": "Observability guide", "type": "link", "url": "https://matelot-cloud.github.io/website/docs/latest/observability.html", "targetBlank": True}],
+        "links": [{"title": "Matelot dashboards", "type": "dashboards", "tags": ["matelot"], "asDropdown": True, "includeVars": True, "keepTime": True}, {"title": "Observability guide", "type": "link", "url": f"{DOCS}/observability.html", "targetBlank": True}],
         "panels": layout(panels),
     }
 
 
 def hist_p(q: float, metric: str, by: str = "", selector: str = CELL) -> str:
+    """A quantile per series, NaN dropped (`>= 0` is false for NaN): a kind that never ran — or not in the window — has
+    zero-count buckets (they exist from the first scrape, KNOWN_LABEL_SETS) and its quantile is NaN: no empty series."""
     by_clause = f"by (le{', ' + by if by else ''})"
-    return f"histogram_quantile({q}, sum {by_clause} (rate({metric}_bucket{{{selector}}}[{RATE}])))"
+    return f"histogram_quantile({q}, sum {by_clause} (rate({metric}_bucket{{{selector}}}[{RATE}]))) >= 0"
 
 
 # ----------------------------------------------------------------------------------------------- 1. cell overview
@@ -172,9 +179,12 @@ def cell_overview() -> dict:
 
 # ----------------------------------------------------------------------------------------------- 2. pipelines
 def pipelines() -> dict:
-    kind_var = {"name": "kind", "label": "Job kind", "type": "query", "datasource": DS, "query": {"query": 'label_values(matelot_pipeline_jobs_total{cell="$cell"}, kind)', "refId": "kind"}, "definition": 'label_values(matelot_pipeline_jobs_total{cell="$cell"}, kind)', "refresh": 1, "sort": 1, "includeAll": True, "multi": True, "current": {"text": "All", "value": "$__all"}, "options": [], "hide": 0}
+    # only the kinds that have run at least once (the series of every kind exist at zero from the first scrape — a
+    # label_values() variable would list all fourteen and every per-kind panel would carry empty lines for them)
+    ran = 'query_result(sum by (kind) (matelot_pipeline_jobs_total{cell="$cell"}) > 0)'
+    kind_var = {"name": "kind", "label": "Job kind", "type": "query", "datasource": DS, "query": {"query": ran, "refId": "kind"}, "definition": ran, "regex": '/kind="([^"]+)"/', "refresh": 2, "sort": 1, "includeAll": True, "multi": True, "current": {"text": "All", "value": "$__all"}, "options": [], "hide": 0}
     K = f'kind=~"$kind", {CELL}'
-    tempo_link = 'https://matelot-cloud.github.io/website/docs/latest/observability.html#traces'
+    tempo_link = f'{DOCS}/observability.html#traces'
     panels = [
         text("Traces", f"Every pipeline is **one trace** under service `matelot-pipeline` (api, runner and worker spans together). From here: the exemplars on the duration panels (the dots) open the trace of that very job in Tempo; Explore → Tempo → search service `matelot-pipeline`, or TraceQL `{{ resource.service.name = \"matelot-pipeline\" && span.matelot.pipeline.status = \"failed\" }}` for the failed ones. [How the trace is built]({tempo_link}).", h=3),
         row("Jobs"),
@@ -251,8 +261,9 @@ def render() -> dict[str, str]:
     return out
 
 
-# the copies the two deliveries ship (chart-test compares them with the source): dashboards and rules
-ROOT = OUT.parents[1]
+# the copies the two deliveries ship (chart-test compares them with the source): dashboards and rules. ROOT is the
+# repository (it once was deploy/, and the copies landed in a stray deploy/deploy/ tree that nothing compared)
+ROOT = REPO
 COPIES = {
     "dashboards": [ROOT / "deploy/helm/secops-cell/files/observability/dashboards", ROOT / "deploy/compose/init/observability/grafana/dashboards"],
     "rules": {"matelot.yaml": [ROOT / "deploy/helm/secops-cell/files/observability/rules", ROOT / "deploy/compose/init/observability/rules"], "matelot-kubernetes.yaml": [ROOT / "deploy/helm/secops-cell/files/observability/rules"]},
@@ -264,8 +275,10 @@ if __name__ == "__main__":
         (OUT / name).write_text(body, encoding="utf-8")
         print(f"{OUT / name}: {len(json.loads(body)['panels'])} panels")
         for d in COPIES["dashboards"]:
-            d.mkdir(parents=True, exist_ok=True); (d / name).write_text(body, encoding="utf-8")
+            if not d.is_dir(): sys.exit(f"{d} does not exist: a copy destination must be an existing directory of the chart / Compose stack")
+            (d / name).write_text(body, encoding="utf-8")
     for rule, dests in COPIES["rules"].items():
         for d in dests:
-            d.mkdir(parents=True, exist_ok=True); (d / rule).write_text((OUT.parent / "rules" / rule).read_text(), encoding="utf-8")
+            if not d.is_dir(): sys.exit(f"{d} does not exist")
+            (d / rule).write_text((OUT.parent / "rules" / rule).read_text(), encoding="utf-8")
     print("copies: chart files/observability, compose init/observability")

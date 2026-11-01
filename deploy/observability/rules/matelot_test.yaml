@@ -23,13 +23,13 @@ tests:
             exp_annotations:
               summary: "Cell acme: jobs are queued and no runner is online"
               description: "0 pipeline job(s) wait for a runner and no runner has sent a heartbeat in the last minute, for 10 minutes."
-              runbook_url: https://matelot-cloud.github.io/website/docs/latest/observability.html#alert-matelotnorunneronline
+              runbook_url: https://matelot.cloud/docs/latest/observability.html#alert-matelotnorunneronline
           # globex has queued jobs and no runners_online series at all (no pool ever reported): that is "no runner online" too
           - exp_labels: { severity: warning, cell: globex }
             exp_annotations:
               summary: "Cell globex: jobs are queued and no runner is online"
               description: "0 pipeline job(s) wait for a runner and no runner has sent a heartbeat in the last minute, for 10 minutes."
-              runbook_url: https://matelot-cloud.github.io/website/docs/latest/observability.html#alert-matelotnorunneronline
+              runbook_url: https://matelot.cloud/docs/latest/observability.html#alert-matelotnorunneronline
   # a queue whose oldest job waits for more than 10 minutes
   - interval: 1m
     input_series:
@@ -48,7 +48,7 @@ tests:
             exp_annotations:
               summary: "Cell acme: the oldest queued job waits for more than 10 minutes"
               description: "The oldest queued pipeline job (or BullMQ job) has waited 21m 1s: too few runners, runners without the required tags, or a worker that stopped consuming."
-              runbook_url: https://matelot-cloud.github.io/website/docs/latest/observability.html#alert-matelotqueuebacklog
+              runbook_url: https://matelot.cloud/docs/latest/observability.html#alert-matelotqueuebacklog
   # backups: the last run failed → BackupFailed; a success afterwards clears it; a success older than 36 h → BackupTooOld
   # (samples every 5 m like a scrape: a sparser series goes stale between samples and resets the alerts' `for`)
   - interval: 5m
@@ -65,7 +65,7 @@ tests:
             exp_annotations:
               summary: "Cell acme: the last backup failed"
               description: "The most recent backup run reported a failure (and no success since). The reason is in the API's backup reports and the backup Job's log."
-              runbook_url: https://matelot-cloud.github.io/website/docs/latest/observability.html#alert-matelotbackupfailed
+              runbook_url: https://matelot.cloud/docs/latest/observability.html#alert-matelotbackupfailed
       - eval_time: 9h
         alertname: MatelotBackupFailed
         exp_alerts: []
@@ -91,7 +91,7 @@ tests:
             exp_annotations:
               summary: "Cell acme: no successful backup for 1d 14h 0m 0s"
               description: "The last successful backup is older than 36 hours: the schedule is off, runs fail, or backups are disabled while this rule is loaded."
-              runbook_url: https://matelot-cloud.github.io/website/docs/latest/observability.html#alert-matelotbackuptooold
+              runbook_url: https://matelot.cloud/docs/latest/observability.html#alert-matelotbackuptooold
   # pipelines: 4 of 6 failed in the hour → fires (after 15 m); 2 of 6 → quiet; 3 of 4 → quiet (fewer than 5)
   - interval: 5m
     input_series:
@@ -111,17 +111,26 @@ tests:
             exp_annotations:
               summary: "Cell acme: more than half of the pipelines of the last hour failed"
               description: "66.67% of at least 5 pipelines failed in the last hour (a broken scanner image, a repository the runners cannot reach, a gate that fails every run)."
-              runbook_url: https://matelot-cloud.github.io/website/docs/latest/observability.html#alert-matelotpipelinefailurerate
+              runbook_url: https://matelot.cloud/docs/latest/observability.html#alert-matelotpipelinefailurerate
       - eval_time: 110m
         alertname: MatelotPipelineFailureRate
         exp_alerts: []
-  # the api target disappears for 2 minutes; absent entirely for 5
+  # the api target disappears for 2 minutes: one alert for the cell, even with two api series (a rollout: the old pod
+  # still scraped as down, the new one not up yet) — it was two alerts before the `min by (cell)`
   - interval: 1m
     input_series:
       - series: 'up{job="matelot-api", cell="acme", instance="10.0.0.1:9464"}'
         values: '1 1 1 0 0 0 0 0'
+      - series: 'up{job="matelot-api", cell="acme", instance="10.0.0.3:9464"}'
+        values: '_ _ _ 0 0 0 0 0'
+      - series: 'up{job="matelot-api", cell="globex", instance="10.1.0.1:9464"}'
+        values: '1x8'
       - series: 'up{job="matelot-worker", cell="acme", instance="10.0.0.2:9464"}'
         values: '1x8'
+      - series: 'up{job="matelot-keycloak", cell="acme", instance="10.0.0.4:9000"}'
+        values: '1 1 1 0 0 0 0 0'
+      - series: 'up{job="matelot-keycloak", cell="acme", instance="10.0.0.5:9000"}'
+        values: '1 1 1 0 0 0 0 0'
     alert_rule_test:
       - eval_time: 4m
         alertname: MatelotApiDown
@@ -129,11 +138,19 @@ tests:
       - eval_time: 6m
         alertname: MatelotApiDown
         exp_alerts:
-          - exp_labels: { severity: critical, cell: acme, job: matelot-api, instance: "10.0.0.1:9464" }
+          - exp_labels: { severity: critical, cell: acme }
             exp_annotations:
               summary: "API of cell acme is not answering scrapes"
-              description: "The api target 10.0.0.1:9464 has been down for 2 minutes: the web app, the CLI and the runners are without their API."
-              runbook_url: https://matelot-cloud.github.io/website/docs/latest/observability.html#alert-matelotapidown
+              description: "An api pod of cell acme has not answered a scrape for 2 minutes: with one replica the web app, the CLI and the runners are without their API."
+              runbook_url: https://matelot.cloud/docs/latest/observability.html#alert-matelotapidown
+      - eval_time: 6m
+        alertname: MatelotKeycloakDown
+        exp_alerts:
+          - exp_labels: { severity: critical, cell: acme }
+            exp_annotations:
+              summary: "Keycloak of cell acme is down"
+              description: "Nobody can sign in and tokens cannot be refreshed; the API keeps serving already-issued tokens until they expire."
+              runbook_url: https://matelot.cloud/docs/latest/observability.html#alert-matelotkeycloakdown
       - eval_time: 6m
         alertname: MatelotWorkerDown
         exp_alerts: []
@@ -149,4 +166,4 @@ tests:
             exp_annotations:
               summary: "No API target is scraped"
               description: "Prometheus has no matelot-api target at all for 5 minutes: the metrics Service is gone or the ServiceMonitor is not selected (release label?)."
-              runbook_url: https://matelot-cloud.github.io/website/docs/latest/observability.html#alert-matelotapiabsent
+              runbook_url: https://matelot.cloud/docs/latest/observability.html#alert-matelotapiabsent

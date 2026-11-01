@@ -233,7 +233,7 @@ observability:
     enabled: false
     labels: {}                       # e.g. release: kube-prometheus-stack (what the Prometheus's ruleSelector wants)
     kubernetes: true                 # also the rules that need kube-state-metrics / kubelet / cert-manager metrics (matelot-kubernetes.yaml)
-    runbookBaseUrl: https://matelot-cloud.github.io/website/docs/latest/observability.html   # every alert's runbook_url points into it (#alert-<name>)
+    runbookBaseUrl: https://matelot.cloud/docs/latest/observability.html   # every alert's runbook_url points into it (#alert-<name>)
   grafana:
     dashboards:
       enabled: false                 # one ConfigMap per dashboard for Grafana's sidecar (kube-prometheus-stack: label grafana_dashboard=1)

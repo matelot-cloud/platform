@@ -57,6 +57,9 @@ const ASSETS = ['examples/github-actions.yml', 'examples/gitlab-ci.yml', 'exampl
 /** Build-time constants: the product name and where the public site points. */
 export const PRODUCT = 'Matelot';
 export const ORG = 'matelot-cloud'; // the GitHub organization: the one place it is named in the generator
+// the public documentation's canonical address (the website's custom domain): alert runbooks, dashboard links, the web app's
+// docsUrl and the Compose default all point under it — tools/dashboards/test.py checks that they agree with this line
+export const DOCS_URL = 'https://matelot.cloud/docs';
 export const PUBLIC = { github: `https://github.com/${ORG}/matelot`, releases: `https://github.com/${ORG}/matelot/releases` };
 
 const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);

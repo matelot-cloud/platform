@@ -13,8 +13,35 @@ prometheus:
     ruleNamespaceSelector: {}                 # the cells' PrometheusRules too (observability.prometheusRules, label release=<this release>)
     retention: 2d
     resources: { requests: { cpu: 100m, memory: 512Mi } }
+# a minimal Alertmanager: without one, kube-prometheus-stack's own PrometheusNotConnectedToAlertmanagers fires forever,
+# and this way the cell's alerts are visible routed (http://localhost:9093 → port-forward, see kind-observability.sh).
+# Nothing is sent anywhere: every route ends in a receiver without integrations. A real cluster puts its pager /
+# Slack / e-mail receivers on the `matelot` route.
 alertmanager:
-  enabled: false                              # kind: nothing to page; a real cluster keeps it
+  enabled: true
+  alertmanagerSpec:
+    retention: 24h
+    resources: { requests: { cpu: 10m, memory: 32Mi }, limits: { memory: 128Mi } }
+  config:
+    global: { resolve_timeout: 5m }
+    route:
+      receiver: "null"
+      group_by: [alertname, cell, namespace]
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 12h
+      routes:
+        - matchers: ['alertname = "Watchdog"']        # the stack's always-firing heartbeat
+          receiver: "null"
+        - matchers: ['alertname =~ "Matelot.+"']       # the cell's rules (observability.prometheusRules)
+          receiver: matelot
+    inhibit_rules:
+      - source_matchers: ['severity = "critical"']
+        target_matchers: ['severity = "warning"']
+        equal: [alertname, cell]
+    receivers:
+      - name: "null"
+      - name: matelot                                  # add slack_configs / email_configs / webhook_configs here
 grafana:
   adminPassword: matelot-kind                 # kind only — a real cluster sets admin.existingSecret
   env:

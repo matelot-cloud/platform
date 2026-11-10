@@ -72,6 +72,8 @@ groups:
           summary: "Cell {{ $labels.cell }}: more than half of the pipelines of the last hour failed"
           description: "{{ $value | humanizePercentage }} of at least 5 pipelines failed in the last hour (a broken scanner image, a repository the runners cannot reach, a gate that fails every run)."
           runbook_url: https://matelot.cloud/docs/latest/observability.html#alert-matelotpipelinefailurerate
+      # (an HTTP latency alert, if one is ever added, must exclude the runners' long-polls — /runner/jobs/claim waits up
+      #  to 20 s by design and /runner/jobs/:jobId/logs is a batch upload — as the dashboards' latency panel does)
       - alert: MatelotDbConnectionsHigh
         expr: |
           sum by (cell, job) (db_client_connection_count{state="used"}) > 8

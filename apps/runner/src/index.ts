@@ -112,8 +112,11 @@ async function main() {
   metrics.set('matelot_runner_busy', {}, 0);
   metrics.seedKnownSeries();
 
-  const heartbeat = setInterval(() => void client.heartbeat(metadata, autoTags).then((r) => applyConfig(r?.config)).catch((e: Error) => logger.error(`heartbeat failed: ${e.message}`)), 15_000);
-  await retryTransient('heartbeat', () => client.heartbeat(metadata, autoTags), { until: () => stopping }).then((r) => applyConfig(r?.config)).catch((e: Error) => logger.error(`heartbeat failed: ${e.message}`));
+  // the heartbeat also carries the runner's telemetry state (Settings → Observability, `matelot doctor`): the last
+  // /metrics scrape it served and whether it exports traces — the cell has no other way to see a runner's signals
+  const telemetryMetadata = () => ({ ...metadata, metricsScrapedAt: metrics.lastScrapeAt?.toISOString() ?? null, tracing: tracer.enabled });
+  const heartbeat = setInterval(() => void client.heartbeat(telemetryMetadata(), autoTags).then((r) => applyConfig(r?.config)).catch((e: Error) => logger.error(`heartbeat failed: ${e.message}`)), 15_000);
+  await retryTransient('heartbeat', () => client.heartbeat(telemetryMetadata(), autoTags), { until: () => stopping }).then((r) => applyConfig(r?.config)).catch((e: Error) => logger.error(`heartbeat failed: ${e.message}`));
 
   while (!stopping) {
     let job;

@@ -98,6 +98,11 @@ export const envSchema = z.object({
   /** share of parentless GET requests recorded as traces (polls never are; mutations always): telemetry/sampler.ts */
   MATELOT_TRACES_GET_RATIO: z.preprocess(emptyToUndefined, z.coerce.number().min(0).max(1).optional()),
   OTEL_METRICS_EXPORTER: z.preprocess(emptyToUndefined, z.string().regex(/^(prometheus|otlp|none)(,(prometheus|otlp|none))*$/).optional()),
+  /** the audit / security events as OTel log records (telemetry/logs.ts): otlp | console | file | none (default) */
+  OTEL_LOGS_EXPORTER: z.preprocess(emptyToUndefined, z.enum(['otlp', 'console', 'file', 'none']).optional()),
+  OTEL_LOGS_FILE: z.preprocess(emptyToUndefined, z.string().optional()),
+  /** Settings → Observability: the "Open Grafana" link (the cell never proxies Grafana) */
+  MATELOT_GRAFANA_URL: z.preprocess(emptyToUndefined, z.string().url().optional()),
   /** `deployment.environment` on every signal. */
   DEPLOYMENT_ENVIRONMENT: z.string().default('production'),
   APP_VERSION: z.preprocess(emptyToUndefined, z.string().optional()),

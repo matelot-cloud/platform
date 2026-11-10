@@ -192,12 +192,49 @@ default, then `module=level`, matched against Nest's logger context — `JobsSer
 (`REDACTED_KEYS` in `log-schema.ts`: `authorization`, `cookie`, `password`, `secret`, `token`, `privateKey`,
 `clientSecret`, `webhookSecret`, `apiKey`, `registrationToken`, `runnerToken`, …) applied at any depth to every
 logger; `log-schema.spec.ts` logs an object carrying every known key, nested three levels, and fails if a value
-survives. OTLP log export (`OTEL_LOGS_EXPORTER=otlp`) comes with drop 2 for customers whose collector prefers it to
-scraping stdout; the stdout line is the primary.
+survives. The stdout line is the primary; a log shipper (Alloy, Fluent Bit, the collector's `filelog` receiver)
+carries it. The audit / security events below can additionally leave as OTLP log records (`OTEL_LOGS_EXPORTER=otlp`).
 
-Audit events and security events (gate failures, token misuse, sign-in anomalies) are also emitted as OTel log
-records with a **stable** `event.name` (`matelot.audit`, `matelot.security`) and documented attributes, so a SIEM
-ingests them without parsing our audit table (phase 4).
+### Audit and security events
+
+Every audit entry and every security-relevant refusal is emitted **twice with the same attributes**: as a stdout line
+of the api (the log schema above plus the attributes, so a shipper is enough) and as an OpenTelemetry log record
+(`OTEL_LOGS_EXPORTER=otlp` — Helm `observability.otlp.logs: true`, Compose `MATELOT_OTLP_LOGS=1` — to the same OTLP
+endpoint as the traces; the Compose profile's collector forwards them to Loki, where resource attributes become
+labels and the attributes below structured metadata: `{service_name="matelot-api"} | event_name="matelot.security"`).
+The attribute names are a contract (`apps/api/src/telemetry/events.ts`, pinned by `events.spec.ts` and exercised end
+to end by `test/span-budget.mjs`): a rename is a breaking change for every SIEM rule written against them. Resource
+attributes on every record: `service.name` (`matelot-api`), `service.version`, `matelot.cell`, `matelot.component`,
+`deployment.environment`; the instrumentation scope is `matelot.events`.
+
+**`event.name = matelot.audit`** — severity INFO, one per row of the audit trail (`AuditService.record`):
+
+| Attribute | Content |
+|---|---|
+| `matelot.audit.action` | dotted verb: `project.created`, `member.role_changed`, `gate.fail`, `pipeline.created`, `backup.succeeded`, … (the audit trail's own) |
+| `matelot.audit.resource.type`, `matelot.audit.resource.id` | what it acted on: `project`, `integration`, `policy`, `gate_evaluation`, `user`, `token`, … and the cell's id |
+| `matelot.audit.reason` | the reason the actor gave, when the API asked for one |
+| `matelot.audit.before`, `matelot.audit.after` | the state as JSON, keys of the redaction list censored at any depth, clipped at 4 KiB; absent when there is none |
+| `matelot.actor.type`, `matelot.actor.id`, `matelot.actor.label` | `USER` / `SYSTEM` / `TOKEN` / `RUNNER`, the id, the e-mail / token name the audit trail shows |
+| `matelot.organization.id` | the organization, when scoped |
+| `matelot.request.id`, `client.address`, `user_agent.original` | the request that caused it (`x-request-id`, the caller's IP as the API saw it, the user agent) |
+
+**`event.name = matelot.security`** — severity WARN, one per refusal (the exception filter) or policy gate failure:
+
+| Attribute | Content |
+|---|---|
+| `matelot.security.kind` | `auth.failed` (401, no valid credential), `token.rejected` (401 on a signed CI token: signature, expiry, revoked, replayed nonce), `account.disabled` (401, disabled account), `access.denied` (403, authenticated but not allowed), `rate_limit.exceeded` (429), `gate.failed` (a policy gate blocked a stage / deployment) |
+| `matelot.security.reason` | the refusal's own message (never a credential) |
+| `matelot.auth.method` | how the caller tried: `jwt`, `api_token` (signed CI token), `personal_token`, `runner`, `anonymous` |
+| `http.request.method`, `http.route`, `http.response.status_code` | the route **template** (never the raw path) and the status |
+| `matelot.actor.*`, `matelot.organization.id` | the caller when it was identified before the refusal (a 403) |
+| `matelot.project.id`, `matelot.service.id`, `matelot.gate.violations` | `gate.failed` only: the project / service and the `<policy>: <message>` lines (≤ 4 KiB) |
+| `matelot.request.id`, `client.address`, `user_agent.original` | as above |
+
+A burst of `auth.failed` from one `client.address`, `access.denied` on routes a token never used before, or any
+`gate.failed` in production are the rules to start with. The records are not a replacement for the audit trail
+(`GET /organizations/:id/audit-events`, which stays the source of record); they are its copy for the tools that
+already watch everything else.
 
 ### Configuration
 
@@ -210,6 +247,8 @@ Standard OTel variables first, ours only where OTel has none. Every variable exi
 | `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG` | SDK sampler | `parentbased_always_on` |
 | `OTEL_METRICS_EXPORTER` | `prometheus` (default), `otlp`, `none`, comma-separated (`prometheus,otlp` pushes too) | `prometheus` |
 | `OTEL_TRACES_EXPORTER` | `otlp` (default), `console`, `file` (JSON lines to `OTEL_TRACES_FILE`; tests), `none` | `otlp` |
+| `OTEL_LOGS_EXPORTER` | the audit / security event records: `otlp`, `console`, `file` (`OTEL_LOGS_FILE`; tests), `none` — independent of tracing | `none` (stdout lines only) |
+| `MATELOT_GRAFANA_URL` | the "Open Grafana" link on Settings → Observability and in `matelot doctor` (Helm `observability.grafana.url`; the Compose profile sets its own `/grafana`) | unset |
 | `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES` | override / extend the resource | set by the chart / compose per component |
 | `MATELOT_METRICS_ENABLED`, `MATELOT_METRICS_PORT` | the `/metrics` listener | `true`, `9464` (runner: `RUNNER_METRICS_PORT`, `0` = off) |
 | `MATELOT_TRACING_ENABLED` | the tracer provider (auto `true` when an endpoint is set; `false` forces it off) | derived |
@@ -250,6 +289,9 @@ observability:
     tracesSampler: parentbased_always_on
     tracesSamplerArg: ""
     metrics: false                # also push metrics over OTLP (OTEL_METRICS_EXPORTER=prometheus,otlp)
+    logs: false                   # the audit / security events as OTLP log records too (OTEL_LOGS_EXPORTER=otlp)
+  grafana:
+    url: ""                      # where your Grafana is: the link on Administration → Observability and in doctor
 ```
 
 What renders:
@@ -320,7 +362,11 @@ Grafana gets `GF_PLUGINS_PREINSTALL_DISABLED=true` there and on Compose: Grafana
 and none of our dashboards needs. What matters in the stack's values: `prometheus.prometheusSpec.enableFeatures: [exemplar-storage]` (the trace links
 on the histograms) and `serviceMonitorNamespaceSelector: {}` (cells live in `tenant-<slug>`); Grafana's
 `sidecar.datasources.exemplarTraceIdDestinations` (`trace_id` → Tempo) and the Tempo / Loki datasources with
-trace → logs by `trace_id`; Alloy turning our JSON log lines' `trace_id` / `span_id` into Loki structured metadata.
+trace → logs by `trace_id` (in the trace view, a span's **Related logs** button — Grafana 12's name for it); Alloy
+turning our JSON log lines' `trace_id` / `span_id` into Loki structured metadata. The trace page's header shows
+"POST 201 · Route …" for a pipeline trace: Grafana takes the first span of the trace that carries HTTP attributes
+(its `findHeaderTags`), and that is the api request that started the first job — the pipeline's root and job spans
+themselves carry only `matelot.*` attributes (the span-budget test fails on anything else).
 On a **real cluster** keep all of that and change: Grafana's admin password from a Secret
 (`grafana.admin.existingSecret`), persistence and retention sized for the cluster (Prometheus
 `storageSpec`, Loki / Tempo on object storage — `loki.storage.type: s3`, `deploymentMode: SimpleScalable`, Tempo
@@ -335,7 +381,7 @@ appears without recreating anything — adds:
 
 | Service | Image | Role |
 |---|---|---|
-| `otel-collector` | otel/opentelemetry-collector-contrib 0.163.1 | OTLP in (the cell's `MATELOT_OTLP_ENDPOINT` defaults to `http://otel-collector:4318` with the profile), `matelot.cell` resource attribute, traces → Tempo |
+| `otel-collector` | otel/opentelemetry-collector-contrib 0.163.1 | OTLP in (the cell's `MATELOT_OTLP_ENDPOINT` defaults to `http://otel-collector:4318` with the profile), `matelot.cell` resource attribute, traces → Tempo, log records → Loki's OTLP endpoint (`MATELOT_OTLP_LOGS=1`; with the profile the events reach Loki through Alloy's container logs anyway, so this is for a collector of your own) |
 | `prometheus` | prom/prometheus v3.15.0 | scrapes api, worker, runner (9464), the exporters, Keycloak (9000), the registry (5001) and the stack itself; exemplar storage on; 7 days |
 | `tempo` | grafana/tempo 2.9.0 | single binary, local storage, 7 days |
 | `loki` | grafana/loki 3.6.12 | single binary, TSDB v13 on the filesystem, structured metadata, 7 days |
@@ -551,17 +597,22 @@ storage class allows expansion; otherwise prune — backup retention (`backup.re
 collection, or the database's own growth (SBOM documents are the bulk). Postgres stopping on a full disk takes the
 cell down.
 
-## Product-facing (phase 4)
+## Checking a cell (drop 4)
 
-* **Settings → Observability** (cell administrators, under Administration): what is enabled (metrics, tracing, log
-  export), the configured endpoints (headers masked), the last scrape time per component (each process records the
-  time of its last `/metrics` request), a **Test OTLP** button (the API sends one span and reports the exporter's
-  result), and the Grafana link when `observability.grafana.url` is set.
-* `matelot doctor` gains an *observability* section: metrics endpoint reachable (through the API, since 9464 is
-  not public), OTLP configured, last trace seen, last scrape.
-* Audit and security events as OTel logs (schema above), documented field by field.
-* Public docs: this page, rewritten for customers (recipes, dashboard gallery, alert list with runbooks, collector
-  config).
+* **Administration → Observability** in the web app (cell administrators): whether metrics, tracing and OTLP log
+  export are on; the last `/metrics` scrape served by the api, the worker and the runners (each process writes a
+  15 s heartbeat of its telemetry state into Redis — `matelot:observability:<component>` — and the runners report
+  `metricsScrapedAt` / `tracing` in their heartbeat metadata); the last span that ended; the OTLP endpoint with the
+  header **names** only (`Authorization=••••`); export failures with the last error; the audit / security events
+  emitted; a **Test OTLP** button (`POST /api/v1/admin/observability/test-otlp`: ends a span named `matelot.test`
+  and a log record with `event.name = matelot.test`, flushes both providers and reports whether the exporters logged
+  a failure); and the Grafana link when `observability.grafana.url` / `MATELOT_GRAFANA_URL` is set. The page is
+  read-only — the settings live in the chart values and `.env`. `GET /api/v1/admin/observability` is the same data as
+  JSON.
+* `matelot doctor` has an *observability* section (cell administrators; older APIs → skipped): `metrics` (scraped in
+  the last 5 minutes, else "nothing is scraping" — reported, not failed), `tracing` (off → reported; on with export
+  failures → **FAIL**), `events` (counts and where the records go), `grafana` (the link). `matelot doctor --test-otlp`
+  adds `otlp-test` / `otlp-logs` with the test above; `--json` for a monitoring script.
 
 ## Security
 
@@ -584,7 +635,7 @@ cell down.
 | 1 — instrumentation ✅ | `tracing.ts` preload + SDK in api / worker; runner spans and `traceParent` in the claim protocol (`pipelines.trace_parent`, `jobs.trace_parent`, migration 0049); meter with Views + our exposition on 9464 (exemplars); log schema, per-module levels, redaction list + test; env in `env.ts`, `api-configmap.yaml`, `compose-init`; `/version` with commit; `make kind-jaeger` | `exposition.spec.ts` (format, buckets, exemplars, labels), `log-schema.spec.ts` (redaction, levels, trace ids), `tracing.spec.ts` (no-op when off, provider when on), `pipeline-trace.spec.ts` (create → claim → complete: one trace, pinned ids, parents, exemplars, BullMQ propagation), runner `telemetry.test.ts`; verified against a real Jaeger 2.22: a security pipeline (checkout, syft, trivy, semgrep, gate) is one trace across api, runner and worker |
 | 2 — delivery | `observability.*` values, metrics Services + one ServiceMonitor, NetworkPolicy, exporter sidecars, Keycloak metrics, registry debug port, OTLP headers from a Secret only, backup reports → backup gauges; chart-test on / off; CI kind with the operator CRDs; Compose profile with collector, Prometheus, Tempo, Loki, Grafana (Keycloak sign-in), Alloy; `smoke.sh --observability`; the collector config and the kube-prometheus-stack recipe above; `make kind-observability` | chart-test and CI green; Compose smoke with the profile green (targets up, trace in Tempo, logs in Loki); on kind with the recipe: `apply` passes, every matelot target UP, `matelot_build_info` for api / worker / runner, the exporters' series, a demo-app pipeline trace in Tempo with its logs in Loki |
 | 3 — dashboards and alerts | the four dashboards generated by `tools/dashboards/build.py`, the rules files with promtool unit tests, `tools/dashboards/test.py` in CI (regeneration, expression parsing, every metric published), PrometheusRule + dashboards ConfigMaps in the chart, Grafana provisioning + `rule_files` in Compose, `smoke.sh --observability` asserting both, the runbooks above; with it the fixes the rc.20 run asked for: series seeded at zero, the claim span inside its job, `worker sweep` under matelot-worker, the image tag pinned by `apply --tag`, the backup waiting for Postgres, polls never roots (`x-matelot-poll`) and GETs ratio-sampled | kind with kube-prometheus-stack + Tempo + Loki: dashboards show the demo pipeline; `NoRunnerOnline` fires with runners scaled to 0; `BackupFailed` fires when the CronJob is made to fail |
-| 4 — product | Settings → Observability, doctor section, audit / security events as OTel logs, customer docs | render tests for the page; doctor test; the SIEM schema documented and covered by a test that pins the field names |
+| 4 — product ✅ | Administration → Observability (`GET /admin/observability`, Test OTLP), `matelot doctor` observability section (+ `--test-otlp`), audit / security events as stdout lines + OTel log records (`OTEL_LOGS_EXPORTER`, `observability.otlp.logs`, `MATELOT_OTLP_LOGS`, the Compose collector's logs pipeline to Loki), the schema above | `events.spec.ts` pins the event names and every attribute; `observability-status.spec.ts`; `span-budget.mjs` checks the records of a real run (audit of the pipeline, a 401 and a 403); web render test of the page; CLI doctor tests |
 
 Acceptance for the milestone: on kind with kube-prometheus-stack, Tempo and Loki installed from their charts and
 `observability.*` on, all targets up, our dashboards in Grafana with data from the demo-app pipeline, one pipeline

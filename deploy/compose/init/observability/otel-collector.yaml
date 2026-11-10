@@ -1,6 +1,6 @@
 # OpenTelemetry Collector of the Compose `observability` profile (docs/observability.md): the cell's api, worker and
 # runner send OTLP here (MATELOT_OTLP_ENDPOINT defaults to http://otel-collector:4318 with the profile); traces go on
-# to Tempo. Rendered by compose-init into the config volume (__CELL__ is the organization slug).
+# to Tempo, log records (the audit / security events, MATELOT_OTLP_LOGS=1) to Loki's OTLP endpoint. Rendered by compose-init into the config volume (__CELL__ is the organization slug).
 receivers:
   otlp:
     protocols:
@@ -16,6 +16,8 @@ exporters:
   otlp/tempo:
     endpoint: tempo:4317
     tls: { insecure: true }
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
 extensions:
   health_check: { endpoint: 0.0.0.0:13133 }
 service:
@@ -30,3 +32,7 @@ service:
       receivers: [otlp]
       processors: [memory_limiter, resource, batch]
       exporters: [otlp/tempo]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlphttp/loki]

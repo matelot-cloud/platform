@@ -39,7 +39,7 @@ Checks (the acceptance of docs/observability.md, drops 2 and 3):
   every serviceMonitor/tenant-$TENANT/$TENANT/* target UP     (Prometheus → Status → Targets)
   count by (job) (matelot_build_info)                        → matelot-api, matelot-worker, matelot-runner
   pg_up{namespace="tenant-$TENANT"}  redis_up{…}  jvm_memory_used_bytes{job="matelot-keycloak"}  go_goroutines{job="matelot-registry"}
-  run a pipeline, then Grafana → Explore → Tempo → service "matelot-pipeline" → the trace → "Logs for this span" (Loki)
+  run a pipeline, then Grafana → Explore → Tempo → service "matelot-pipeline" → the trace → a span → "Related logs" (Loki)
   Grafana → Dashboards → folder Matelot: Cell overview, Pipelines, Security posture, Integrations (from the cell's ConfigMaps)
   Prometheus → Alerts: groups matelot and matelot-kubernetes (the cell's PrometheusRule); scale the runners to 0 with a
   job queued → MatelotNoRunnerOnline after 10 m; make the backup CronJob fail (kubectl create job … --from=cronjob/$TENANT-backup

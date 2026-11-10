@@ -12,7 +12,7 @@ const run = promisify(execFile);
 const ORG = '0c3cbf3d-31cf-41bd-884a-7e085e66f4d8';
 const cli = join(__dirname, 'index.js');
 
-function serve(runnersOnline: boolean, discovery: 'ok' | 'html' | 'wrong-origin' = 'ok') {
+function serve(runnersOnline: boolean, discovery: 'ok' | 'html' | 'wrong-origin' = 'ok', observability: 'none' | 'ok' | 'failing' | 'forbidden' = 'none') {
   const server = createServer((req, res) => {
     const u = req.url!;
     const json = (code: number, body: unknown) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
@@ -29,6 +29,13 @@ function serve(runnersOnline: boolean, discovery: 'ok' | 'html' | 'wrong-origin'
     if (u === '/api/v1/organizations') return json(200, [{ id: ORG, slug: 'main', name: 'My organization' }]);
     if (u === `/api/v1/organizations/${ORG}/runner-pools`) return json(200, [{ name: 'Managed', managed: true, runners: [{ name: 'compose-runner-1', status: runnersOnline ? 'online' : 'offline' }] }]);
     if (u === '/api/v1/registry/info') return json(200, { available: true, host: 'localhost:5000' });
+    if (u === '/api/v1/admin/observability/test-otlp' && req.method === 'POST') return json(200, { traceId: 'a'.repeat(32), traces: { attempted: true, ok: observability !== 'failing', error: observability === 'failing' ? 'connect ECONNREFUSED 10.0.0.9:4318' : null }, logs: { attempted: false, ok: false, error: 'OTLP logs are off (OTEL_LOGS_EXPORTER unset)' } });
+    if (u === '/api/v1/admin/observability') {
+      if (observability === 'none') return json(404, { message: 'Cannot GET /api/v1/admin/observability' });
+      if (observability === 'forbidden') return json(403, { message: 'Observability settings are for cell administrators' });
+      const now = new Date().toISOString(); const failing = observability === 'failing';
+      return json(200, { cell: 'acme', environment: 'production', metrics: { enabled: true, port: 9464, lastScrapeAt: now }, tracing: { enabled: true, exporter: 'otlp', endpoint: 'http://otel-collector:4318/v1/traces', protocol: 'http/protobuf', headers: ['Authorization=••••'], sampler: 'parentbased_always_on', getRatio: 0.1, lastSpanAt: now, exportFailures: failing ? 3 : 0, lastExportError: failing ? 'connect ECONNREFUSED 10.0.0.9:4318' : null }, logs: { enabled: true, exporter: 'otlp', endpoint: 'http://otel-collector:4318/v1/logs', emitted: { audit: 5, security: 1 } }, grafana: { url: 'https://grafana.example.com' }, components: { api: { metricsScrapedAt: now }, worker: { metricsScrapedAt: now }, runners: { online: 1, reporting: 1, metricsScrapedAt: null, tracing: 1 } }, generatedAt: now });
+    }
     json(404, { message: 'not found' });
   });
   return new Promise<{ port: number; close: () => void }>((done) => server.listen(0, () => done({ port: (server.address() as { port: number }).port, close: () => server.close() })));
@@ -64,9 +71,10 @@ test('matelot doctor: all checks pass, runner offline fails, no credentials skip
     assert.match(stdout, /OK {2}organization +main/);
     assert.match(stdout, /OK {2}runners +1 online \(compose-runner-1\)/);
     assert.match(stdout, /OK {2}registry +localhost:5000 \(matelot registry login\)/);
+    assert.match(stdout, /--  observability +skipped: API older than this CLI/);   // the stub has no /admin/observability
     assert.match(stdout, /all checks passed/);
     const j = JSON.parse((await run('node', [cli, 'doctor', '--json'], { env })).stdout);
-    assert.equal(j.ok, true); assert.equal(j.checks.length, 7);
+    assert.equal(j.ok, true); assert.equal(j.checks.length, 8);
     // every line goes to stdout, so `matelot doctor | grep version` finds it (nothing on stderr)
     const piped = await run('sh', ['-c', `node "${cli}" doctor | grep version`], { env });
     assert.match(piped.stdout, /^ {2}OK {2}version +API 0\.1\.0 · CLI \d+\.\d+\.\d+\n$/);
@@ -124,4 +132,35 @@ test('matelot doctor: all checks pass, runner offline fails, no credentials skip
     assert.doesNotMatch(e.stdout, /compose\/postgres|compose\/init/);
     return true;
   });
+});
+
+test('matelot doctor: the observability section — scrapes, OTLP export (headers masked), event records, Grafana; export failures fail', async () => {
+  const ok = await serve(true, 'ok', 'ok');
+  try {
+    const env = { ...process.env, MATELOT_URL: `http://127.0.0.1:${ok.port}`, MATELOT_TOKEN: 'spt_test', MATELOT_CREDENTIALS: '/nonexistent' };
+    const { stdout } = await run('node', [cli, 'doctor'], { env });
+    assert.match(stdout, /OK {2}metrics +scraped — last scrape api \d+ s ago, worker \d+ s ago, runners never/);
+    assert.match(stdout, /OK {2}tracing +otlp → http:\/\/otel-collector:4318\/v1\/traces \(headers: Authorization=••••\) · last span \d+ s ago/);
+    assert.match(stdout, /OK {2}events +5 audit · 1 security since start — OTLP log records → http:\/\/otel-collector:4318\/v1\/logs/);
+    assert.match(stdout, /--  grafana +https:\/\/grafana\.example\.com/);
+    assert.doesNotMatch(stdout, /Basic /);
+    const j = JSON.parse((await run('node', [cli, 'doctor', '--json'], { env })).stdout);
+    assert.equal(j.ok, true); assert.equal(j.checks.length, 11);
+    // --test-otlp: a test span + log record through the cell's exporters
+    const t = (await run('node', [cli, 'doctor', '--test-otlp'], { env })).stdout;
+    assert.match(t, /OK {2}otlp-test +test span sent \(trace a{32}; look for "matelot.test"\)/);
+    assert.match(t, /--  otlp-logs +log records: OTLP logs are off/);
+  } finally { ok.close(); }
+  const failing = await serve(true, 'ok', 'failing');
+  try {
+    const env = { ...process.env, MATELOT_URL: `http://127.0.0.1:${failing.port}`, MATELOT_TOKEN: 'spt_test', MATELOT_CREDENTIALS: '/nonexistent' };
+    await assert.rejects(run('node', [cli, 'doctor', '--test-otlp'], { env }), (e: { code: number; stdout: string }) => { assert.equal(e.code, 1); assert.match(e.stdout, /FAIL {2}tracing +otlp → .* · 3 export failure\(s\): connect ECONNREFUSED 10\.0\.0\.9:4318/); assert.match(e.stdout, /FAIL {2}otlp-test +trace export failed: connect ECONNREFUSED/); return true; });
+  } finally { failing.close(); }
+  const forbidden = await serve(true, 'ok', 'forbidden');
+  try {
+    const env = { ...process.env, MATELOT_URL: `http://127.0.0.1:${forbidden.port}`, MATELOT_TOKEN: 'spt_test', MATELOT_CREDENTIALS: '/nonexistent' };
+    const { stdout } = await run('node', [cli, 'doctor'], { env });
+    assert.match(stdout, /--  observability +skipped: cell administrators only/);
+    assert.match(stdout, /all checks passed/);
+  } finally { forbidden.close(); }
 });

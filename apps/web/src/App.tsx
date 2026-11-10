@@ -3,6 +3,7 @@ import { ScrollToTop } from "./components/common/ScrollToTop";
 import AppLayout from "./layout/AppLayout";
 import MinimalLayout from "./layout/MinimalLayout";
 import NotFound from "./pages/OtherPage/NotFound";
+import AdminObservabilityPage from "./pages/admin/observability";
 import AdminUsersPage from "./pages/admin/users";
 import AuditPage from "./pages/audit";
 import UsagePage from "./pages/usage";
@@ -129,6 +130,7 @@ export default function App() {
           <Route path="/usage" element={<UsagePage />} />
           <Route path="/coverage" element={<CoverageIndexPage />} />
           <Route path="/admin/users" element={<AdminUsersPage />} />
+          <Route path="/admin/observability" element={<AdminObservabilityPage />} />
           <Route path="/account/tokens" element={<AccessTokensPage />} />
         </Route>
         {/* OAuth consent: signed in, but outside the app chrome so nothing invites navigating away mid-flow */}

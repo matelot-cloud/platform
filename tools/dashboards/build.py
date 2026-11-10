@@ -19,6 +19,10 @@ DS = {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
 TEMPO = {"type": "tempo", "uid": "${DS_TEMPO}"}
 RATE = "$__rate_interval"
 CELL = 'cell="$cell"'
+# routes that are long-polls or batch uploads by design — the runners' claim (up to 20 s waiting for work) and their
+# log batches — and would dominate any request-latency figure of an idle cell; they get their own panel
+LONG_POLL = 'http_route=~"/api/v1/runner/jobs/claim|/api/v1/runner/jobs/:jobId/logs"'
+NOT_LONG_POLL = 'http_route!~"/api/v1/runner/jobs/claim|/api/v1/runner/jobs/:jobId/logs"'
 
 _ids = iter(range(1, 10_000))
 
@@ -144,11 +148,12 @@ def cell_overview() -> dict:
         stat("Redis", [target(f'min(redis_up{{{CELL}}})')], mappings=UP_DOWN, thresholds=UP_THRESHOLDS, w=3, color_mode="background", description="redis_exporter: observability.metrics.exporters"),
         stat("Registry", [target(f'min(up{{job="matelot-registry", {CELL}}})')], mappings=UP_DOWN, thresholds=UP_THRESHOLDS, w=3, color_mode="background"),
         stat("Runners online", [target(f'sum(matelot_runners_online{{{CELL}}}) or vector(0)')], w=3, thresholds=[{"color": "red", "value": None}, {"color": "green", "value": 1}], description="Runners with a heartbeat in the last 60 s, every pool"),
-        stat("Version", [target(f'matelot_build_info{{component="api", {CELL}}}', "{{version}}")], w=3, text_mode="name", color_mode="none", description="The api image's version (matelot_build_info)"),
+        stat("Version", [target(f'topk(1, max by (version) (timestamp(matelot_build_info{{component="api", {CELL}}})))', "{{version}}")], w=3, text_mode="name", color_mode="none", description="The api image's version (matelot_build_info): the series scraped most recently — an upgrade leaves the old version's series until it is stale"),
         row("Traffic (RED)"),
         timeseries("Requests / s by route", [target(f'topk(12, sum by (http_route) (rate(http_server_request_duration_seconds_count{{{CELL}}}[{RATE}])))', "{{http_route}}")], w=8, unit="reqps", description="The twelve busiest route templates; probes and polls that the sampler drops are still counted here"),
-        timeseries("5xx ratio", [target(f'sum(rate(http_server_request_duration_seconds_count{{http_response_status_code=~"5..", {CELL}}}[{RATE}])) / sum(rate(http_server_request_duration_seconds_count{{{CELL}}}[{RATE}]))', "5xx")], w=8, unit="percentunit", fill=20),
-        timeseries("Latency p50 / p95 / p99", [target(hist_p(0.5, "http_server_request_duration_seconds"), "p50"), target(hist_p(0.95, "http_server_request_duration_seconds"), "p95"), target(hist_p(0.99, "http_server_request_duration_seconds"), "p99")], w=8, unit="s", fill=0),
+        timeseries("5xx ratio", [target(f'(sum(rate(http_server_request_duration_seconds_count{{http_response_status_code=~"5..", {CELL}}}[{RATE}])) or vector(0)) / sum(rate(http_server_request_duration_seconds_count{{{CELL}}}[{RATE}]))', "5xx")], w=8, unit="percentunit", fill=20, description="Zero errors draws zero, not \"No data\" (the 5xx series exists only once an error happened)"),
+        timeseries("Latency p50 / p95 / p99 (without long-polls)", [target(hist_p(0.5, "http_server_request_duration_seconds", selector=f"{NOT_LONG_POLL}, {CELL}"), "p50"), target(hist_p(0.95, "http_server_request_duration_seconds", selector=f"{NOT_LONG_POLL}, {CELL}"), "p95"), target(hist_p(0.99, "http_server_request_duration_seconds", selector=f"{NOT_LONG_POLL}, {CELL}"), "p99")], w=8, unit="s", fill=0, description="Every route except the runners' claim long-poll (up to 20 s waiting for work by design) and their log batches, which sit in the next panel"),
+        timeseries("Runner long-polls: claim wait p50 / p95, log batches p95", [target(hist_p(0.5, "http_server_request_duration_seconds", selector=f'http_route="/api/v1/runner/jobs/claim", {CELL}'), "claim p50"), target(hist_p(0.95, "http_server_request_duration_seconds", selector=f'http_route="/api/v1/runner/jobs/claim", {CELL}'), "claim p95"), target(hist_p(0.95, "http_server_request_duration_seconds", selector=f'http_route="/api/v1/runner/jobs/:jobId/logs", {CELL}'), "logs p95")], w=24, h=6, unit="s", fill=0, description="A claim that waits the full 20 s found no job (normal on an idle cell); a claim that returns fast hands out work. Not part of the latency panel or alerts."),
         row("Queues and runners"),
         timeseries("Pipeline jobs queued by kind", [target(f'sum by (kind) (matelot_pipeline_jobs_queued{{{CELL}}})', "{{kind}}")], w=8, stack=True, description="Jobs waiting for a runner (the jobs table), refreshed by the worker every 15 s"),
         timeseries("Oldest queued job by pool", [target(f'max by (pool) (matelot_pipeline_oldest_queued_job_age_seconds{{{CELL}}})', "{{pool}}")], w=8, unit="s", fill=0, description="MatelotQueueBacklog fires above 10 minutes"),

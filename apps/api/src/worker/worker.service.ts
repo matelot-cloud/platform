@@ -22,6 +22,7 @@ import { jobs } from '../database/schema';
 import { DATABASE, Database } from '../database/database.module';
 import { RiskService } from '../risk/risk.service';
 import { GithubSyncJob, GithubWebhookJob, QUEUES } from '../jobs/queues';
+import { ObservabilityStatusService } from '../telemetry/observability-status.service';
 import { WorkerGauges } from '../telemetry/worker-gauges';
 import { Metrics } from '../telemetry/metrics';
 import { contextFromTraceparent, emitCompletedSpan, inSpan } from '../telemetry/spans';
@@ -64,6 +65,7 @@ export class WorkerService implements OnModuleInit, OnApplicationShutdown {
     @Inject(DATABASE) private readonly db: Database,
     private readonly gauges: WorkerGauges,
     private readonly metrics: Metrics,
+    private readonly observability: ObservabilityStatusService,
   ) {
     this.connection = new IORedis(config.get('REDIS_URL', { infer: true }), { maxRetriesPerRequest: null });
   }
@@ -90,6 +92,7 @@ export class WorkerService implements OnModuleInit, OnApplicationShutdown {
     }
     // the gauges a scrape cannot compute: queue depth, pipeline queue, runners (15 s); open findings with correlation
     this.gauges.attach(this.connection);
+    this.observability.attach(this.connection);
     void this.quiet(() => this.gauges.refresh());
     void this.quiet(() => this.gauges.refreshFindings());
     this.gaugeTick = setInterval(() => void this.quiet(() => this.gauges.refresh()), 15_000);

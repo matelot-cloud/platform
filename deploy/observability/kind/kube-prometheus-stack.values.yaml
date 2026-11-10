@@ -13,6 +13,9 @@ prometheus:
     ruleNamespaceSelector: {}                 # the cells' PrometheusRules too (observability.prometheusRules, label release=<this release>)
     retention: 2d
     resources: { requests: { cpu: 100m, memory: 512Mi } }
+    storageSpec:                              # a PVC: without one, every `make kind-observability` (helm upgrade) wiped the history
+      volumeClaimTemplate:
+        spec: { accessModes: [ReadWriteOnce], resources: { requests: { storage: 2Gi } } }
 # a minimal Alertmanager: without one, kube-prometheus-stack's own PrometheusNotConnectedToAlertmanagers fires forever,
 # and this way the cell's alerts are visible routed (http://localhost:9093 → port-forward, see kind-observability.sh).
 # Nothing is sent anywhere: every route ends in a receiver without integrations. A real cluster puts its pager /
@@ -31,7 +34,7 @@ alertmanager:
       group_interval: 5m
       repeat_interval: 12h
       routes:
-        - matchers: ['alertname = "Watchdog"']        # the stack's always-firing heartbeat
+        - matchers: ['alertname =~ "Watchdog|InfoInhibitor"']   # the stack's always-firing heartbeat and its info-level inhibitor
           receiver: "null"
         - matchers: ['alertname =~ "Matelot.+"']       # the cell's rules (observability.prometheusRules)
           receiver: matelot

@@ -669,7 +669,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "matelot_build_info{component=\"api\", cell=\"$cell\"}",
+          "expr": "topk(1, max by (version) (timestamp(matelot_build_info{component=\"api\", cell=\"$cell\"})))",
           "legendFormat": "{{version}}",
           "refId": "A",
           "range": false,
@@ -715,7 +715,7 @@
         "justifyMode": "center",
         "orientation": "auto"
       },
-      "description": "The api image's version (matelot_build_info)"
+      "description": "The api image's version (matelot_build_info): the series scraped most recently \u2014 an upgrade leaves the old version's series until it is stale"
     },
     {
       "id": 10,
@@ -815,7 +815,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum(rate(http_server_request_duration_seconds_count{http_response_status_code=~\"5..\", cell=\"$cell\"}[$__rate_interval])) / sum(rate(http_server_request_duration_seconds_count{cell=\"$cell\"}[$__rate_interval]))",
+          "expr": "(sum(rate(http_server_request_duration_seconds_count{http_response_status_code=~\"5..\", cell=\"$cell\"}[$__rate_interval])) or vector(0)) / sum(rate(http_server_request_duration_seconds_count{cell=\"$cell\"}[$__rate_interval]))",
           "legendFormat": "5xx",
           "refId": "A",
           "range": true,
@@ -869,12 +869,13 @@
           "mode": "multi",
           "sort": "desc"
         }
-      }
+      },
+      "description": "Zero errors draws zero, not \"No data\" (the 5xx series exists only once an error happened)"
     },
     {
       "id": 13,
       "type": "timeseries",
-      "title": "Latency p50 / p95 / p99",
+      "title": "Latency p50 / p95 / p99 (without long-polls)",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
@@ -885,7 +886,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "histogram_quantile(0.5, sum by (le) (rate(http_server_request_duration_seconds_bucket{cell=\"$cell\"}[$__rate_interval]))) >= 0",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(http_server_request_duration_seconds_bucket{http_route!~\"/api/v1/runner/jobs/claim|/api/v1/runner/jobs/:jobId/logs\", cell=\"$cell\"}[$__rate_interval]))) >= 0",
           "legendFormat": "p50",
           "refId": "A",
           "range": true,
@@ -896,7 +897,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket{cell=\"$cell\"}[$__rate_interval]))) >= 0",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket{http_route!~\"/api/v1/runner/jobs/claim|/api/v1/runner/jobs/:jobId/logs\", cell=\"$cell\"}[$__rate_interval]))) >= 0",
           "legendFormat": "p95",
           "refId": "B",
           "range": true,
@@ -907,7 +908,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(http_server_request_duration_seconds_bucket{cell=\"$cell\"}[$__rate_interval]))) >= 0",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(http_server_request_duration_seconds_bucket{http_route!~\"/api/v1/runner/jobs/claim|/api/v1/runner/jobs/:jobId/logs\", cell=\"$cell\"}[$__rate_interval]))) >= 0",
           "legendFormat": "p99",
           "refId": "C",
           "range": true,
@@ -961,10 +962,104 @@
           "mode": "multi",
           "sort": "desc"
         }
-      }
+      },
+      "description": "Every route except the runners' claim long-poll (up to 20 s waiting for work by design) and their log batches, which sit in the next panel"
     },
     {
       "id": 14,
+      "type": "timeseries",
+      "title": "Runner long-polls: claim wait p50 / p95, log batches p95",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(http_server_request_duration_seconds_bucket{http_route=\"/api/v1/runner/jobs/claim\", cell=\"$cell\"}[$__rate_interval]))) >= 0",
+          "legendFormat": "claim p50",
+          "refId": "A",
+          "range": true,
+          "instant": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket{http_route=\"/api/v1/runner/jobs/claim\", cell=\"$cell\"}[$__rate_interval]))) >= 0",
+          "legendFormat": "claim p95",
+          "refId": "B",
+          "range": true,
+          "instant": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket{http_route=\"/api/v1/runner/jobs/:jobId/logs\", cell=\"$cell\"}[$__rate_interval]))) >= 0",
+          "legendFormat": "logs p95",
+          "refId": "C",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "gridPos": {
+        "w": 24,
+        "h": 6,
+        "x": 0,
+        "y": 14
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisPlacement": "auto"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "description": "A claim that waits the full 20 s found no job (normal on an idle cell); a claim that returns fast hands out work. Not part of the latency panel or alerts."
+    },
+    {
+      "id": 15,
       "type": "row",
       "title": "Queues and runners",
       "collapsed": false,
@@ -972,12 +1067,12 @@
         "w": 24,
         "h": 1,
         "x": 0,
-        "y": 14
+        "y": 20
       },
       "panels": []
     },
     {
-      "id": 15,
+      "id": 16,
       "type": "timeseries",
       "title": "Pipeline jobs queued by kind",
       "datasource": {
@@ -1001,7 +1096,7 @@
         "w": 8,
         "h": 8,
         "x": 0,
-        "y": 15
+        "y": 21
       },
       "fieldConfig": {
         "defaults": {
@@ -1047,7 +1142,7 @@
       "description": "Jobs waiting for a runner (the jobs table), refreshed by the worker every 15 s"
     },
     {
-      "id": 16,
+      "id": 17,
       "type": "timeseries",
       "title": "Oldest queued job by pool",
       "datasource": {
@@ -1071,7 +1166,7 @@
         "w": 8,
         "h": 8,
         "x": 8,
-        "y": 15
+        "y": 21
       },
       "fieldConfig": {
         "defaults": {
@@ -1118,7 +1213,7 @@
       "description": "MatelotQueueBacklog fires above 10 minutes"
     },
     {
-      "id": 17,
+      "id": 18,
       "type": "timeseries",
       "title": "Runners online / busy by pool",
       "datasource": {
@@ -1153,7 +1248,7 @@
         "w": 8,
         "h": 8,
         "x": 16,
-        "y": 15
+        "y": 21
       },
       "fieldConfig": {
         "defaults": {
@@ -1198,7 +1293,7 @@
       }
     },
     {
-      "id": 18,
+      "id": 19,
       "type": "timeseries",
       "title": "BullMQ jobs by queue and state",
       "datasource": {
@@ -1222,7 +1317,7 @@
         "w": 12,
         "h": 8,
         "x": 0,
-        "y": 23
+        "y": 29
       },
       "fieldConfig": {
         "defaults": {
@@ -1268,7 +1363,7 @@
       "description": "The worker's own queues (source sync, webhooks)"
     },
     {
-      "id": 19,
+      "id": 20,
       "type": "timeseries",
       "title": "Oldest BullMQ job",
       "datasource": {
@@ -1292,7 +1387,7 @@
         "w": 12,
         "h": 8,
         "x": 12,
-        "y": 23
+        "y": 29
       },
       "fieldConfig": {
         "defaults": {
@@ -1338,7 +1433,7 @@
       }
     },
     {
-      "id": 20,
+      "id": 21,
       "type": "row",
       "title": "Pipelines",
       "collapsed": false,
@@ -1346,12 +1441,12 @@
         "w": 24,
         "h": 1,
         "x": 0,
-        "y": 31
+        "y": 37
       },
       "panels": []
     },
     {
-      "id": 21,
+      "id": 22,
       "type": "timeseries",
       "title": "Pipelines finished per hour by status",
       "datasource": {
@@ -1375,7 +1470,7 @@
         "w": 12,
         "h": 8,
         "x": 0,
-        "y": 32
+        "y": 38
       },
       "fieldConfig": {
         "defaults": {
@@ -1420,7 +1515,7 @@
       }
     },
     {
-      "id": 22,
+      "id": 23,
       "type": "stat",
       "title": "Success rate (24 h)",
       "datasource": {
@@ -1444,7 +1539,7 @@
         "w": 6,
         "h": 8,
         "x": 12,
-        "y": 32
+        "y": 38
       },
       "fieldConfig": {
         "defaults": {
@@ -1491,7 +1586,7 @@
       }
     },
     {
-      "id": 23,
+      "id": 24,
       "type": "stat",
       "title": "Jobs finished (24 h)",
       "datasource": {
@@ -1515,7 +1610,7 @@
         "w": 6,
         "h": 8,
         "x": 18,
-        "y": 32
+        "y": 38
       },
       "fieldConfig": {
         "defaults": {
@@ -1553,7 +1648,7 @@
       }
     },
     {
-      "id": 24,
+      "id": 25,
       "type": "row",
       "title": "Database and cache",
       "collapsed": false,
@@ -1561,12 +1656,12 @@
         "w": 24,
         "h": 1,
         "x": 0,
-        "y": 40
+        "y": 46
       },
       "panels": []
     },
     {
-      "id": 25,
+      "id": 26,
       "type": "timeseries",
       "title": "Postgres pool connections (api + worker)",
       "datasource": {
@@ -1590,7 +1685,7 @@
         "w": 8,
         "h": 8,
         "x": 0,
-        "y": 41
+        "y": 47
       },
       "fieldConfig": {
         "defaults": {
@@ -1636,7 +1731,7 @@
       "description": "Each process has a pool of 10; MatelotDbConnectionsHigh fires above 8 in use or any caller waiting"
     },
     {
-      "id": 26,
+      "id": 27,
       "type": "timeseries",
       "title": "Query latency p95",
       "datasource": {
@@ -1660,7 +1755,7 @@
         "w": 8,
         "h": 8,
         "x": 8,
-        "y": 41
+        "y": 47
       },
       "fieldConfig": {
         "defaults": {
@@ -1707,7 +1802,7 @@
       "description": "The pg instrumentation's histogram: present while tracing is on"
     },
     {
-      "id": 27,
+      "id": 28,
       "type": "timeseries",
       "title": "Postgres transactions / s",
       "datasource": {
@@ -1731,7 +1826,7 @@
         "w": 8,
         "h": 8,
         "x": 16,
-        "y": 41
+        "y": 47
       },
       "fieldConfig": {
         "defaults": {
@@ -1777,7 +1872,7 @@
       }
     },
     {
-      "id": 28,
+      "id": 29,
       "type": "timeseries",
       "title": "Database size",
       "datasource": {
@@ -1801,7 +1896,7 @@
         "w": 8,
         "h": 8,
         "x": 0,
-        "y": 49
+        "y": 55
       },
       "fieldConfig": {
         "defaults": {
@@ -1847,7 +1942,7 @@
       }
     },
     {
-      "id": 29,
+      "id": 30,
       "type": "timeseries",
       "title": "Redis commands / s",
       "datasource": {
@@ -1871,7 +1966,7 @@
         "w": 8,
         "h": 8,
         "x": 8,
-        "y": 49
+        "y": 55
       },
       "fieldConfig": {
         "defaults": {
@@ -1917,7 +2012,7 @@
       }
     },
     {
-      "id": 30,
+      "id": 31,
       "type": "timeseries",
       "title": "Redis memory",
       "datasource": {
@@ -1952,7 +2047,7 @@
         "w": 8,
         "h": 8,
         "x": 16,
-        "y": 49
+        "y": 55
       },
       "fieldConfig": {
         "defaults": {
@@ -1998,7 +2093,7 @@
       }
     },
     {
-      "id": 31,
+      "id": 32,
       "type": "row",
       "title": "Backups, storage and certificates",
       "collapsed": false,
@@ -2006,12 +2101,12 @@
         "w": 24,
         "h": 1,
         "x": 0,
-        "y": 57
+        "y": 63
       },
       "panels": []
     },
     {
-      "id": 32,
+      "id": 33,
       "type": "stat",
       "title": "Last successful backup",
       "datasource": {
@@ -2035,7 +2130,7 @@
         "w": 6,
         "h": 4,
         "x": 0,
-        "y": 58
+        "y": 64
       },
       "fieldConfig": {
         "defaults": {
@@ -2083,7 +2178,7 @@
       "description": "Age; MatelotBackupTooOld fires at 36 h"
     },
     {
-      "id": 33,
+      "id": 34,
       "type": "stat",
       "title": "Last backup duration",
       "datasource": {
@@ -2107,7 +2202,7 @@
         "w": 6,
         "h": 4,
         "x": 6,
-        "y": 58
+        "y": 64
       },
       "fieldConfig": {
         "defaults": {
@@ -2146,7 +2241,7 @@
       }
     },
     {
-      "id": 34,
+      "id": 35,
       "type": "stat",
       "title": "Last failed backup",
       "datasource": {
@@ -2170,7 +2265,7 @@
         "w": 6,
         "h": 4,
         "x": 12,
-        "y": 58
+        "y": 64
       },
       "fieldConfig": {
         "defaults": {
@@ -2214,7 +2309,7 @@
       "description": "Age of the last failure (green once a week has passed); the reason is in the API's backup reports"
     },
     {
-      "id": 35,
+      "id": 36,
       "type": "stat",
       "title": "Backup reports",
       "datasource": {
@@ -2238,7 +2333,7 @@
         "w": 6,
         "h": 4,
         "x": 18,
-        "y": 58
+        "y": 64
       },
       "fieldConfig": {
         "defaults": {
@@ -2291,7 +2386,7 @@
       "description": "0 until the first run reports (backups off, or the job never ran)"
     },
     {
-      "id": 36,
+      "id": 37,
       "type": "timeseries",
       "title": "Volume usage (Kubernetes: kubelet volume stats)",
       "datasource": {
@@ -2315,7 +2410,7 @@
         "w": 12,
         "h": 8,
         "x": 0,
-        "y": 62
+        "y": 68
       },
       "fieldConfig": {
         "defaults": {
@@ -2362,7 +2457,7 @@
       "description": "Postgres, registry and backups PVCs; MatelotDiskAlmostFull fires under 10 % free. Empty on Compose."
     },
     {
-      "id": 37,
+      "id": 38,
       "type": "timeseries",
       "title": "Certificate expiry (Kubernetes: cert-manager)",
       "datasource": {
@@ -2386,7 +2481,7 @@
         "w": 12,
         "h": 8,
         "x": 12,
-        "y": 62
+        "y": 68
       },
       "fieldConfig": {
         "defaults": {

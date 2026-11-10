@@ -227,6 +227,8 @@ observability:
     tracesSamplerArg: ""
     getRatio: 0.1                 # share of a client's own GET requests recorded as traces (background polls never, mutations always)
     metrics: false                   # also push the metrics over OTLP (OTEL_METRICS_EXPORTER=prometheus,otlp)
+    logs: false                      # the audit / security events as OTel log records over OTLP too (OTEL_LOGS_EXPORTER=otlp; docs/observability.md
+                                     # "Audit and security events") — off, they are stdout lines the log shipper carries
   # the alert rules (deploy/observability/rules, copied into files/observability/rules) as a PrometheusRule the
   # operator loads — needs the prometheus-operator CRDs, like the ServiceMonitor
   prometheusRules:
@@ -235,6 +237,8 @@ observability:
     kubernetes: true                 # also the rules that need kube-state-metrics / kubelet / cert-manager metrics (matelot-kubernetes.yaml)
     runbookBaseUrl: https://matelot.cloud/docs/latest/observability.html   # every alert's runbook_url points into it (#alert-<name>)
   grafana:
+    url: ""                         # where the cell's Grafana is (e.g. https://grafana.example.com) — the "Open Grafana" link on Settings →
+                                     # Observability and in `matelot doctor`; the cell never proxies it
     dashboards:
       enabled: false                 # one ConfigMap per dashboard for Grafana's sidecar (kube-prometheus-stack: label grafana_dashboard=1)
       label: grafana_dashboard

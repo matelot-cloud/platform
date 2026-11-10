@@ -1,4 +1,4 @@
-import { BoltIcon, BoxCubeIcon, CheckCircleIcon, DataBaseIcon, DocsIcon, FolderIcon, GridIcon, GroupIcon, ListIcon, LockIcon, MultiUserIcon, PieChartIcon, PlugInIcon, SettingsAltIcon, ShootingStarIcon, TaskIcon, UserCircleIcon } from "@/icons";
+import { BoltIcon, BoxCubeIcon, CheckCircleIcon, DataBaseIcon, DocsIcon, EyeIcon, FolderIcon, GridIcon, GroupIcon, ListIcon, LockIcon, MultiUserIcon, PieChartIcon, PlugInIcon, SettingsAltIcon, ShootingStarIcon, TaskIcon, UserCircleIcon } from "@/icons";
 import { useMe, useMeta, useProjects, useServices, useTeams, useWorkspaces } from "@/platform/api/hooks";
 import type { Organization, ProjectRow, Service, TeamRow, Workspace } from "@/platform/api/types";
 import { docsUrl, useRuntimeConfig } from "@/platform/runtime-config";
@@ -41,7 +41,7 @@ export function organizationGroups(isAdmin: boolean, docs: string): NavGroup[] {
         { name: "Documentation", icon: <DocsIcon fontSize={24} />, path: docs, external: true }, // the public site (config.json docsUrl)
       ],
     },
-    ...(isAdmin ? [{ title: "Administration", items: [{ name: "Users", icon: <UserCircleIcon fontSize={24} />, path: "/admin/users" }] }] : []),
+    ...(isAdmin ? [{ title: "Administration", items: [{ name: "Users", icon: <UserCircleIcon fontSize={24} />, path: "/admin/users" }, { name: "Observability", icon: <EyeIcon fontSize={24} />, path: "/admin/observability" }] }] : []),
   ];
 }
 

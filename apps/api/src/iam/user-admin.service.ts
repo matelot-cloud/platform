@@ -50,6 +50,11 @@ export class UserAdminService {
     return row?.id ?? null;
   }
 
+  /** Cell administrators only (the observability settings show where the cell's signals go). */
+  assertCellAdmin(actor: AuthenticatedUser): void {
+    if (actor.platformRole !== 'admin') throw new ForbiddenException('Observability settings are for cell administrators');
+  }
+
   async assertUserAdmin(actor: AuthenticatedUser): Promise<{ platformAdmin: boolean; organizationId: string | null }> {
     const organizationId = await this.rootOrganizationId();
     if (actor.platformRole === 'admin') return { platformAdmin: true, organizationId };

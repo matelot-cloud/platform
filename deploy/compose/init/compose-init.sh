@@ -280,7 +280,12 @@ if [ -n "${MATELOT_OTLP_ENDPOINT:-}" ]; then
   kv "$E" OTEL_TRACES_SAMPLER "${MATELOT_TRACES_SAMPLER:-parentbased_always_on}"
   kv "$E" MATELOT_TRACES_GET_RATIO "${MATELOT_TRACES_GET_RATIO:-0.1}"
   [ "${MATELOT_OTLP_METRICS:-0}" = 1 ] && kv "$E" OTEL_METRICS_EXPORTER "prometheus,otlp"
+  # the audit / security events as OTLP log records too (with the profile they reach Loki through Alloy already)
+  [ "${MATELOT_OTLP_LOGS:-0}" = 1 ] && kv "$E" OTEL_LOGS_EXPORTER otlp
 fi
+# Settings → Observability and `matelot doctor` link to Grafana: the profile's own at /grafana, or the customer's
+GRAFANA_URL="${MATELOT_GRAFANA_URL:-}"; [ "$OBS" = 1 ] && [ -z "$GRAFANA_URL" ] && GRAFANA_URL="$BASE_URL/grafana"
+[ -n "$GRAFANA_URL" ] && kv "$E" MATELOT_GRAFANA_URL "$GRAFANA_URL"
 kv "$E" MATELOT_LICENSE "${MATELOT_LICENSE:-}"
 # the runner's environment (sourced by its command): metrics port, cell, and the same OTLP settings as the api
 R="$M/env/runner.env"; : > "$R"

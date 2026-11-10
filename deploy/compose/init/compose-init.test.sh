@@ -29,6 +29,8 @@ check_env "$M/env/api.env" KEYCLOAK_ADMIN_URL "http://keycloak:8080/auth"
 check_env "$M/env/api.env" MATELOT_METRICS_ENABLED true
 check_env "$M/env/api.env" MATELOT_METRICS_PORT 9464
 check_env "$M/env/api.env" OTEL_EXPORTER_OTLP_ENDPOINT ""
+check_env "$M/env/api.env" OTEL_LOGS_EXPORTER ""
+check_env "$M/env/api.env" MATELOT_GRAFANA_URL ""
 grep -q 'node -r ./dist/telemetry/tracing.js dist/main.js' ../compose.yaml && grep -q 'node -r ./dist/telemetry/tracing.js dist/worker.js' ../compose.yaml || { echo "FAIL: api / worker must start through the tracing preload" >&2; exit 1; }
 check_env "$M/env/cell.env" ADMIN_EMAIL "$EMAIL"
 check_env "$M/keycloak/keycloak.env" KC_DB_PASSWORD "$(cat "$M/secrets/postgres/POSTGRES_PASSWORD")"
@@ -60,11 +62,13 @@ grep -q 'test -f /opt/keycloak/themes/matelot/login/theme.properties' ../compose
 grep -q -- '--matelot-logo' "$M/keycloak/theme/matelot/login/resources/css/cell.css" && { echo "FAIL: cell.css should carry no logo without MATELOT_THEME_LOGO" >&2; exit 1; }
 # secrets are generated once: a second run with a new domain keeps them and rewrites the derived files
 cp "$M/secrets/cell-key/CELL_ENCRYPTION_KEY" "$T/key1"; cp "$M/secrets/postgres/POSTGRES_PASSWORD" "$T/pg1"
-MATELOT_ORG_NAME="$NAME" MATELOT_DOMAIN=matelot.example.com MATELOT_ACME_EMAIL="$EMAIL" MATELOT_THEME_LOGO='https://cdn.example.com/logo.png' MATELOT_THEME_PRIMARY_COLOR='#0f766e' MATELOT_OTLP_ENDPOINT=http://jaeger:4318 MATELOT_OTLP_HEADERS='Authorization=Basic abc' MATELOT_OTLP_METRICS=1 bash compose-init.sh > "$T/out2" 2>&1 || { cat "$T/out2"; exit 1; }
+MATELOT_ORG_NAME="$NAME" MATELOT_DOMAIN=matelot.example.com MATELOT_ACME_EMAIL="$EMAIL" MATELOT_THEME_LOGO='https://cdn.example.com/logo.png' MATELOT_THEME_PRIMARY_COLOR='#0f766e' MATELOT_OTLP_ENDPOINT=http://jaeger:4318 MATELOT_OTLP_HEADERS='Authorization=Basic abc' MATELOT_OTLP_METRICS=1 MATELOT_OTLP_LOGS=1 MATELOT_GRAFANA_URL=https://grafana.example.com bash compose-init.sh > "$T/out2" 2>&1 || { cat "$T/out2"; exit 1; }
 check_env "$M/env/api.env" OTEL_EXPORTER_OTLP_ENDPOINT "http://jaeger:4318"
 check_env "$M/env/api.env" OTEL_EXPORTER_OTLP_PROTOCOL "http/protobuf"
 check_env "$M/env/api.env" OTEL_EXPORTER_OTLP_HEADERS "Authorization=Basic abc"
 check_env "$M/env/api.env" OTEL_METRICS_EXPORTER "prometheus,otlp"
+check_env "$M/env/api.env" OTEL_LOGS_EXPORTER "otlp"
+check_env "$M/env/api.env" MATELOT_GRAFANA_URL "https://grafana.example.com"
 grep -q -- '--matelot-logo: url("https://cdn.example.com/logo.png");' "$M/keycloak/theme/matelot/login/resources/css/cell.css" || { echo "FAIL: cell.css logo override" >&2; exit 1; }
 grep -q -- '--matelot-primary: #0f766e;' "$M/keycloak/theme/matelot/login/resources/css/cell.css" || { echo "FAIL: cell.css colour override" >&2; exit 1; }
 grep -q -- '--matelot-primary-hover: #0f766e;' "$M/keycloak/theme/matelot/login/resources/css/cell.css" || { echo "FAIL: hover defaults to the primary colour" >&2; exit 1; }
@@ -96,6 +100,8 @@ grep -q "handle /grafana\* {" "$M/caddy/Caddyfile" && grep -q "reverse_proxy gra
 check_env "$M/keycloak/keycloak.env" KC_METRICS_ENABLED true
 check_env "$M/env/api.env" OTEL_EXPORTER_OTLP_ENDPOINT "http://otel-collector:4318"
 check_env "$M/env/runner.env" OTEL_EXPORTER_OTLP_ENDPOINT "http://otel-collector:4318"
+check_env "$M/env/api.env" MATELOT_GRAFANA_URL "https://matelot.example.com/grafana"   # the profile's Grafana, for Settings → Observability
+check_env "$M/env/api.env" OTEL_LOGS_EXPORTER ""                                      # events reach Loki through Alloy; OTLP logs are opt-in
 check_env "$M/env/runner.env" MATELOT_CELL acme
 check_env "$M/env/grafana.env" GF_SERVER_ROOT_URL "https://matelot.example.com/grafana/"
 check_env "$M/env/grafana.env" GF_PLUGINS_PREINSTALL_DISABLED true

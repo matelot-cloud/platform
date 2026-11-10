@@ -3,6 +3,7 @@ import { and, desc, eq, lt } from 'drizzle-orm';
 import { currentRequestContext } from '../common/request-context';
 import { DATABASE, Database } from '../database/database.module';
 import { auditEvents } from '../database/schema';
+import { getEvents } from '../telemetry/events';
 import { AuditEntry } from './audit.types';
 
 @Injectable()
@@ -25,6 +26,8 @@ export class AuditService {
       requestId: ctx?.requestId ?? null,
       ipAddress: ctx?.ip ?? null,
     });
+    // the same entry as a `matelot.audit` event (stdout line + OTel log record) for the customer's SIEM
+    getEvents().audit(entry);
   }
 
   listForOrganization(organizationId: string, limit = 50, before?: Date) {

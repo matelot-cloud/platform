@@ -25,7 +25,7 @@ const DATABASE_URL = process.env.DATABASE_URL ?? process.env.TEST_DATABASE_URL ?
 const REDIS_URL = process.env.REDIS_URL ?? 'redis://localhost:6379';
 const MANAGED_SECRET = 'span-budget-managed-secret-0123456789abcdef';
 const T = mkdtempSync(join(tmpdir(), 'span-budget-'));
-const files = { api: join(T, 'api.jsonl'), worker: join(T, 'worker.jsonl') };
+const files = { api: join(T, 'api.jsonl'), worker: join(T, 'worker.jsonl'), events: join(T, 'events.jsonl') };
 const children = [];
 const log = (m) => process.stdout.write(`${m}\n`);
 
@@ -74,7 +74,7 @@ try {
     MATELOT_TRACES_GET_RATIO: '1',   // every GET of the test is a root (the default keeps one in ten) — so a poll that slipped through would show
   };
   execFileSync(process.execPath, ['dist/migrate.js'], { cwd: API_DIR, env: { ...process.env, ...env }, stdio: 'pipe' });
-  start('api', ['-r', './dist/telemetry/tracing.js', 'dist/main.js'], { ...env, MATELOT_COMPONENT: 'api', OTEL_TRACES_FILE: files.api });
+  start('api', ['-r', './dist/telemetry/tracing.js', 'dist/main.js'], { ...env, MATELOT_COMPONENT: 'api', OTEL_TRACES_FILE: files.api, OTEL_LOGS_EXPORTER: 'file', OTEL_LOGS_FILE: files.events });
   start('worker', ['-r', './dist/telemetry/tracing.js', 'dist/worker.js'], { ...env, MATELOT_COMPONENT: 'worker', OTEL_TRACES_FILE: files.worker });
   await waitFor(() => fetch(`${base}/health/ready`).then((r) => r.ok), 'api ready', 90000);
   token = execFileSync(process.execPath, ['test/fake-idp.js', 'token', 'admin@acme.local'], { cwd: API_DIR, env: { ...process.env, FAKE_IDP_PORT: String(IDP_PORT) }, encoding: 'utf8' }).trim().split('\n').pop();
@@ -149,6 +149,10 @@ try {
     for (let i = 0; i < WEB_POLLS; i++) await api(route, undefined, token, { 'x-matelot-poll': '1' }).catch(() => undefined);
   }
 
+  // the audit / security events as OTel log records (OTEL_LOGS_EXPORTER=file): a refused request of each kind
+  await fetch(`${base}/organizations`, { headers: { authorization: 'Bearer not-a-token' } });                       // 401 → auth.failed
+  await fetch(`${base}/organizations/${orgId}/api-tokens`, { headers: { authorization: `Bearer ${execFileSync(process.execPath, ['test/fake-idp.js', 'token', 'nobody@acme.local'], { cwd: API_DIR, env: { ...process.env, FAKE_IDP_PORT: String(IDP_PORT) }, encoding: 'utf8' }).trim().split('\n').pop()}` } }).catch(() => undefined);   // 403 → access.denied
+
   // 4. flush (SIGTERM → the 5 s-capped shutdown flush) and count
   for (const c of children.slice(1)) await stop(c);
   const spans = [files.api, files.worker].filter(existsSync).flatMap((f) => readFileSync(f, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)));
@@ -177,6 +181,13 @@ try {
     const claim = trace.filter((x) => x.name === 'claim' && x.attributes['matelot.job.kind'] === kind);
     if (claim.length !== 1) problems.push(`job ${kind}: ${claim.length} claim span(s) in the pipeline trace, expected 1`);
     else if (claim[0].parentSpanId !== jobSpan.spanId) problems.push(`job ${kind}: the claim span is not under the job span`);
+  }
+  // the pipeline's own spans carry only matelot.* attributes: no http.* / url.* of the request that happened to
+  // finish them. (Grafana's trace header still shows "POST 201 · Route …/start" for the trace: its findHeaderTags
+  // takes the FIRST span in the trace with an http.request.method / http.route tag, whichever that is.)
+  for (const x of trace.filter((s) => s.service === 'matelot-pipeline')) {
+    const foreign = Object.keys(x.attributes).filter((k) => !k.startsWith('matelot.'));
+    if (foreign.length) problems.push(`${x.name}: non-matelot attributes on a pipeline span: ${foreign.join(', ')}`);
   }
   // a span never starts before its parent nor ends after it (within the clock skew of two processes): the claim span
   // once began at the runner's long-poll, seconds before the job it belongs to existed, and stuck out of the pipeline
@@ -217,7 +228,18 @@ try {
   const redis = trace.filter((x) => x.scope === '@opentelemetry/instrumentation-ioredis');
   if (redis.some((x) => x.durationMs < 5)) problems.push(`${redis.filter((x) => x.durationMs < 5).length} sub-5 ms Redis span(s) survived the trimming`);
   if (trace.some((x) => x.name === 'pg-pool.connect')) problems.push('pg-pool.connect spans survived the trimming');
-  if (problems.length) { console.error(`\nspan budget FAILED:\n  ${problems.join('\n  ')}`); process.exitCode = 1; }
+  // the event records: every audit entry of the run and the two refusals, with the pinned attribute names, no secret
+  const events = existsSync(files.events) ? readFileSync(files.events, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [];
+  const audits = events.filter((e) => e.attributes['event.name'] === 'matelot.audit');
+  const security = events.filter((e) => e.attributes['event.name'] === 'matelot.security');
+  log(`\n${events.length} event records: ${audits.length} audit (${[...new Set(audits.map((e) => e.attributes['matelot.audit.action']))].slice(0, 8).join(', ')}…), ${security.length} security (${[...new Set(security.map((e) => e.attributes['matelot.security.kind']))].join(', ')})`);
+  if (!audits.some((e) => e.attributes['matelot.audit.action'] === 'pipeline.created' || e.attributes['matelot.audit.resource.type'] === 'pipeline')) problems.push('no matelot.audit record for the pipeline creation');
+  if (!security.some((e) => e.attributes['matelot.security.kind'] === 'auth.failed' && e.attributes['http.response.status_code'] === 401)) problems.push('no matelot.security auth.failed record for the 401');
+  if (!security.some((e) => e.attributes['matelot.security.kind'] === 'access.denied' && e.attributes['http.response.status_code'] === 403)) problems.push('no matelot.security access.denied record for the 403');
+  if (security.some((e) => !e.attributes['http.route'] && !e.attributes['http.request.method'])) problems.push('a security record without http.route / http.request.method');
+  if (events.some((e) => e.resource['service.name'] !== 'matelot-api' || e.scope !== 'matelot.events')) problems.push('an event record outside service matelot-api / scope matelot.events');
+  if (events.some((e) => JSON.stringify(e).includes(token))) problems.push('an event record carries the bearer token');
+    if (problems.length) { console.error(`\nspan budget FAILED:\n  ${problems.join('\n  ')}`); process.exitCode = 1; }
   else log(`\nspan budget ok: ${trace.length} ≤ ${BUDGET}; root "${root.name}" under ${root.service}; ${jobSpans.length} job spans; no /logs, claim-poll or --wait-poll spans; every span inside its parent; a web session's polls add 0 roots; ${spans.filter((x) => !x.parentSpanId).length} root spans, all requests / worker loops / the pipeline`);
 } finally {
   for (const c of children) await stop(c);

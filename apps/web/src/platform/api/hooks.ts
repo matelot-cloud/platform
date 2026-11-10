@@ -26,6 +26,8 @@ import type {
   Onboarding,
   UsageReport,
   AdminUser,
+  ObservabilityStatus,
+  TestOtlpResult,
   ApiToken,
   AuditEvent,
   ComponentHit,
@@ -261,6 +263,21 @@ export function useAdminUsers(enabled: boolean) {
   const api = useApi();
   const refetchInterval = useRefetchInterval();
   return useQuery({ queryKey: ['admin', 'users'], queryFn: () => api<AdminUser[]>('/admin/users'), enabled, retry, refetchInterval });
+}
+
+export function useObservabilityStatus(enabled: boolean) {
+  const api = useApi();
+  const refetchInterval = useRefetchInterval();
+  return useQuery({ queryKey: ['admin', 'observability'], queryFn: () => api<ObservabilityStatus>('/admin/observability'), enabled, retry, refetchInterval });
+}
+
+export function useTestOtlp() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api<TestOtlpResult>('/admin/observability/test-otlp', { method: 'POST' }),
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ['admin', 'observability'] }); },
+  });
 }
 
 export function useUpdateAdminUser() {

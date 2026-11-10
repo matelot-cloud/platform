@@ -27,7 +27,8 @@ Environment: MATELOT_URL + MATELOT_KEY_ID, MATELOT_SECRET (CI token)  or  MATELO
 
 Commands
   whoami                                                 identity and permissions of the token
-  doctor   [--url URL]                                   health of a cell: API, version, login, organization, runners, registry (exit 1 when something is wrong)
+  doctor   [--url URL] [--test-otlp]                     health of a cell: API, version, login, organization, runners, registry, observability (exit 1 when something is wrong);
+                                                         --test-otlp also sends a test span + log record over OTLP and reports whether the export worked
   login    --url URL [--scope read|write|sudo] [--no-browser]   sign in through the browser (OAuth; prints the link when no browser can be opened); logout revokes it
   cells                                                  stored logins (URL, user, scope, expiry) with the current one marked; use <URL> makes one current
   use      <URL>                                         target that stored login from now on (--url and MATELOT_URL still win per command)
@@ -121,7 +122,7 @@ async function main() {
     out({ url: creds.url, requestedScope: scope, scope: creds.scope, narrowed, expiresAt: creds.expiresAt, refreshToken: !!creds.refreshToken, user: me?.user.email ?? null }, `logged in to ${creds.url}${me ? ` as ${me.user.email}` : ''} (scope ${creds.scope}${narrowed ? `, requested ${scope}` : ''}, expires ${creds.expiresAt}); stored in ${credentialsPath()}`);
     return;
   }
-  if (command === 'doctor') { await doctor(str(flags.url), !!flags.json); return; }
+  if (command === 'doctor') { await doctor(str(flags.url), !!flags.json, !!flags['test-otlp']); return; }
   // a one-time setup link needs no login: the cell comes from the link itself (or MATELOT_URL)
   if (command === 'invite') {
     const link = str(flags.link) ?? '';
@@ -666,10 +667,18 @@ function onboardingText(r: OnboardingReport, verb: string): string {
   return lines.join('\n');
 }
 
+interface ObservabilityStatus {
+  metrics: { enabled: boolean; port: number; lastScrapeAt: string | null };
+  tracing: { enabled: boolean; exporter: string | null; endpoint: string | null; headers: string[]; lastSpanAt: string | null; exportFailures: number; lastExportError: string | null };
+  logs: { enabled: boolean; endpoint: string | null; emitted: { audit: number; security: number } };
+  grafana: { url: string } | null;
+  components: { api: { metricsScrapedAt: string | null } | null; worker: { metricsScrapedAt: string | null } | null; runners: { online: number; metricsScrapedAt: string | null } };
+}
+
 /** `matelot doctor`: what an operator checks after `docker compose up -d` / `helm install` — unauthenticated probes
  * first (reachability, readiness, version), then everything the credentials allow (login, organization, runners,
  * registry). Prints one line per check; exit 1 when a check fails. */
-async function doctor(urlFlag: string | undefined, json: boolean): Promise<void> {
+async function doctor(urlFlag: string | undefined, json: boolean, testOtlp = false): Promise<void> {
   const url = resolveCellUrl(urlFlag) ?? '';
   if (!url) throw new CliError('usage: matelot doctor --url https://matelot.example (or MATELOT_URL, or a stored login: matelot cells)');
   const checks: { name: string; ok: boolean | null; detail: string }[] = [];
@@ -730,6 +739,30 @@ async function doctor(urlFlag: string | undefined, json: boolean): Promise<void>
     const info = await request<{ available: boolean; host: string | null }>(config, 'GET', '/api/v1/registry/info');
     add('registry', info.available, info.available ? `${info.host} (matelot registry login)` : 'built-in registry not configured');
   } catch (e) { add('registry', false, (e as Error).message); }
+  // 6. observability (cell administrators): are the metrics scraped, do the traces and event records leave the cell
+  //    (docs/observability.md "Checking a cell") — nothing configured is reported, not failed; a configured export
+  //    that fails is
+  try {
+    const o = await request<ObservabilityStatus>(config, 'GET', '/api/v1/admin/observability');
+    const ago = (iso: string | null) => (iso ? `${Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000))} s ago` : 'never');
+    const fresh = (iso: string | null) => !!iso && Date.now() - new Date(iso).getTime() < 5 * 60_000;
+    const scrapes = [['api', o.components.api?.metricsScrapedAt ?? null], ['worker', o.components.worker?.metricsScrapedAt ?? null], ['runners', o.components.runners.metricsScrapedAt]] as const;
+    const anyScrape = scrapes.some(([, at]) => fresh(at));
+    add('metrics', o.metrics.enabled ? (anyScrape ? true : null) : null, !o.metrics.enabled ? 'off (MATELOT_METRICS_ENABLED=false)' : `${anyScrape ? 'scraped' : 'nothing is scraping'} — last scrape ${scrapes.map(([c, at]) => `${c} ${ago(at)}`).join(', ')}${!o.components.worker ? ' (worker not reporting)' : ''}`);
+    add('tracing', !o.tracing.enabled ? null : o.tracing.exportFailures ? false : true, !o.tracing.enabled ? 'off — set observability.otlp.endpoint (Helm) / MATELOT_OTLP_ENDPOINT (Compose) to export traces' : `${o.tracing.exporter} → ${o.tracing.endpoint ?? '?'}${o.tracing.headers.length ? ` (headers: ${o.tracing.headers.join(', ')})` : ''} · last span ${ago(o.tracing.lastSpanAt)}${o.tracing.exportFailures ? ` · ${o.tracing.exportFailures} export failure(s): ${o.tracing.lastExportError ?? ''}` : ''}`);
+    add('events', true, `${o.logs.emitted.audit} audit · ${o.logs.emitted.security} security since start — ${o.logs.enabled ? `OTLP log records → ${o.logs.endpoint ?? '?'}` : 'stdout lines only (OTEL_LOGS_EXPORTER unset)'}`);
+    add('grafana', null, o.grafana ? o.grafana.url : 'not linked — observability.grafana.url (Helm) / MATELOT_GRAFANA_URL (Compose)');
+    if (testOtlp) {
+      const t = await request<{ traceId: string | null; traces: { attempted: boolean; ok: boolean; error: string | null }; logs: { attempted: boolean; ok: boolean; error: string | null } }>(config, 'POST', '/api/v1/admin/observability/test-otlp');
+      add('otlp-test', t.traces.attempted ? t.traces.ok : null, t.traces.attempted ? (t.traces.ok ? `test span sent (trace ${t.traceId}; look for "matelot.test")` : `trace export failed: ${t.traces.error}`) : `traces: ${t.traces.error}`);
+      add('otlp-logs', t.logs.attempted ? t.logs.ok : null, t.logs.attempted ? (t.logs.ok ? 'test log record sent (event.name = matelot.test)' : `log export failed: ${t.logs.error}`) : `log records: ${t.logs.error}`);
+    }
+  } catch (e) {
+    const status = (e as { status?: number }).status;
+    if (status === 403) add('observability', null, 'skipped: cell administrators only');
+    else if (status === 404) add('observability', null, 'skipped: API older than this CLI (no /admin/observability)');
+    else add('observability', false, (e as Error).message);
+  }
   return finish();
   function composeDiagnosis(): void {
     const dir = process.env.MATELOT_COMPOSE_DIR ?? process.cwd();

@@ -159,6 +159,12 @@ mirror this layout exactly — nothing at the root that is not in the repository
   from the first scrape; a GET a client polls on its own sends `x-matelot-poll: 1` (web: a `refetchInterval` query is
   marked by hooks.ts; CLI: `poll: true`). The cell's image tag lives in `deploy/cells/<slug>.values.yaml` — `apply --tag`
   writes it; never `--set` it by hand.
+  Events (drop 4): an audit entry is also a `matelot.audit` record and a refusal a `matelot.security` record
+  (`telemetry/events.ts`, emitted by `AuditService.record`, the exception filter and the policy gate); the attribute
+  names are a documented contract pinned by `events.spec.ts` — add an attribute to the list *and* the docs table,
+  never rename one; a 403 the filter must not report as `access.denied` carries `code: gate_rejected`. A new
+  observability fact for Administration → Observability / `doctor` goes into `ObservabilityStatusService.own()` (the
+  Redis heartbeat) or, for runners, their heartbeat `metadata`. `OTEL_LOGS_EXPORTER` is independent of tracing.
 
 ## v1 focus (read first)
 

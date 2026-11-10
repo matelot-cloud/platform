@@ -24,6 +24,12 @@ data:
   {{- if $.Values.observability.otlp.metrics }}
   OTEL_METRICS_EXPORTER: "prometheus,otlp"
   {{- end }}
+  {{- if $.Values.observability.otlp.logs }}
+  OTEL_LOGS_EXPORTER: "otlp"
+  {{- end }}
+{{- end }}
+{{- with .Values.observability.grafana.url }}
+  MATELOT_GRAFANA_URL: {{ . | quote }}
 {{- end }}
   KEYCLOAK_ISSUER: {{ include "cell.keycloakIssuer" . | quote }}
   KEYCLOAK_JWKS_URI: {{ include "cell.keycloakJwksUri" . | quote }}

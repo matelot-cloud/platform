@@ -56,6 +56,7 @@ const routes = {
   [`/api/v1/memberships?scopeType=ORGANIZATION&scopeId=${ORG}`]: [{ id: 'm1', role: 'ORG_ADMIN', scopeType: 'ORGANIZATION', scopeId: ORG, createdAt: now, user }],
   [`/api/v1/members?scopeType=ORGANIZATION&scopeId=${ORG}`]: { scope: { type: 'ORGANIZATION', id: ORG, slug: 'acme', name: 'ACME Corp' }, canManage: true, members: [{ membershipId: 'm1', user: { ...user, kind: 'human', disabled: false }, role: 'ORG_ADMIN', roleLabel: 'Organization admin', source: 'direct', inheritedFrom: null, grantedBy: null, grantedAt: now, expiresAt: null, expired: false, canEdit: false }] },
   '/api/v1/admin/users/capabilities': { keycloak: true, email: true, canChangeCellRole: true },
+  '/api/v1/admin/observability': { cell: 'acme', environment: 'production', metrics: { enabled: true, port: 9464, lastScrapeAt: now }, tracing: { enabled: true, exporter: 'otlp', endpoint: 'http://otel-collector.monitoring:4318/v1/traces', protocol: 'http/protobuf', headers: ['Authorization=••••'], sampler: 'parentbased_always_on', getRatio: 0.1, lastSpanAt: now, exportFailures: 0, lastExportError: null }, logs: { enabled: false, exporter: null, endpoint: null, emitted: { audit: 12, security: 2 } }, grafana: { url: 'https://grafana.acme.example/d/matelot-cell-overview' }, components: { api: { component: 'api', version: '0.1.0', at: now, metricsScrapedAt: now, lastSpanAt: now, tracing: 'otlp', logs: null, events: { audit: 12, security: 2 }, exportFailures: 0 }, worker: null, runners: { online: 1, reporting: 1, metricsScrapedAt: now, tracing: 1 } }, generatedAt: now },
   [`/api/v1/organizations/${ORG}/audit-events?limit=8`]: [auditEvent()],
   [`/api/v1/organizations/${ORG}/audit-events?limit=50`]: [auditEvent()],
   [`/api/v1/projects/${PROJECT}/services`]: [{ id: SERVICE, projectId: PROJECT, slug: 'payment-service', name: 'Payment Service', description: null, kind: 'api', criticality: null, createdAt: now, updatedAt: now }],
@@ -157,6 +158,7 @@ const pages = {
   '/audit': ['project.created', 'admin@acme.local', 'Audit trail'],
   '/usage': ['Documentation', 'Usage · October 2026', 'live', 'Active seats', 'of 9 members used the platform', 'Runner minutes', '153.5', '236 jobs finished · 100 on managed runners', 'Runner minutes by job type', 'sbom', '120.5', 'History', 'September 2026', '412', 'Download CSV'],
   '/admin/users': ['Users of this cell', 'dev@acme.local', 'Administration', 'active', 'New user', 'People', 'Manage'],
+  '/admin/observability': ['Observability', 'Administration', ':9464/metrics', 'OTLP http/protobuf', '12 audit · 2 security', 'Open Grafana', 'worker has not reported in the last 2 minutes', 'runners (1 online)', 'Authorization=••••', 'http://otel-collector.monitoring:4318/v1/traces', 'Test OTLP', 'matelot doctor', 'Event schema'],
   [`/projects/${PROJECT}`]: ['Payment API', 'Running now', 'Production', '4.2.0', 'Pipeline success', 'Overview', 'Settings', 'Project: Payment API'],
   [`/projects/${PROJECT}/services`]: ['Payment Service', 'Production', 'internet-facing', 'acme-org/payment-api', 'protected', 'New service', 'Run pipeline', 'Recent pipelines'],
   [`/projects/${PROJECT}/integrations`]: ['Connected sources for this project', 'inherited', 'Add connection'],
@@ -198,7 +200,7 @@ window.addEventListener('error', (event) => errors.push(String(event.error ?? ev
 setTimeout(() => {
   console.error('render smoke test: timed out');
   process.exit(2);
-}, 90_000).unref();
+}, 150_000).unref();   // ~3 s per page; raise with the page list
 
 const server = await createServer({
   root,

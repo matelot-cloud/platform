@@ -4,6 +4,47 @@
 
 Images `ghcr.io/matelot-cloud/{api,web,worker,runner}` and the chart `oci://ghcr.io/matelot-cloud/charts/secops-cell`, signed, with SBOM attestations; install guide at https://matelot-cloud.github.io/website/docs/latest/install.html. The sections below are the drops that make up the release, newest first.
 
+### Observability drop 4 — Administration → Observability, `matelot doctor` observability section, audit / security events for SIEMs (+ the rc.22 fixes)
+
+Not run here (no Docker daemon, image registries and get.helm.sh blocked): `deploy/compose/smoke.sh --observability`,
+the plain smoke pass, and chart-test with helm v4.3.1 — chart-test ran with a locally built helm 3.16.2, compose-init
+with its test suite, the span budget end to end with the file exporters. The drop is not called green until CI and
+the kind run say so.
+
+- **Administration → Observability** (cell administrators; `GET /api/v1/admin/observability`): whether metrics,
+  tracing and OTLP log export are on; the last `/metrics` scrape served by the api, the worker and the runners; the
+  last span that ended; the OTLP endpoint with the header *names* only (`Authorization=••••`, never a value); export
+  failures with the last error; the audit / security events emitted; **Test OTLP** (`POST …/test-otlp`: a span
+  `matelot.test` + a log record `event.name = matelot.test`, flushed, exporter failures compared before / after); the
+  Grafana link from `observability.grafana.url` (Helm) / `MATELOT_GRAFANA_URL` (Compose; the profile sets its own
+  `/grafana`). Each process writes a 15 s heartbeat of its telemetry state into Redis (`matelot:observability:<component>`);
+  the runners report `metricsScrapedAt` / `tracing` in their heartbeat metadata. Read-only: the settings stay in values
+  and `.env`. Web render test; `observability-status.spec.ts`.
+- **`matelot doctor` observability section** (CLI 2.25.0): `metrics` (scraped in the last 5 min, else "nothing is
+  scraping" — reported, not failed), `tracing` (off → reported; export failures → FAIL), `events`, `grafana`;
+  `--test-otlp` adds `otlp-test` / `otlp-logs`; older APIs and non-administrators → skipped. Doctor tests cover the
+  four cases.
+- **Audit and security events** (docs/observability.md, "Audit and security events"): every audit entry
+  (`event.name = matelot.audit`, INFO) and every refusal — 401 `auth.failed` / `token.rejected` / `account.disabled`,
+  403 `access.denied`, 429 `rate_limit.exceeded`, and `gate.failed` from the policy gate — (`matelot.security`, WARN)
+  is emitted as a stdout line of the api *and* as an OTel log record with the same attributes (`matelot.audit.action`,
+  `matelot.audit.before/after` as redacted JSON ≤ 4 KiB, `matelot.actor.*`, `matelot.security.kind`,
+  `matelot.auth.method`, `http.route` (template), `client.address`, …). Export: `OTEL_LOGS_EXPORTER=otlp` —
+  `observability.otlp.logs: true` on Helm, `MATELOT_OTLP_LOGS=1` on Compose (the profile's collector gained a logs
+  pipeline to Loki's OTLP endpoint; with the profile the lines reach Loki through Alloy anyway). Default `none`: no
+  SDK module loaded, the OTel side is a no-op. `events.spec.ts` pins the event names and every attribute through the
+  real SDK (`InMemoryLogRecordExporter`) and the stdout line; `span-budget.mjs` now runs the api with
+  `OTEL_LOGS_EXPORTER=file` and asserts the pipeline's audit records and a real 401 / 403. The gate's own 403 carries
+  `code: gate_rejected` so it is not double-reported as `access.denied`.
+- **rc.22 fixes** (dashboards regenerated): claim long-poll and `/logs` excluded from the latency panels (own "Runner
+  long-polls" panel; the rules file says any future HTTP latency alert must exclude them); the Version stat reduces to
+  the current value (`topk(1, max by (version) (timestamp(matelot_build_info…)))`); the 5xx ratio is `0` rather than
+  empty (`or vector(0)`); the pipeline root span carries only `matelot.*` attributes (`span-budget.mjs` asserts it, so
+  Grafana's trace header no longer shows a request's method / route on a pipeline); kind values: Prometheus 2 Gi PVC
+  and 2 d retention, `InfoInhibitor` routed to the null receiver like `Watchdog`; the docs say "Related logs" (Grafana
+  12's button) and explain where the trace header's attributes come from.
+- Web: `test/render.mjs` budget raised to 150 s (it was at 89 s of 90 with the new page).
+
 ### Observability drop 3 acceptance fixes (kind rc.21): latest-backup rule, one alert per cell, no NaN series, Alertmanager on kind, canonical runbook URLs
 
 - **`MatelotBackupJobFailed`** fires only when the *newest* backup Job (by `kube_job_status_start_time`, scheduled or

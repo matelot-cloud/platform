@@ -162,6 +162,34 @@ export interface Me {
   memberships: MembershipSummary[];
 }
 
+/** GET /admin/observability (Settings → Observability): what the cell exports and whether anything is listening. */
+export interface ObservabilityComponent {
+  component: string;
+  version: string | null;
+  at: string;
+  metricsScrapedAt: string | null;
+  lastSpanAt: string | null;
+  tracing: string | null;
+  logs: string | null;
+  events: { audit: number; security: number };
+  exportFailures: number;
+}
+export interface ObservabilityStatus {
+  cell: string | null;
+  environment: string;
+  metrics: { enabled: boolean; port: number; lastScrapeAt: string | null };
+  tracing: { enabled: boolean; exporter: string | null; endpoint: string | null; protocol: string; headers: string[]; sampler: string; getRatio: number; lastSpanAt: string | null; exportFailures: number; lastExportError: string | null };
+  logs: { enabled: boolean; exporter: string | null; endpoint: string | null; emitted: { audit: number; security: number } };
+  grafana: { url: string } | null;
+  components: { api: ObservabilityComponent | null; worker: ObservabilityComponent | null; runners: { online: number; reporting: number; metricsScrapedAt: string | null; tracing: number } };
+  generatedAt: string;
+}
+export interface TestOtlpResult {
+  traceId: string | null;
+  traces: { attempted: boolean; ok: boolean; error: string | null };
+  logs: { attempted: boolean; ok: boolean; error: string | null };
+}
+
 export interface AdminUser {
   id: string;
   email: string;

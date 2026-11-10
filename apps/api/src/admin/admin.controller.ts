@@ -5,6 +5,7 @@ import { AuthenticatedUser } from '../auth/authenticated-user';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { CreateUserDto, ReasonQuery, ResetPasswordDto } from '../iam/dto/members.dto';
 import { UserAdminService } from '../iam/user-admin.service';
+import { ObservabilityStatusService } from '../telemetry/observability-status.service';
 import { UpdateUserAdminDto } from './dto/admin.dto';
 
 class ListUsersQuery {
@@ -16,7 +17,7 @@ class ListUsersQuery {
 @ApiBearerAuth()
 @Controller('admin')
 export class AdminController {
-  constructor(private readonly users: UserAdminService) {}
+  constructor(private readonly users: UserAdminService, private readonly obs: ObservabilityStatusService) {}
 
   @Get('users')
   listUsers(@CurrentUser() user: AuthenticatedUser, @Query() q: ListUsersQuery) {
@@ -24,6 +25,21 @@ export class AdminController {
   }
 
   /** What this cell can do for user administration: Keycloak admin API, e-mail, cell-role changes by the caller. */
+  /** Settings → Observability: what the cell exports and whether anything is listening (cell administrators only). */
+  @Get('observability')
+  observability(@CurrentUser() user: AuthenticatedUser) {
+    this.users.assertCellAdmin(user);
+    return this.obs.status();
+  }
+
+  /** Ends a test span and a test log record over OTLP and reports whether the exporters complained. */
+  @Post('observability/test-otlp')
+  @HttpCode(200)
+  testOtlp(@CurrentUser() user: AuthenticatedUser) {
+    this.users.assertCellAdmin(user);
+    return this.obs.testOtlp();
+  }
+
   @Get('users/capabilities')
   capabilities(@CurrentUser() user: AuthenticatedUser) {
     return this.users.capabilities(user);

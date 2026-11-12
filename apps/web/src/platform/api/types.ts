@@ -163,8 +163,11 @@ export interface Me {
 }
 
 /** GET /admin/observability (Settings → Observability): what the cell exports and whether anything is listening. */
+export interface ObservabilitySignalFailures { count: number; last: string | null; lastAt: string | null }
 export interface ObservabilityComponent {
   component: string;
+  instance: string;
+  startedAt: string;
   version: string | null;
   at: string;
   metricsScrapedAt: string | null;
@@ -172,16 +175,21 @@ export interface ObservabilityComponent {
   tracing: string | null;
   logs: string | null;
   events: { audit: number; security: number };
-  exportFailures: number;
+  exportFailures: { traces: ObservabilitySignalFailures; logs: ObservabilitySignalFailures };
+  ageSeconds: number;
+  /** current: counted · superseded: an older pod replaced by a rollout · stale: no heartbeat for 45 s */
+  state: "current" | "superseded" | "stale";
 }
+type ObservabilityEventCounts = { audit: number; security: number };
 export interface ObservabilityStatus {
   cell: string | null;
   environment: string;
   metrics: { enabled: boolean; port: number; lastScrapeAt: string | null };
-  tracing: { enabled: boolean; exporter: string | null; endpoint: string | null; protocol: string; headers: string[]; sampler: string; getRatio: number; lastSpanAt: string | null; exportFailures: number; lastExportError: string | null };
-  logs: { enabled: boolean; exporter: string | null; endpoint: string | null; emitted: { audit: number; security: number } };
+  tracing: { enabled: boolean; exporter: string | null; endpoint: string | null; protocol: string; headers: string[]; sampler: string; getRatio: number; lastSpanAt: string | null; exportFailures: number; lastExportError: string | null; lastExportErrorAt: string | null };
+  logs: { enabled: boolean; exporter: string | null; endpoint: string | null; protocol: string; emitted: ObservabilityEventCounts; exportFailures: number; lastExportError: string | null; lastExportErrorAt: string | null };
+  events: { total: ObservabilityEventCounts; byComponent: Record<string, ObservabilityEventCounts> };
   grafana: { url: string } | null;
-  components: { api: ObservabilityComponent | null; worker: ObservabilityComponent | null; runners: { online: number; reporting: number; metricsScrapedAt: string | null; tracing: number } };
+  components: { api: ObservabilityComponent | null; worker: ObservabilityComponent | null; instances: ObservabilityComponent[]; runners: { online: number; reporting: number; metricsScrapedAt: string | null; tracing: number } };
   generatedAt: string;
 }
 export interface TestOtlpResult {

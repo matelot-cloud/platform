@@ -1,5 +1,8 @@
 # grafana/loki 7.3.0 (Loki 3.6.12) single binary on a filesystem volume, for Matelot on kind: Alloy pushes the
-# cells' pod logs here; trace_id / span_id arrive as structured metadata. No caches, canary or gateway (kind).
+# cells' pod logs here; trace_id / span_id arrive as structured metadata. Alloy also forwards the cells' OTLP log
+# records (the audit / security events) to /otlp: service.name → service_name and the cell's own resource
+# attributes become labels, the record's attributes structured metadata (event_name, matelot_security_kind, …).
+# No caches, canary or gateway (kind).
 #   helm upgrade --install loki grafana/loki --version 7.3.0 -n monitoring -f deploy/observability/kind/loki.values.yaml
 deploymentMode: SingleBinary
 loki:
@@ -15,6 +18,11 @@ loki:
         index: { prefix: loki_index_, period: 24h }
   limits_config:
     allow_structured_metadata: true
+    otlp_config:
+      resource_attributes:
+        attributes_config:
+          - action: index_label
+            attributes: [matelot.cell, matelot.component]
     retention_period: 48h
   compactor:
     retention_enabled: true

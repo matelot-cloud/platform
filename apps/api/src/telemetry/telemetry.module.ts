@@ -1,4 +1,4 @@
-import { Global, Inject, Module, OnApplicationShutdown, OnModuleInit } from '@nestjs/common';
+import { BeforeApplicationShutdown, Global, Inject, Module, OnApplicationShutdown, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { Logger } from 'nestjs-pino';
@@ -12,7 +12,7 @@ import { logsHandle } from './logs';
 import { tracingHandle } from './tracing';
 import { WorkerGauges } from './worker-gauges';
 
-export class TelemetryLifecycle implements OnModuleInit, OnApplicationShutdown {
+export class TelemetryLifecycle implements OnModuleInit, BeforeApplicationShutdown, OnApplicationShutdown {
   private timer?: NodeJS.Timeout;
   constructor(@Inject(ConfigService) private readonly config: AppConfig, private readonly metrics: Metrics, private readonly logger: Logger, @Inject(DATABASE) private readonly db: Database, private readonly status: ObservabilityStatusService) {}
 
@@ -45,9 +45,13 @@ export class TelemetryLifecycle implements OnModuleInit, OnApplicationShutdown {
     }
   }
 
+  /** Before the Redis connections close (they quit in onApplicationShutdown): the pod's heartbeat goes with it. */
+  async beforeApplicationShutdown(): Promise<void> {
+    await this.status.stop();
+  }
+
   async onApplicationShutdown(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
-    this.status.stop();
     await this.metrics.close();
     await Promise.all([tracingHandle()?.shutdown(5000), logsHandle()?.shutdown(5000)]);
   }

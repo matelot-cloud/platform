@@ -33,6 +33,8 @@ jobs:
       - name: Span budget - a security pipeline through the real instrumentation stays under 150 spans (test/span-budget.mjs)
         run: node apps/api/test/span-budget.mjs
         env: { DATABASE_URL: "postgresql://platform:platform@localhost:5432/platform", REDIS_URL: "redis://localhost:6379" }
+      - name: Export failures are counted per signal, one line each (test/export-failures.mjs, real OTLP exporters vs a 404)
+        run: node apps/api/test/export-failures.mjs
       - name: Schema, migrations and snapshot are in sync (drizzle-kit generate must be a no-op)
         run: |
           pnpm --filter @secops/api db:generate

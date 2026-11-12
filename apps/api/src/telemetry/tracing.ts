@@ -24,10 +24,12 @@ export interface TracingHandle {
   readonly dropped: () => number;
   /** when the last span ended in this process (either provider), for Settings → Observability; null before the first */
   readonly lastSpanAt: () => Date | null;
-  /** export failures so far and the last message (the diag logger's), for the "Test OTLP" button */
-  readonly failures: () => { count: number; last: string | null };
+  /** trace export failures so far and the last one as one line (export-failures.ts) — never the logs exporter's */
+  readonly failures: () => { count: number; last: string | null; lastAt: string | null };
   /** forceFlush both providers (bounded by capMs); the test endpoint compares `failures()` before and after */
-  flush(capMs?: number): Promise<void>;
+  /** forceFlush, bounded by capMs: true when every queued export finished (failed or not), false when the cap hit first —
+   *  an exporter retrying an unreachable endpoint (ECONNREFUSED, timeouts) keeps going for ~15 s */
+  flush(capMs?: number): Promise<boolean>;
 }
 
 const g = globalThis as unknown as { __matelotTracing?: TracingHandle | null; __matelotPipelineTracer?: import('@opentelemetry/api').Tracer };
@@ -135,7 +137,13 @@ export function startTracing(env: NodeJS.ProcessEnv = process.env): TracingHandl
   const { TrimmingSpanProcessor } = require('./trim') as typeof import('./trim');
   const { MatelotSampler } = require('./sampler') as typeof import('./sampler');
   const exporterName = (env.OTEL_TRACES_EXPORTER ?? 'otlp').trim().toLowerCase();
-  const makeExporter = () => exporterName === 'console' ? new traceBase.ConsoleSpanExporter() : exporterName === 'file' ? new (require('./file-exporter').FileSpanExporter)(env.OTEL_TRACES_FILE ?? 'traces.jsonl') : exporterName === 'none' ? null : otlpExporter(env);
+  const { watchExporter, exportFailures, otlpEndpoint, otlpProtocol } = require('./export-failures') as typeof import('./export-failures');
+  // every exporter is watched: a failed export counts for *traces* with a one-line description (export-failures.ts)
+  const target = { url: exporterName === 'otlp' ? otlpEndpoint(env, 'traces') : exporterName === 'file' ? env.OTEL_TRACES_FILE ?? 'traces.jsonl' : null, protocol: otlpProtocol(env, 'traces') };
+  const makeExporter = () => {
+    const e = exporterName === 'console' ? new traceBase.ConsoleSpanExporter() : exporterName === 'file' ? new (require('./file-exporter').FileSpanExporter)(env.OTEL_TRACES_FILE ?? 'traces.jsonl') : exporterName === 'none' ? null : otlpExporter(env);
+    return e ? watchExporter(e as import('@opentelemetry/sdk-trace-base').SpanExporter, 'traces', target) : null;
+  };
   const batch = (exporter: import('@opentelemetry/sdk-trace-base').SpanExporter) => new traceBase.BatchSpanProcessor(exporter, { maxQueueSize: 2048, maxExportBatchSize: 512, scheduledDelayMillis: 2000, exportTimeoutMillis: 5000 });
   const exporter = makeExporter();
   // when the last span ended, whichever provider: Settings → Observability shows "last trace seen"
@@ -178,9 +186,9 @@ export function startTracing(env: NodeJS.ProcessEnv = process.env): TracingHandl
     exporter: exporterName,
     dropped: () => trimmed?.dropped ?? 0,
     lastSpanAt: () => (seen.at ? new Date(seen.at) : null),
-    failures: () => ({ count: once.total, last: once.last }),
+    failures: () => exportFailures().traces.snapshot(),
     flush(capMs = 5000) {
-      return Promise.race([Promise.all([provider.forceFlush(), pipelineProvider.forceFlush()]).then(() => undefined), new Promise<void>((r) => setTimeout(r, capMs).unref())]).catch(() => undefined);
+      return Promise.race([(Promise.all([provider.forceFlush(), pipelineProvider.forceFlush()]).then(() => undefined)).then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), capMs).unref())]).catch(() => true);
     },
     shutdown(capMs = 5000) {
       if (done) return done;

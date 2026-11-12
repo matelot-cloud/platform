@@ -25,7 +25,7 @@ const DATABASE_URL = process.env.DATABASE_URL ?? process.env.TEST_DATABASE_URL ?
 const REDIS_URL = process.env.REDIS_URL ?? 'redis://localhost:6379';
 const MANAGED_SECRET = 'span-budget-managed-secret-0123456789abcdef';
 const T = mkdtempSync(join(tmpdir(), 'span-budget-'));
-const files = { api: join(T, 'api.jsonl'), worker: join(T, 'worker.jsonl'), events: join(T, 'events.jsonl') };
+const files = { api: join(T, 'api.jsonl'), worker: join(T, 'worker.jsonl'), events: join(T, 'events.jsonl'), workerEvents: join(T, 'worker-events.jsonl') };
 const children = [];
 const log = (m) => process.stdout.write(`${m}\n`);
 
@@ -74,8 +74,8 @@ try {
     MATELOT_TRACES_GET_RATIO: '1',   // every GET of the test is a root (the default keeps one in ten) — so a poll that slipped through would show
   };
   execFileSync(process.execPath, ['dist/migrate.js'], { cwd: API_DIR, env: { ...process.env, ...env }, stdio: 'pipe' });
-  start('api', ['-r', './dist/telemetry/tracing.js', 'dist/main.js'], { ...env, MATELOT_COMPONENT: 'api', OTEL_TRACES_FILE: files.api, OTEL_LOGS_EXPORTER: 'file', OTEL_LOGS_FILE: files.events });
-  start('worker', ['-r', './dist/telemetry/tracing.js', 'dist/worker.js'], { ...env, MATELOT_COMPONENT: 'worker', OTEL_TRACES_FILE: files.worker });
+  start('api', ['-r', './dist/telemetry/tracing.js', 'dist/main.js'], { ...env, MATELOT_COMPONENT: 'api', OTEL_TRACES_FILE: files.api, OTEL_LOGS_EXPORTER: 'file', OTEL_LOGS_FILE: files.events, MATELOT_STATUS_HEARTBEAT_MS: '500' });
+  start('worker', ['-r', './dist/telemetry/tracing.js', 'dist/worker.js'], { ...env, MATELOT_COMPONENT: 'worker', OTEL_TRACES_FILE: files.worker, OTEL_LOGS_EXPORTER: 'file', OTEL_LOGS_FILE: files.workerEvents, MATELOT_STATUS_HEARTBEAT_MS: '500' });
   await waitFor(() => fetch(`${base}/health/ready`).then((r) => r.ok), 'api ready', 90000);
   token = execFileSync(process.execPath, ['test/fake-idp.js', 'token', 'admin@acme.local'], { cwd: API_DIR, env: { ...process.env, FAKE_IDP_PORT: String(IDP_PORT) }, encoding: 'utf8' }).trim().split('\n').pop();
   await api('/me');   // first sign-in: the bootstrap admin exists from here on
@@ -153,6 +153,12 @@ try {
   await fetch(`${base}/organizations`, { headers: { authorization: 'Bearer not-a-token' } });                       // 401 → auth.failed
   await fetch(`${base}/organizations/${orgId}/api-tokens`, { headers: { authorization: `Bearer ${execFileSync(process.execPath, ['test/fake-idp.js', 'token', 'nobody@acme.local'], { cwd: API_DIR, env: { ...process.env, FAKE_IDP_PORT: String(IDP_PORT) }, encoding: 'utf8' }).trim().split('\n').pop()}` } }).catch(() => undefined);   // 403 → access.denied
 
+  // Administration → Observability counts the events of api AND worker (kind rc.23: only the api's were counted, and
+  // the worker emits the gate / job / pipeline transitions); compared with the records of both files after the flush
+  await new Promise((r) => setTimeout(r, 1500));   // one more heartbeat of each (MATELOT_STATUS_HEARTBEAT_MS=500)
+  const status = await api('/admin/observability');
+  log(`status: events ${JSON.stringify(status.events)}; instances ${status.components.instances.map((i) => `${i.component}/${i.state}`).join(', ')}`);
+
   // 4. flush (SIGTERM → the 5 s-capped shutdown flush) and count
   for (const c of children.slice(1)) await stop(c);
   const spans = [files.api, files.worker].filter(existsSync).flatMap((f) => readFileSync(f, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)));
@@ -229,15 +235,30 @@ try {
   if (redis.some((x) => x.durationMs < 5)) problems.push(`${redis.filter((x) => x.durationMs < 5).length} sub-5 ms Redis span(s) survived the trimming`);
   if (trace.some((x) => x.name === 'pg-pool.connect')) problems.push('pg-pool.connect spans survived the trimming');
   // the event records: every audit entry of the run and the two refusals, with the pinned attribute names, no secret
-  const events = existsSync(files.events) ? readFileSync(files.events, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [];
+  const readEvents = (f) => (existsSync(f) ? readFileSync(f, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []).filter((e) => e.attributes['event.name'] !== 'matelot.test');
+  const apiEvents = readEvents(files.events);
+  const workerEvents = readEvents(files.workerEvents);
+  const events = [...apiEvents, ...workerEvents];
+  const count = (xs, name) => xs.filter((e) => e.attributes['event.name'] === name).length;
+  const recorded = { api: { audit: count(apiEvents, 'matelot.audit'), security: count(apiEvents, 'matelot.security') }, worker: { audit: count(workerEvents, 'matelot.audit'), security: count(workerEvents, 'matelot.security') } };
+  log(`event records by process: ${JSON.stringify(recorded)}`);
+  if (!recorded.worker.audit) problems.push('the worker emitted no matelot.audit record (the gate and the pipeline transitions run there)');
+  for (const c of ['api', 'worker']) {
+    const counted = status.events.byComponent[c] ?? { audit: 0, security: 0 };
+    if (counted.audit !== recorded[c].audit || counted.security !== recorded[c].security) problems.push(`status counts ${c} ${JSON.stringify(counted)} but it emitted ${JSON.stringify(recorded[c])}`);
+  }
+  if (status.events.total.audit !== recorded.api.audit + recorded.worker.audit || status.events.total.security !== recorded.api.security + recorded.worker.security) problems.push(`status total ${JSON.stringify(status.events.total)} is not api + worker ${JSON.stringify(recorded)}`);
+  if (status.tracing.exportFailures || status.logs.exportFailures) problems.push(`export failures with file exporters: traces ${status.tracing.exportFailures}, logs ${status.logs.exportFailures}`);
   const audits = events.filter((e) => e.attributes['event.name'] === 'matelot.audit');
   const security = events.filter((e) => e.attributes['event.name'] === 'matelot.security');
   log(`\n${events.length} event records: ${audits.length} audit (${[...new Set(audits.map((e) => e.attributes['matelot.audit.action']))].slice(0, 8).join(', ')}…), ${security.length} security (${[...new Set(security.map((e) => e.attributes['matelot.security.kind']))].join(', ')})`);
   if (!audits.some((e) => e.attributes['matelot.audit.action'] === 'pipeline.created' || e.attributes['matelot.audit.resource.type'] === 'pipeline')) problems.push('no matelot.audit record for the pipeline creation');
   if (!security.some((e) => e.attributes['matelot.security.kind'] === 'auth.failed' && e.attributes['http.response.status_code'] === 401)) problems.push('no matelot.security auth.failed record for the 401');
   if (!security.some((e) => e.attributes['matelot.security.kind'] === 'access.denied' && e.attributes['http.response.status_code'] === 403)) problems.push('no matelot.security access.denied record for the 403');
-  if (security.some((e) => !e.attributes['http.route'] && !e.attributes['http.request.method'])) problems.push('a security record without http.route / http.request.method');
-  if (events.some((e) => e.resource['service.name'] !== 'matelot-api' || e.scope !== 'matelot.events')) problems.push('an event record outside service matelot-api / scope matelot.events');
+  // a refusal is a request's (route + method); the worker's gate.failed has no request — it names the project instead
+if (security.some((e) => e.attributes['matelot.security.kind'] !== 'gate.failed' && !e.attributes['http.route'] && !e.attributes['http.request.method'])) problems.push('a refusal (security record other than gate.failed) without http.route / http.request.method');
+if (security.some((e) => e.attributes['matelot.security.kind'] === 'gate.failed' && (e.resource['service.name'] !== 'matelot-worker' || !e.attributes['matelot.project.id']))) problems.push('a gate.failed record not from the worker or without matelot.project.id');
+  if (apiEvents.some((e) => e.resource['service.name'] !== 'matelot-api') || workerEvents.some((e) => e.resource['service.name'] !== 'matelot-worker') || events.some((e) => e.scope !== 'matelot.events')) problems.push('an event record outside its process\'s service (matelot-api / matelot-worker) or scope matelot.events');
   if (events.some((e) => JSON.stringify(e).includes(token))) problems.push('an event record carries the bearer token');
     if (problems.length) { console.error(`\nspan budget FAILED:\n  ${problems.join('\n  ')}`); process.exitCode = 1; }
   else log(`\nspan budget ok: ${trace.length} ≤ ${BUDGET}; root "${root.name}" under ${root.service}; ${jobSpans.length} job spans; no /logs, claim-poll or --wait-poll spans; every span inside its parent; a web session's polls add 0 roots; ${spans.filter((x) => !x.parentSpanId).length} root spans, all requests / worker loops / the pipeline`);

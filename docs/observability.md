@@ -198,13 +198,29 @@ carries it. The audit / security events below can additionally leave as OTLP log
 ### Audit and security events
 
 Every audit entry and every security-relevant refusal is emitted **twice with the same attributes**: as a stdout line
-of the api (the log schema above plus the attributes, so a shipper is enough) and as an OpenTelemetry log record
-(`OTEL_LOGS_EXPORTER=otlp` — Helm `observability.otlp.logs: true`, Compose `MATELOT_OTLP_LOGS=1` — to the same OTLP
-endpoint as the traces; the Compose profile's collector forwards them to Loki, where resource attributes become
-labels and the attributes below structured metadata: `{service_name="matelot-api"} | event_name="matelot.security"`).
-The attribute names are a contract (`apps/api/src/telemetry/events.ts`, pinned by `events.spec.ts` and exercised end
-to end by `test/span-budget.mjs`): a rename is a breaking change for every SIEM rule written against them. Resource
-attributes on every record: `service.name` (`matelot-api`), `service.version`, `matelot.cell`, `matelot.component`,
+of the process that did it (the log schema above plus the attributes, so a shipper is enough) and as an OpenTelemetry
+log record (`OTEL_LOGS_EXPORTER=otlp` — Helm `observability.otlp.logs: true`, Compose `MATELOT_OTLP_LOGS=1` — to the
+same OTLP endpoint as the traces). That endpoint must take **logs**: an OpenTelemetry Collector or Alloy that forwards
+them to Loki / your SIEM, as the Compose profile's collector and the kind recipe's Alloy do. Tempo takes traces only
+(it answers 404 on `/v1/logs`): with the cell pointed straight at Tempo, leave `logs` off — the events stay stdout
+lines — or Administration → Observability and `matelot doctor` show the log export failing.
+
+Two processes emit them, and both are counted on Administration → Observability:
+
+| Process (`service.name`) | Emits |
+|---|---|
+| api (`matelot-api`) | every mutation made through the API (projects, members, policies, tokens, integrations, runner registration, a runner's job completion …) and every refusal: `auth.failed`, `token.rejected`, `account.disabled`, `access.denied`, `rate_limit.exceeded` |
+| worker (`matelot-worker`) | what happens without a request: the policy gate of a pipeline (`gate.pass` / `gate.fail` audits and the `gate.failed` security event), the job and pipeline transitions after it (`job.failed`, `pipeline.failed`, `pipeline.succeeded`), the sweeper's timeouts, GitHub sync and webhook processing |
+
+So a SIEM rule on `gate.failed` reads the worker's records (or its pod's stdout), and one on `auth.failed` the api's.
+In Loki, OTLP records: `{service_name=~"matelot-(api|worker)"} | event_name="matelot.security"` (resource attributes
+are labels — `service_name`, `matelot_cell`, `matelot_component` with the kind recipe's Loki — and the attributes
+below structured metadata); the same events as stdout lines: `{namespace="tenant-<slug>"} | json |
+event_name="matelot.security"`. With both paths on, each event is in Loki twice — once per stream, told apart by the
+labels. The attribute names are a contract (`apps/api/src/telemetry/events.ts`, pinned by `events.spec.ts` and
+exercised end to end by `test/span-budget.mjs`, which also checks that the status counts the api's and the worker's
+records): a rename is a breaking change for every SIEM rule written against them. Resource attributes on every
+record: `service.name` (`matelot-api` / `matelot-worker`), `service.version`, `matelot.cell`, `matelot.component`,
 `deployment.environment`; the instrumentation scope is `matelot.events`.
 
 **`event.name = matelot.audit`** — severity INFO, one per row of the audit trail (`AuditService.record`):
@@ -289,7 +305,8 @@ observability:
     tracesSampler: parentbased_always_on
     tracesSamplerArg: ""
     metrics: false                # also push metrics over OTLP (OTEL_METRICS_EXPORTER=prometheus,otlp)
-    logs: false                   # the audit / security events as OTLP log records too (OTEL_LOGS_EXPORTER=otlp)
+    logs: false                   # the audit / security events as OTLP log records too (OTEL_LOGS_EXPORTER=otlp) —
+                                  # only to an endpoint that takes logs (a collector / Alloy), never Tempo directly
   grafana:
     url: ""                      # where your Grafana is: the link on Administration → Observability and in doctor
 ```
@@ -353,9 +370,18 @@ observability:
     exporters:
       enabled: true
   otlp:
-    endpoint: "http://tempo.monitoring:4318"
+    endpoint: "http://alloy.monitoring:4318"   # Alloy's OTLP receiver: traces → Tempo, log records → Loki
     protocol: http/protobuf
+    logs: true                                 # the audit / security events as OTLP log records too
 ```
+
+The cell sends OTLP to **Alloy**, not to Tempo: Alloy's `otelcol.receiver.otlp` (ports 4317 / 4318 on the `alloy`
+Service) fans out like the Compose profile's collector — traces to Tempo, log records to Loki's `/otlp` endpoint —
+so `logs: true` works. (A cell pointed at Tempo directly gets 404 on every log export; `values-observability.py`
+refuses `--logs` with a Tempo endpoint.) The recipe's Loki indexes `matelot.cell` and `matelot.component` as labels
+next to `service_name`. Verified with Alloy 1.14.1 (`alloy validate` on the config) and Loki 3.6.12: a `gate.failed`
+record through the receiver answers `{service_name="matelot-api"} | event_name="matelot.security"` with every
+attribute as structured metadata.
 
 Grafana gets `GF_PLUGINS_PREINSTALL_DISABLED=true` there and on Compose: Grafana 12 otherwise downloads plugins
 (pyroscope, exploretraces, metricsdrilldown) from the internet on every start, which an air-gapped cluster cannot do
@@ -600,19 +626,31 @@ cell down.
 ## Checking a cell (drop 4)
 
 * **Administration → Observability** in the web app (cell administrators): whether metrics, tracing and OTLP log
-  export are on; the last `/metrics` scrape served by the api, the worker and the runners (each process writes a
-  15 s heartbeat of its telemetry state into Redis — `matelot:observability:<component>` — and the runners report
-  `metricsScrapedAt` / `tracing` in their heartbeat metadata); the last span that ended; the OTLP endpoint with the
-  header **names** only (`Authorization=••••`); export failures with the last error; the audit / security events
-  emitted; a **Test OTLP** button (`POST /api/v1/admin/observability/test-otlp`: ends a span named `matelot.test`
-  and a log record with `event.name = matelot.test`, flushes both providers and reports whether the exporters logged
-  a failure); and the Grafana link when `observability.grafana.url` / `MATELOT_GRAFANA_URL` is set. The page is
-  read-only — the settings live in the chart values and `.env`. `GET /api/v1/admin/observability` is the same data as
-  JSON.
+  export are on; one row per process — every api and worker pod — with its heartbeat age, the last `/metrics` scrape
+  it served, the last span that ended there, its exporters, the audit / security events it emitted and its export
+  failures per signal; the runners from their heartbeat metadata (`metricsScrapedAt`, `tracing`); the OTLP endpoints
+  with the header **names** only (`Authorization=••••`); **trace export** and **log export** failures counted
+  separately, each with its last error as one line (`OTLPExporterError: Not Found (HTTP 404) — POST
+  http://tempo.monitoring:4318/v1/logs`; the stack stays in the pod log); the events summed over api and worker, per
+  component; a **Test OTLP** button (`POST /api/v1/admin/observability/test-otlp`: ends a span named `matelot.test`
+  and a log record with `event.name = matelot.test`, waits up to 12 s for both exports and reports each — a refused
+  connection is retried for several seconds before it fails, so an export still pending at 12 s is reported as no
+  answer, never as sent); and the Grafana link when `observability.grafana.url` / `MATELOT_GRAFANA_URL` is set. The
+  page is read-only — the settings live in the chart values and `.env`. `GET /api/v1/admin/observability` is the same
+  data as JSON.
+* How the numbers are gathered: each process writes a heartbeat of its telemetry state into Redis every 15 s,
+  `matelot:observability:<component>:<pod>` (TTL 2 min), and deletes it when it shuts down. The status counts the
+  **current** pods only: a heartbeat older than 45 s is *stale* (a pod killed without shutting down), and an older pod
+  of a component whose exporter settings a newer pod replaced is *superseded* (a rollout) — both are listed with their
+  age, never counted, so switching OTLP logs off does not leave a minute of failures from the terminated pods. Two
+  replicas with the same settings are both current and add up. Counts are "since the process started".
 * `matelot doctor` has an *observability* section (cell administrators; older APIs → skipped): `metrics` (scraped in
-  the last 5 minutes, else "nothing is scraping" — reported, not failed), `tracing` (off → reported; on with export
-  failures → **FAIL**), `events` (counts and where the records go), `grafana` (the link). `matelot doctor --test-otlp`
-  adds `otlp-test` / `otlp-logs` with the test above; `--json` for a monitoring script.
+  the last 5 minutes, else "nothing is scraping" — reported, not failed), `tracing` (off → reported; trace export
+  failures → **FAIL**), `events` (api + worker counts, `api 6/1, worker 3/1`, and where the records go; **FAIL** when
+  OTLP log export fails — with a hint when the endpoint is Tempo), `grafana` (**OK** with the link when linked, `--`
+  when not); a replaced or silent pod is named, not counted. `matelot doctor --test-otlp` adds `otlp-test` /
+  `otlp-logs` with the test above; `--json` for a monitoring script. `matelot request GET /admin/observability` adds
+  the `/api/v1` prefix itself, and an HTML answer (the web app, not the API) is an error with a hint, never printed.
 
 ## Security
 

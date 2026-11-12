@@ -90,6 +90,11 @@ async function requestOnce<T = unknown>(config: Config, method: string, path: st
       throw new CliError(`cannot reach ${config.url}: ${unreachableDetail(error)}. Is MATELOT_URL correct and the platform running / reachable from this runner?`);
     }
     const text = await response.text();
+    // an HTML page is never an API answer: the request reached the web app (a path without /api/v1, or MATELOT_URL
+    // pointing at a different host than the API) — kind rc.23 printed index.html as a JSON string and exited 0
+    if (/^text\/html\b/i.test(response.headers.get('content-type') ?? '')) {
+      throw new CliError(`${method} ${path} answered with an HTML page (HTTP ${response.status}), not the API: ${path.startsWith('/api/') ? `is MATELOT_URL (${config.url}) the cell's address?` : 'API paths start with /api/v1 (e.g. /api/v1/admin/observability)'}`, response.ok ? undefined : response.status);
+    }
     let parsed: unknown = text;
     try {
       parsed = text ? JSON.parse(text) : null;
@@ -109,4 +114,11 @@ async function requestOnce<T = unknown>(config: Config, method: string, path: st
   }
 }
 
-export const VERSION = '2.25.0';
+export const VERSION = '2.25.1';
+
+/** `matelot request` paths: `/admin/observability` and `admin/observability` mean `/api/v1/admin/observability`. */
+export function apiPath(path: string): string {
+  if (/^https?:\/\//i.test(path)) throw new CliError(`request takes a path, not a URL (${path}): the cell's address comes from MATELOT_URL`);
+  if (path.startsWith('/api/')) return path;
+  return `/api/v1${path.startsWith('/') ? '' : '/'}${path}`;
+}

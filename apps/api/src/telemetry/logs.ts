@@ -15,9 +15,11 @@ export interface LogsHandle {
   readonly exporter: string;
   /** records handed to the processor since start (what Settings → Observability shows) */
   readonly emitted: () => number;
-  /** export failures (the diag logger's, shared with tracing) and the last message */
-  readonly failures: () => { count: number; last: string | null };
-  flush(capMs?: number): Promise<void>;
+  /** log-record export failures and the last one as one line (export-failures.ts; separate from the traces') */
+  readonly failures: () => { count: number; last: string | null; lastAt: string | null };
+  /** forceFlush, bounded by capMs: true when every queued export finished (failed or not), false when the cap hit first —
+   *  an exporter retrying an unreachable endpoint (ECONNREFUSED, timeouts) keeps going for ~15 s */
+  flush(capMs?: number): Promise<boolean>;
 }
 
 const g = globalThis as unknown as { __matelotLogs?: LogsHandle | null };
@@ -43,12 +45,13 @@ export function startLogs(env: NodeJS.ProcessEnv = process.env): LogsHandle | nu
   const { logs } = require('@opentelemetry/api-logs') as typeof import('@opentelemetry/api-logs');
   const { resourceFromAttributes } = require('@opentelemetry/resources') as typeof import('@opentelemetry/resources');
   const { resourceAttributes, diagOnce } = require('./tracing') as typeof import('./tracing');
-  const once = diagOnce();
+  const { watchExporter, exportFailures, otlpEndpoint, otlpProtocol } = require('./export-failures') as typeof import('./export-failures');
+  diagOnce();   // the stacks of failed exports go to the pod log (once per kind), the one-line description to the status
 
   let count = 0;
-  const exporter: import('@opentelemetry/sdk-logs').LogRecordExporter = name === 'console' ? new sdk.ConsoleLogRecordExporter()
+  const exporter: import('@opentelemetry/sdk-logs').LogRecordExporter = watchExporter(name === 'console' ? new sdk.ConsoleLogRecordExporter()
     : name === 'file' ? fileLogExporter(env.OTEL_LOGS_FILE ?? 'logs.jsonl')
-    : otlpLogExporter(env);
+    : otlpLogExporter(env), 'logs', { url: name === 'otlp' ? otlpEndpoint(env, 'logs') : name === 'file' ? env.OTEL_LOGS_FILE ?? 'logs.jsonl' : null, protocol: otlpProtocol(env, 'logs') });
   const counting: import('@opentelemetry/sdk-logs').LogRecordProcessor = { onEmit: () => { count++; }, forceFlush: async () => undefined, shutdown: async () => undefined };
   const provider = new sdk.LoggerProvider({
     resource: resourceFromAttributes(resourceAttributes(env)),
@@ -60,9 +63,9 @@ export function startLogs(env: NodeJS.ProcessEnv = process.env): LogsHandle | nu
   const handle: LogsHandle = {
     exporter: name,
     emitted: () => count,
-    failures: () => ({ count: once.total, last: once.last }),
+    failures: () => exportFailures().logs.snapshot(),
     flush(capMs = 5000) {
-      return Promise.race([provider.forceFlush(), new Promise<void>((r) => setTimeout(r, capMs).unref())]).catch(() => undefined);
+      return Promise.race([(provider.forceFlush()).then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), capMs).unref())]).catch(() => true);
     },
     shutdown(capMs = 5000) {
       if (done) return done;

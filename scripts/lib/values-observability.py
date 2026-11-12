@@ -5,9 +5,11 @@ source of truth for `apply`, so settings made here survive upgrades like every o
 present, appended when absent; everything else in the file is left byte for byte.
 
   values-observability.py <values.yaml> <endpoint> [protocol]          traces only (kind-jaeger); empty endpoint = off
-  values-observability.py <values.yaml> <endpoint> [protocol] --stack [--label release=kube-prometheus-stack]
+  values-observability.py <values.yaml> <endpoint> [protocol] --stack [--label release=kube-prometheus-stack] [--logs]
       the whole delivery (kind-observability): ServiceMonitor and PrometheusRule with the labels the Prometheus selects,
-      the exporters (postgres / redis sidecars, Keycloak and registry metrics), the dashboards and the OTLP endpoint
+      the exporters (postgres / redis sidecars, Keycloak and registry metrics), the dashboards and the OTLP endpoint;
+      --logs also sends the audit / security events as OTLP log records (observability.otlp.logs) — only to a
+      collector that takes logs (Alloy, the OpenTelemetry Collector), never to Tempo
 """
 import re
 import sys
@@ -17,7 +19,7 @@ def _q(v: str) -> str:
     return '"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def render(endpoint: str, protocol: str, stack: bool = False, labels: dict | None = None) -> str:
+def render(endpoint: str, protocol: str, stack: bool = False, labels: dict | None = None, logs: bool = False) -> str:
     out = "observability:\n"
     if stack:
         out += (
@@ -39,11 +41,15 @@ def render(endpoint: str, protocol: str, stack: bool = False, labels: dict | Non
         f"    endpoint: {_q(endpoint)}   # OTLP traces (docs/observability.md); empty = tracing off\n"
         f"    protocol: {protocol}\n"
     )
+    if logs:
+        out += "    logs: true   # the audit / security events as OTLP log records too (the endpoint must take logs)\n"
     return out
 
 
-def set_observability(text: str, endpoint: str, protocol: str = "http/protobuf", stack: bool = False, labels: dict | None = None) -> str:
-    block = render(endpoint, protocol, stack, labels)
+def set_observability(text: str, endpoint: str, protocol: str = "http/protobuf", stack: bool = False, labels: dict | None = None, logs: bool = False) -> str:
+    if logs and re.search(r"(?i)tempo", endpoint):
+        raise ValueError(f"--logs with {endpoint}: Tempo takes no logs (404 on /v1/logs); point the cell at a collector that forwards logs")
+    block = render(endpoint, protocol, stack, labels, logs)
     m = re.search(r"(?m)^observability:\n(?:(?:[ \t]+[^\n]*|[ \t]*#[^\n]*|)\n)*", text)
     if m:
         return text[: m.start()] + block + text[m.end():]
@@ -52,11 +58,12 @@ def set_observability(text: str, endpoint: str, protocol: str = "http/protobuf",
 
 def main(argv: list[str]) -> None:
     stack = "--stack" in argv
+    logs = "--logs" in argv
     labels: dict = {}
     rest: list[str] = []
     it = iter(argv)
     for a in it:
-        if a == "--stack":
+        if a in ("--stack", "--logs"):
             continue
         if a == "--label":
             k, _, v = next(it).partition("=")
@@ -71,9 +78,13 @@ def main(argv: list[str]) -> None:
     protocol = rest[2] if len(rest) > 2 else "http/protobuf"
     with open(path, encoding="utf-8") as f:
         text = f.read()
+    try:
+        new = set_observability(text, endpoint, protocol, stack, labels, logs)
+    except ValueError as e:
+        sys.exit(str(e))
     with open(path, "w", encoding="utf-8") as f:
-        f.write(set_observability(text, endpoint, protocol, stack, labels))
-    print(f"{path}: observability.otlp.endpoint = {endpoint or '(off)'}" + (f"; ServiceMonitor + PrometheusRule on (labels {labels or '{}'}), exporters on, dashboards on" if stack else ""))
+        f.write(new)
+    print(f"{path}: observability.otlp.endpoint = {endpoint or '(off)'}" + (f"; ServiceMonitor + PrometheusRule on (labels {labels or '{}'}), exporters on, dashboards on" if stack else "") + ("; OTLP log records on" if logs else ""))
 
 
 if __name__ == "__main__":

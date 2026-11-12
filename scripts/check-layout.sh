@@ -32,6 +32,18 @@ for e in * .*; do
   ignored "$e" && continue
   stale+=("$e")
 done
+# build artefacts that must never be tracked, anywhere in the tree (two .pyc files were committed once: test.py and the
+# values scripts import modules, and the drop's .gitignore lacked __pycache__/; Node's compile cache under apps/cli
+# travelled in the drops since October). Only git knows what is tracked.
+if [ $in_git = 1 ]; then
+  mapfile -t bytecode < <(git ls-files -- '*.pyc' '*.pyo' '*/__pycache__/*' '__pycache__/*' '*/node-compile-cache/*' 'node-compile-cache/*')
+  if [ ${#bytecode[@]} -gt 0 ]; then
+    echo "tracked bytecode / compile caches (git rm -r --cached them; .gitignore has __pycache__/, *.py[co], node-compile-cache/):" >&2
+    printf '  %s\n' "${bytecode[@]}" >&2
+    exit 1
+  fi
+  git check-ignore -q tools/dashboards/__pycache__/ || { echo ".gitignore must ignore __pycache__/ (a drop rsync'ed over it?)" >&2; exit 1; }
+fi
 if [ ${#stale[@]} -gt 0 ]; then
   echo "stale entries at the repository root (allowed directories: $ALLOWED_DIRS; files: $ALLOWED_FILES $ALLOWED_FILE_GLOBS):" >&2
   for e in "${stale[@]}"; do [ -d "$e" ] && echo "  $e/" >&2 || echo "  $e" >&2; done

@@ -28,4 +28,14 @@ assert vo.set_observability(full, "http://jaeger:4318").count("observability:") 
 d = tempfile.mkdtemp(); f = os.path.join(d, "v.yaml"); open(f, "w").write(base)
 vo.main([f, "http://tempo.monitoring:4318", "--stack", "--label", "release=kube-prometheus-stack", "--label", "team=platform"])
 assert yaml.safe_load(open(f))["observability"]["metrics"]["serviceMonitor"]["labels"] == {"release": "kube-prometheus-stack", "team": "platform"}
+# --logs: observability.otlp.logs: true, to a collector — refused for Tempo (404 on /v1/logs, kind rc.23), file untouched
+vo.main([f, "http://alloy.monitoring:4318", "--stack", "--label", "release=kube-prometheus-stack", "--logs"])
+assert yaml.safe_load(open(f))["observability"]["otlp"] == {"endpoint": "http://alloy.monitoring:4318", "protocol": "http/protobuf", "logs": True}
+assert "logs" not in yaml.safe_load(vo.set_observability(base, "http://alloy.monitoring:4318", stack=True))["observability"]["otlp"]
+before = open(f).read()
+try:
+    vo.main([f, "http://tempo.monitoring:4318", "--stack", "--logs"]); raise AssertionError("--logs to Tempo accepted")
+except SystemExit as e:
+    assert "Tempo takes no logs" in str(e), e
+assert open(f).read() == before, "a refused --logs rewrote the values file"
 print("values-observability ok")

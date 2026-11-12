@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The observability delivery on the local kind cluster (docs/observability.md): kube-prometheus-stack (Prometheus with
 # exemplars, Grafana with Tempo / Loki datasources), Tempo, Loki and Alloy from their charts in namespace monitoring,
-# then the cell switched on — ServiceMonitor, PrometheusRule, exporters, dashboards, OTLP to Tempo — through its values
+# then the cell switched on — ServiceMonitor, PrometheusRule, exporters, dashboards, OTLP to Alloy's receiver (traces →
+# Tempo, the audit / security event records → Loki; never to Tempo directly, which takes no logs) — through its values
 # file and `apply`.
 #   make kind-observability TENANT=acme          (the cell exists: make provision / cell-provision.sh new + apply)
 #   scripts/kind-observability.sh <slug> [--print] --print only prints the helm commands (to run them by hand)
@@ -25,7 +26,7 @@ for c in "${CMDS[@]}"; do echo "+ $c"; eval "$c"; done
 
 VALUES="deploy/cells/$TENANT.values.yaml"
 [ -f "$VALUES" ] || { echo "$VALUES does not exist: provision the cell first (scripts/cell-provision.sh new --slug $TENANT …, then apply)" >&2; exit 1; }
-python3 scripts/lib/values-observability.py "$VALUES" "http://tempo.$NS:4318" http/protobuf --stack --label release=kube-prometheus-stack
+python3 scripts/lib/values-observability.py "$VALUES" "http://alloy.$NS:4318" http/protobuf --stack --label release=kube-prometheus-stack --logs
 echo "   written to $VALUES (commit it); applying the cell"
 bash scripts/cell-provision.sh apply --slug "$TENANT"
 
@@ -40,6 +41,9 @@ Checks (the acceptance of docs/observability.md, drops 2 and 3):
   count by (job) (matelot_build_info)                        → matelot-api, matelot-worker, matelot-runner
   pg_up{namespace="tenant-$TENANT"}  redis_up{…}  jvm_memory_used_bytes{job="matelot-keycloak"}  go_goroutines{job="matelot-registry"}
   run a pipeline, then Grafana → Explore → Tempo → service "matelot-pipeline" → the trace → a span → "Related logs" (Loki)
+  the events as OTLP log records (through Alloy):  {service_name=~"matelot-(api|worker)"} | event_name="matelot.security"
+  …and the same events as stdout lines:          {namespace="tenant-$TENANT"} | json | event_name="matelot.security"
+  matelot doctor: tracing → http://alloy.$NS:4318/v1/traces OK, events → …/v1/logs OK with no export failures
   Grafana → Dashboards → folder Matelot: Cell overview, Pipelines, Security posture, Integrations (from the cell's ConfigMaps)
   Prometheus → Alerts: groups matelot and matelot-kubernetes (the cell's PrometheusRule); scale the runners to 0 with a
   job queued → MatelotNoRunnerOnline after 10 m; make the backup CronJob fail (kubectl create job … --from=cronjob/$TENANT-backup

@@ -164,7 +164,10 @@ mirror this layout exactly — nothing at the root that is not in the repository
   names are a documented contract pinned by `events.spec.ts` — add an attribute to the list *and* the docs table,
   never rename one; a 403 the filter must not report as `access.denied` carries `code: gate_rejected`. A new
   observability fact for Administration → Observability / `doctor` goes into `ObservabilityStatusService.own()` (the
-  Redis heartbeat) or, for runners, their heartbeat `metadata`. `OTEL_LOGS_EXPORTER` is independent of tracing.
+  Redis heartbeat, one key per pod, counted only while current) or, for runners, their heartbeat `metadata`; a sum
+  goes over api *and* worker (the worker emits the gate / job / pipeline events). `OTEL_LOGS_EXPORTER` is independent
+  of tracing and needs an endpoint that takes logs (a collector / Alloy — never Tempo). A new exporter goes through
+  `watchExporter` (export-failures.ts) so its failures count for its own signal, as one line.
 
 ## v1 focus (read first)
 

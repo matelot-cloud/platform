@@ -2,7 +2,7 @@ import PageMeta from "@/components/common/PageMeta";
 import Badge from "@/components/ui/badge/Badge";
 import { isForbidden } from "@/platform/api/client";
 import { useMe, useObservabilityStatus, useTestOtlp } from "@/platform/api/hooks";
-import type { ObservabilityComponent, ObservabilityStatus } from "@/platform/api/types";
+import type { ObservabilityStatus } from "@/platform/api/types";
 import { Kpi } from "@/platform/components/Dashboard";
 import { Card, codeBlock, EmptyState, ErrorNotice, muted, Note, outlineButton, primaryButton, td, th, trBorder } from "@/platform/components/ui";
 import { formatDate, relativeTime } from "@/platform/format";
@@ -41,10 +41,11 @@ export default function AdminObservabilityPage() {
   if (status.error) return <ErrorNotice error={status.error} />;
   if (!s) return <p className={muted}>Loading…</p>;
 
-  const components: { name: string; version: string | null; scraped: string | null; traced: string | null; tracing: string | null; events: string; note?: string }[] = [
-    row("api", s.components.api), row("worker", s.components.worker),
-    { name: `runners (${s.components.runners.online} online)`, version: null, scraped: s.components.runners.metricsScrapedAt, traced: null, tracing: s.components.runners.online ? `${s.components.runners.tracing} of ${s.components.runners.online}` : null, events: "—", note: s.components.runners.online && !s.components.runners.reporting ? "runners older than 2.25 do not report their scrapes" : undefined },
-  ];
+  const ev = s.events;
+  const byComponent = Object.entries(ev.byComponent).sort(([a], [b]) => a.localeCompare(b)).map(([c, n]) => `${c} ${n.audit} · ${n.security}`).join(" — ");
+  const instances = s.components.instances;
+  const missing = (["api", "worker"] as const).filter((c) => !instances.some((i) => i.component === c && i.state === "current"));
+  const logsToTempo = !!s.logs.endpoint && /tempo/i.test(s.logs.endpoint);
 
   return (
     <>
@@ -53,25 +54,40 @@ export default function AdminObservabilityPage() {
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <Kpi label="Metrics" value={<OnOff on={s.metrics.enabled} label={s.metrics.enabled ? `:${s.metrics.port}/metrics` : "off"} />} caption={<>last scrape of this api: <Seen iso={s.metrics.lastScrapeAt} never="never — no Prometheus is scraping" /></>} tone={s.metrics.enabled && s.metrics.lastScrapeAt ? "good" : "warn"} />
           <Kpi label="Traces" value={<OnOff on={s.tracing.enabled} label={s.tracing.enabled ? `OTLP ${s.tracing.protocol}` : "off"} />} caption={<>last span: <Seen iso={s.tracing.lastSpanAt} never={s.tracing.enabled ? "none yet" : "tracing off"} /></>} tone={!s.tracing.enabled ? "default" : s.tracing.exportFailures ? "bad" : "good"} />
-          <Kpi label="Event records" value={<OnOff on={s.logs.enabled} label={s.logs.enabled ? `OTLP ${s.logs.exporter}` : "stdout only"} />} caption={`${s.logs.emitted.audit} audit · ${s.logs.emitted.security} security since start`} tone={s.logs.emitted.security ? "warn" : "default"} />
+          <Kpi label="Audit / security events" value={`${ev.total.audit} · ${ev.total.security}`} caption={<>{byComponent || "none yet"} (audit · security, since each process started) · {s.logs.enabled ? `OTLP ${s.logs.exporter}` : "stdout only"}</>} tone={s.logs.exportFailures ? "bad" : ev.total.security ? "warn" : "default"} />
           <Kpi label="Grafana" value={s.grafana ? <a className="text-brand-500 hover:underline" href={s.grafana.url} target="_blank" rel="noreferrer">Open Grafana ↗</a> : <span className={muted}>not linked</span>} caption={s.grafana ? s.grafana.url : "set observability.grafana.url (Helm) or MATELOT_GRAFANA_URL (Compose)"} />
         </div>
 
-        <Card title="Components" description="Each component's last metrics scrape and last trace; a scrape older than 5 minutes means no Prometheus is reaching it." flush>
+        <Card title="Components" description="One row per process (pod) that reported in the last 2 minutes. Only current ones are counted; a pod a rollout replaced, or one silent for 45 s, is listed with its age." flush>
           <div className="overflow-x-auto">
             <table className="w-full">
-              <thead><tr className={trBorder}><th className={th}>Component</th><th className={th}>Version</th><th className={th}>Last scrape</th><th className={th}>Last trace</th><th className={th}>Tracing</th><th className={th}>Events emitted</th></tr></thead>
+              <thead><tr className={trBorder}><th className={th}>Component</th><th className={th}>Pod</th><th className={th}>Version</th><th className={th}>Heartbeat</th><th className={th}>Last scrape</th><th className={th}>Last trace</th><th className={th}>Export</th><th className={th}>Events</th><th className={th}>Failures</th></tr></thead>
               <tbody>
-                {components.map((c) => (
-                  <tr key={c.name} className={trBorder}>
-                    <td className={td}>{c.name}{c.note && <div className={`text-xs ${muted}`}>{c.note}</div>}</td>
-                    <td className={td}>{c.version ?? "—"}</td>
-                    <td className={td}><Seen iso={c.scraped} never={c.name.startsWith("runners") && !s.components.runners.online ? "no runner online" : "never"} /></td>
-                    <td className={td}><Seen iso={c.traced} never={c.tracing ? "none yet" : "—"} /></td>
-                    <td className={td}>{c.tracing ?? <span className={muted}>off</span>}</td>
-                    <td className={td}>{c.events}</td>
+                {instances.map((i) => (
+                  <tr key={`${i.component}:${i.instance}`} className={`${trBorder} ${i.state === "current" ? "" : "opacity-60"}`}>
+                    <td className={td}>{i.component}</td>
+                    <td className={`${td} font-mono text-xs`}>{i.instance}{i.state !== "current" && <div className="mt-1"><Badge size="sm" color="light">{i.state === "superseded" ? "superseded — not counted" : "stale — not counted"}</Badge></div>}</td>
+                    <td className={td}>{i.version ?? "—"}</td>
+                    <td className={td}>{i.ageSeconds} s ago</td>
+                    <td className={td}><Seen iso={i.metricsScrapedAt} /></td>
+                    <td className={td}><Seen iso={i.lastSpanAt} never={i.tracing ? "none yet" : "—"} /></td>
+                    <td className={td}>traces {i.tracing ?? "off"} · logs {i.logs ?? "stdout"}</td>
+                    <td className={td}>{i.events.audit} audit · {i.events.security} security</td>
+                    <td className={td}>{i.exportFailures.traces.count || i.exportFailures.logs.count ? <span className="text-error-500">traces {i.exportFailures.traces.count} · logs {i.exportFailures.logs.count}</span> : <span className={muted}>none</span>}</td>
                   </tr>
                 ))}
+                {missing.map((c) => (
+                  <tr key={`missing-${c}`} className={trBorder}><td className={td}>{c}</td><td className={td} colSpan={8}><span className="text-warning-600">{c} has not reported in the last 45 seconds</span></td></tr>
+                ))}
+                <tr className={trBorder}>
+                  <td className={td}>runners</td>
+                  <td className={td}>{s.components.runners.online} online</td>
+                  <td className={td}>—</td><td className={td}>—</td>
+                  <td className={td}><Seen iso={s.components.runners.metricsScrapedAt} never={s.components.runners.online ? "never" : "no runner online"} />{s.components.runners.online > 0 && !s.components.runners.reporting && <div className={`text-xs ${muted}`}>runners older than 2.25 do not report their scrapes</div>}</td>
+                  <td className={td}>—</td>
+                  <td className={td}>traces {s.components.runners.online ? `${s.components.runners.tracing} of ${s.components.runners.online}` : "—"}</td>
+                  <td className={td}>—</td><td className={td}>—</td>
+                </tr>
               </tbody>
             </table>
           </div>
@@ -86,7 +102,9 @@ export default function AdminObservabilityPage() {
               <dt className={muted}>Logs endpoint</dt><dd className="font-mono text-xs break-all">{s.logs.endpoint ?? <span className={muted}>not configured (OTEL_LOGS_EXPORTER unset)</span>}</dd>
               <dt className={muted}>Headers</dt><dd className="font-mono text-xs">{s.tracing.headers.length ? s.tracing.headers.join(", ") : <span className={muted}>none</span>}</dd>
               <dt className={muted}>Sampler</dt><dd>{s.tracing.sampler} · GET ratio {s.tracing.getRatio}</dd>
-              <dt className={muted}>Export failures</dt><dd>{s.tracing.exportFailures ? <span className="text-error-500">{s.tracing.exportFailures}{s.tracing.lastExportError ? ` — ${s.tracing.lastExportError}` : ""}</span> : <span className="text-success-600">none since start</span>}</dd>
+              <dt className={muted}>Trace export</dt><dd><Failures enabled={s.tracing.enabled} count={s.tracing.exportFailures} last={s.tracing.lastExportError} at={s.tracing.lastExportErrorAt} /></dd>
+              <dt className={muted}>Log export</dt><dd><Failures enabled={s.logs.enabled} count={s.logs.exportFailures} last={s.logs.lastExportError} at={s.logs.lastExportErrorAt} />
+                {logsToTempo && s.logs.exportFailures > 0 && <div className={`mt-1 text-xs ${muted}`}>Tempo takes traces only: point OTLP at a collector that forwards logs to Loki (Alloy, the OpenTelemetry Collector), or turn OTLP logs off — the events stay on stdout.</div>}</dd>
             </dl>
             {test.error && <div className="mt-4"><ErrorNotice error={test.error} /></div>}
             {test.data && (
@@ -113,8 +131,11 @@ export default function AdminObservabilityPage() {
   );
 }
 
-function row(name: string, c: ObservabilityComponent | null) {
-  return { name, version: c?.version ?? null, scraped: c?.metricsScrapedAt ?? null, traced: c?.lastSpanAt ?? null, tracing: c?.tracing ?? null, events: c ? `${c.events.audit} audit · ${c.events.security} security` : "—", note: c ? undefined : `${name} has not reported in the last 2 minutes` };
+/** One signal's export failures, summed over the current pods; the last one as one line. */
+function Failures({ enabled, count, last, at }: { enabled: boolean; count: number; last: string | null; at: string | null }) {
+  if (!enabled) return <span className={muted}>off</span>;
+  if (!count) return <span className="text-success-600">no failures since start</span>;
+  return <span className="text-error-500">{count} failure{count === 1 ? "" : "s"}{last ? ` — ${last}` : ""}{at && <span className={muted}> ({relativeTime(at)})</span>}</span>;
 }
 
 export type { ObservabilityStatus };

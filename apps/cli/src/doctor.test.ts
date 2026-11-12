@@ -12,7 +12,7 @@ const run = promisify(execFile);
 const ORG = '0c3cbf3d-31cf-41bd-884a-7e085e66f4d8';
 const cli = join(__dirname, 'index.js');
 
-function serve(runnersOnline: boolean, discovery: 'ok' | 'html' | 'wrong-origin' = 'ok', observability: 'none' | 'ok' | 'failing' | 'forbidden' = 'none') {
+function serve(runnersOnline: boolean, discovery: 'ok' | 'html' | 'wrong-origin' = 'ok', observability: 'none' | 'ok' | 'failing' | 'forbidden' | 'logs-to-tempo' = 'none') {
   const server = createServer((req, res) => {
     const u = req.url!;
     const json = (code: number, body: unknown) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
@@ -33,8 +33,17 @@ function serve(runnersOnline: boolean, discovery: 'ok' | 'html' | 'wrong-origin'
     if (u === '/api/v1/admin/observability') {
       if (observability === 'none') return json(404, { message: 'Cannot GET /api/v1/admin/observability' });
       if (observability === 'forbidden') return json(403, { message: 'Observability settings are for cell administrators' });
-      const now = new Date().toISOString(); const failing = observability === 'failing';
-      return json(200, { cell: 'acme', environment: 'production', metrics: { enabled: true, port: 9464, lastScrapeAt: now }, tracing: { enabled: true, exporter: 'otlp', endpoint: 'http://otel-collector:4318/v1/traces', protocol: 'http/protobuf', headers: ['Authorization=••••'], sampler: 'parentbased_always_on', getRatio: 0.1, lastSpanAt: now, exportFailures: failing ? 3 : 0, lastExportError: failing ? 'connect ECONNREFUSED 10.0.0.9:4318' : null }, logs: { enabled: true, exporter: 'otlp', endpoint: 'http://otel-collector:4318/v1/logs', emitted: { audit: 5, security: 1 } }, grafana: { url: 'https://grafana.example.com' }, components: { api: { metricsScrapedAt: now }, worker: { metricsScrapedAt: now }, runners: { online: 1, reporting: 1, metricsScrapedAt: null, tracing: 1 } }, generatedAt: now });
+      const now = new Date().toISOString(); const failing = observability === 'failing'; const tempo = observability === 'logs-to-tempo';
+      const logsEndpoint = tempo ? 'http://tempo.monitoring:4318/v1/logs' : 'http://otel-collector:4318/v1/logs';
+      // logs-to-tempo: kind rc.23 — traces fine, the logs exporter answered 404; a replaced worker pod still in Redis
+      return json(200, { cell: 'acme', environment: 'production', metrics: { enabled: true, port: 9464, lastScrapeAt: now },
+        tracing: { enabled: true, exporter: 'otlp', endpoint: tempo ? 'http://tempo.monitoring:4318/v1/traces' : 'http://otel-collector:4318/v1/traces', protocol: 'http/protobuf', headers: ['Authorization=••••'], sampler: 'parentbased_always_on', getRatio: 0.1, lastSpanAt: now, exportFailures: failing ? 3 : 0, lastExportError: failing ? 'Error: connect ECONNREFUSED 10.0.0.9:4318 — POST http://otel-collector:4318/v1/traces' : null, lastExportErrorAt: failing ? now : null },
+        logs: { enabled: true, exporter: 'otlp', endpoint: logsEndpoint, protocol: 'http/protobuf', emitted: { audit: 9, security: 2 }, exportFailures: tempo ? 1 : 0, lastExportError: tempo ? `OTLPExporterError: Not Found (HTTP 404) — POST ${logsEndpoint}` : null, lastExportErrorAt: tempo ? now : null },
+        events: { total: { audit: 9, security: 2 }, byComponent: { api: { audit: 6, security: 1 }, worker: { audit: 3, security: 1 } } },
+        grafana: { url: 'https://grafana.example.com' },
+        components: { api: { metricsScrapedAt: now }, worker: { metricsScrapedAt: now },
+          instances: [{ component: 'api', instance: 'api-1', state: 'current', ageSeconds: 3 }, { component: 'worker', instance: 'worker-2', state: 'current', ageSeconds: 4 }, ...(tempo ? [{ component: 'worker', instance: 'worker-1', state: 'superseded', ageSeconds: 11 }] : [])],
+          runners: { online: 1, reporting: 1, metricsScrapedAt: null, tracing: 1 } }, generatedAt: now });
     }
     json(404, { message: 'not found' });
   });
@@ -141,8 +150,9 @@ test('matelot doctor: the observability section — scrapes, OTLP export (header
     const { stdout } = await run('node', [cli, 'doctor'], { env });
     assert.match(stdout, /OK {2}metrics +scraped — last scrape api \d+ s ago, worker \d+ s ago, runners never/);
     assert.match(stdout, /OK {2}tracing +otlp → http:\/\/otel-collector:4318\/v1\/traces \(headers: Authorization=••••\) · last span \d+ s ago/);
-    assert.match(stdout, /OK {2}events +5 audit · 1 security since start — OTLP log records → http:\/\/otel-collector:4318\/v1\/logs/);
-    assert.match(stdout, /--  grafana +https:\/\/grafana\.example\.com/);
+    // the worker's events (gate, job, pipeline transitions) are in the total — kind rc.23 showed the api's only
+    assert.match(stdout, /OK {2}events +9 audit · 2 security since start \(api 6\/1, worker 3\/1\) — OTLP log records → http:\/\/otel-collector:4318\/v1\/logs/);
+    assert.match(stdout, /OK {2}grafana +https:\/\/grafana\.example\.com/);   // linked → OK (was "--")
     assert.doesNotMatch(stdout, /Basic /);
     const j = JSON.parse((await run('node', [cli, 'doctor', '--json'], { env })).stdout);
     assert.equal(j.ok, true); assert.equal(j.checks.length, 11);
@@ -154,8 +164,20 @@ test('matelot doctor: the observability section — scrapes, OTLP export (header
   const failing = await serve(true, 'ok', 'failing');
   try {
     const env = { ...process.env, MATELOT_URL: `http://127.0.0.1:${failing.port}`, MATELOT_TOKEN: 'spt_test', MATELOT_CREDENTIALS: '/nonexistent' };
-    await assert.rejects(run('node', [cli, 'doctor', '--test-otlp'], { env }), (e: { code: number; stdout: string }) => { assert.equal(e.code, 1); assert.match(e.stdout, /FAIL {2}tracing +otlp → .* · 3 export failure\(s\): connect ECONNREFUSED 10\.0\.0\.9:4318/); assert.match(e.stdout, /FAIL {2}otlp-test +trace export failed: connect ECONNREFUSED/); return true; });
+    await assert.rejects(run('node', [cli, 'doctor', '--test-otlp'], { env }), (e: { code: number; stdout: string }) => { assert.equal(e.code, 1); assert.match(e.stdout, /FAIL {2}tracing +otlp → .* · 3 export failure\(s\): Error: connect ECONNREFUSED 10\.0\.0\.9:4318 — POST http/); assert.match(e.stdout, /OK {2}events /); assert.match(e.stdout, /FAIL {2}otlp-test +trace export failed: connect ECONNREFUSED/); return true; });
   } finally { failing.close(); }
+  // logs to Tempo (kind rc.23): the LOGS fail, with a one-line error and the hint; tracing stays OK; the replaced pod is named, not counted
+  const tempo = await serve(true, 'ok', 'logs-to-tempo');
+  try {
+    const env = { ...process.env, MATELOT_URL: `http://127.0.0.1:${tempo.port}`, MATELOT_TOKEN: 'spt_test', MATELOT_CREDENTIALS: '/nonexistent' };
+    await assert.rejects(run('node', [cli, 'doctor'], { env }), (e: { code: number; stdout: string }) => {
+      assert.equal(e.code, 1);
+      assert.match(e.stdout, /OK {2}tracing +otlp → http:\/\/tempo\.monitoring:4318\/v1\/traces .* · last span \d+ s ago \(1 replaced pod not counted\)/);
+      assert.match(e.stdout, /FAIL {2}events +9 audit · 2 security since start \(api 6\/1, worker 3\/1\) — OTLP log records → http:\/\/tempo\.monitoring:4318\/v1\/logs · 1 export failure\(s\): OTLPExporterError: Not Found \(HTTP 404\) — POST http:\/\/tempo\.monitoring:4318\/v1\/logs — Tempo takes no logs/);
+      assert.doesNotMatch(e.stdout, /stack|\n {4}at /);
+      return true;
+    });
+  } finally { tempo.close(); }
   const forbidden = await serve(true, 'ok', 'forbidden');
   try {
     const env = { ...process.env, MATELOT_URL: `http://127.0.0.1:${forbidden.port}`, MATELOT_TOKEN: 'spt_test', MATELOT_CREDENTIALS: '/nonexistent' };

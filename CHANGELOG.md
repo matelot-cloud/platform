@@ -4,6 +4,51 @@
 
 Images `ghcr.io/matelot-cloud/{api,web,worker,runner}` and the chart `oci://ghcr.io/matelot-cloud/charts/secops-cell`, signed, with SBOM attestations; install guide at https://matelot-cloud.github.io/website/docs/latest/install.html. The sections below are the drops that make up the release, newest first.
 
+### Observability drop 4 acceptance fixes (kind rc.23): events of api + worker, export failures per signal and in one line, rollouts do not look like failures, OTLP logs through Alloy on kind
+
+Run here: unit and render tests, CLI tests, `test/span-budget.mjs` end to end (api + worker, status counts compared
+with the records of both), the new `test/export-failures.mjs` (real OTLP exporters against a 404 and a refused port),
+`alloy validate` (Alloy 1.14.1) and the kind receiver end to end against Loki 3.6.12. **Not run here:** chart-test with
+a real helm (it could not be built in this environment) and `smoke.sh` — neither the chart nor `deploy/compose` is
+changed by this drop, so CI's runs of drop 4 still stand; CI and the kind run decide.
+
+- **Events counted for api *and* worker.** Pipeline #8 failed at the gate and the worker emitted `gate.fail`,
+  `job.failed`, `pipeline.failed` and `gate.failed`, but the status said "7 audit · 0 security" — the api's numbers
+  only. The status sums every current pod's events (`events.total`, `events.byComponent`; `logs.emitted` = the total
+  for older clients); the page shows them per component and per pod; doctor prints `9 audit · 2 security since start
+  (api 6/1, worker 3/1)`. docs/observability.md says which process emits which events (gate / job / pipeline
+  transitions, sweeps, sync: the worker; requests and refusals: the api). Tests: a worker's gate failure is in the
+  total (`observability-status.spec.ts`); `span-budget.mjs` runs the worker with its own records file and fails unless
+  the status's per-component counts equal the records of each process.
+- **Export failures per signal.** A logs exporter answering 404 was a *tracing* failure, because both read the one diag
+  logger. Every exporter is now wrapped (`telemetry/export-failures.ts`): `tracing.exportFailures` /
+  `logs.exportFailures`, each with its own last error and time, on the page (trace export / log export), in doctor
+  (`tracing` fails on trace failures only, `events` on log failures) and in Test OTLP.
+- **One-line errors.** `OTLPExporterError: Not Found (HTTP 404) — POST http://tempo.monitoring:4318/v1/logs` (name,
+  first message line, HTTP or gRPC status, where it was sent) instead of the serialized stack; the stack stays in the
+  pod log.
+- **Rollouts.** Heartbeats are per pod (`matelot:observability:<component>:<pod>`, with the process start and an
+  exporter-settings fingerprint) and deleted on shutdown (`beforeApplicationShutdown`, before Redis closes). Only
+  current pods are counted: older than 45 s → stale, an older pod whose settings a newer pod of the component replaced
+  → superseded; both are listed with their age. Replicas with the same settings add up. Drop-4 heartbeats are read.
+- **Test OTLP no longer says "sent" for an endpoint nobody listens on.** A refused connection is retried for several
+  seconds; the 5 s flush ended first and the test reported success with 0 failures (found while verifying this drop).
+  `flush()` now says whether it finished; the test waits up to 12 s and reports an unfinished export as "no answer".
+- **kind: OTLP to Alloy, logs on.** `alloy.values.yaml` adds an `otelcol.receiver.otlp` (4317 / 4318 on the `alloy`
+  Service): traces → Tempo, log records → Loki `/otlp`; `kind-observability` points the cell at
+  `http://alloy.monitoring:4318` with `observability.otlp.logs: true`; Loki indexes `matelot.cell` /
+  `matelot.component`. `values-observability.py --logs` refuses a Tempo endpoint (and leaves the file untouched).
+  The script prints both Loki queries: `{service_name=~"matelot-(api|worker)"} | event_name="matelot.security"` (OTLP)
+  and `{namespace="tenant-<slug>"} | json | event_name="matelot.security"` (stdout).
+- **CLI 2.25.1.** `matelot request GET /admin/observability` adds `/api/v1`; any API call answered with an HTML page
+  (the web app) fails with a hint instead of printing it as JSON and exiting 0. `doctor` prints `OK grafana` when
+  linked (`--` only when not), names replaced pods, and hints when OTLP logs go to Tempo.
+- **Bytecode and caches never committed.** `.gitignore` has `__pycache__/`, `*.py[co]` and `node-compile-cache/`;
+  `check-layout.sh` fails on any tracked `.pyc` / `__pycache__` / `node-compile-cache` file and when `.gitignore` no
+  longer ignores `__pycache__/` (a drop rsync'ed over it). Node's compile cache (`apps/cli/node-compile-cache/`,
+  written when `pnpm install` runs the CLI's `prepare`) had travelled in the drops since October; it is out of this
+  one — `git rm -r --cached apps/cli/node-compile-cache` if it is tracked.
+
 ### Observability drop 4 — Administration → Observability, `matelot doctor` observability section, audit / security events for SIEMs (+ the rc.22 fixes)
 
 Not run here (no Docker daemon, image registries and get.helm.sh blocked): `deploy/compose/smoke.sh --observability`,

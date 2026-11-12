@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { CliError, configFromEnv, isTlsCode, request, unreachableDetail, VERSION } from './client';
+import { CliError, configFromEnv, isTlsCode, request, unreachableDetail, VERSION, apiPath } from './client';
 import type { Config } from './client';
 import { signatureHeader } from './signing';
 import { readZip } from './zip-read';
@@ -48,7 +48,7 @@ Commands
   registry path --service <serviceId> [--env <environmentId>]   built-in registry: the full pushable reference (host included) of the build (or environment) image
   registry path --service <serviceId> --connection NAME --repository NAME [--create]   external registry (ECR/ACR/Hub…): image path; --create makes the ECR repository if missing
   sbom     --service <serviceId> --file bom.json --target source|image [--version X] [--image REF]
-  request  <METHOD> </api/v1/path> [json-body]           any endpoint
+  request  <METHOD> </api/v1/path> [json-body]           any endpoint (a path without /api/v1 gets it)
 
 Resource commands (matelot <resource> <verb> [--org|--workspace|--team|--project|--service|--env|--id …] [--json] [--body '{json}']):
 ${RESOURCES.map((r) => `  ${`${r.resource} ${r.verb}`.padEnd(26)} ${r.summary}`).join('\n')}
@@ -412,7 +412,7 @@ Check the handshake: matelot mcp --check`);
     case 'request': {
       const [method, path, body] = positional;
       if (!method || !path) throw new CliError('usage: request <METHOD> </api/v1/path> [json]');
-      const r = await request(config, method.toUpperCase(), path, body ? JSON.parse(body) : undefined);
+      const r = await request(config, method.toUpperCase(), apiPath(path), body ? JSON.parse(body) : undefined);
       console.log(JSON.stringify(r, null, 2));
       return;
     }
@@ -670,10 +670,17 @@ function onboardingText(r: OnboardingReport, verb: string): string {
 interface ObservabilityStatus {
   metrics: { enabled: boolean; port: number; lastScrapeAt: string | null };
   tracing: { enabled: boolean; exporter: string | null; endpoint: string | null; headers: string[]; lastSpanAt: string | null; exportFailures: number; lastExportError: string | null };
-  logs: { enabled: boolean; endpoint: string | null; emitted: { audit: number; security: number } };
+  logs: { enabled: boolean; endpoint: string | null; emitted: { audit: number; security: number }; exportFailures?: number; lastExportError?: string | null };
+  /** 2.25.1+: api + worker (older APIs: logs.emitted, the api's only) */
+  events?: { total: { audit: number; security: number }; byComponent: Record<string, { audit: number; security: number }> };
   grafana: { url: string } | null;
-  components: { api: { metricsScrapedAt: string | null } | null; worker: { metricsScrapedAt: string | null } | null; runners: { online: number; metricsScrapedAt: string | null } };
+  components: {
+    api: { metricsScrapedAt: string | null } | null; worker: { metricsScrapedAt: string | null } | null;
+    instances?: { component: string; instance: string; state: 'current' | 'superseded' | 'stale'; ageSeconds: number }[];
+    runners: { online: number; metricsScrapedAt: string | null };
+  };
 }
+
 
 /** `matelot doctor`: what an operator checks after `docker compose up -d` / `helm install` — unauthenticated probes
  * first (reachability, readiness, version), then everything the credentials allow (login, organization, runners,
@@ -749,9 +756,17 @@ async function doctor(urlFlag: string | undefined, json: boolean, testOtlp = fal
     const scrapes = [['api', o.components.api?.metricsScrapedAt ?? null], ['worker', o.components.worker?.metricsScrapedAt ?? null], ['runners', o.components.runners.metricsScrapedAt]] as const;
     const anyScrape = scrapes.some(([, at]) => fresh(at));
     add('metrics', o.metrics.enabled ? (anyScrape ? true : null) : null, !o.metrics.enabled ? 'off (MATELOT_METRICS_ENABLED=false)' : `${anyScrape ? 'scraped' : 'nothing is scraping'} — last scrape ${scrapes.map(([c, at]) => `${c} ${ago(at)}`).join(', ')}${!o.components.worker ? ' (worker not reporting)' : ''}`);
-    add('tracing', !o.tracing.enabled ? null : o.tracing.exportFailures ? false : true, !o.tracing.enabled ? 'off — set observability.otlp.endpoint (Helm) / MATELOT_OTLP_ENDPOINT (Compose) to export traces' : `${o.tracing.exporter} → ${o.tracing.endpoint ?? '?'}${o.tracing.headers.length ? ` (headers: ${o.tracing.headers.join(', ')})` : ''} · last span ${ago(o.tracing.lastSpanAt)}${o.tracing.exportFailures ? ` · ${o.tracing.exportFailures} export failure(s): ${o.tracing.lastExportError ?? ''}` : ''}`);
-    add('events', true, `${o.logs.emitted.audit} audit · ${o.logs.emitted.security} security since start — ${o.logs.enabled ? `OTLP log records → ${o.logs.endpoint ?? '?'}` : 'stdout lines only (OTEL_LOGS_EXPORTER unset)'}`);
-    add('grafana', null, o.grafana ? o.grafana.url : 'not linked — observability.grafana.url (Helm) / MATELOT_GRAFANA_URL (Compose)');
+    // a rollout's old pods are listed by the API, not counted (kind rc.23: their failures made a fresh cell FAIL)
+    const notCounted = (o.components.instances ?? []).filter((i) => i.state !== 'current');
+    const aside = notCounted.length ? ` (${notCounted.length} ${notCounted.every((i) => i.state === 'superseded') ? 'replaced' : 'old'} pod${notCounted.length === 1 ? '' : 's'} not counted)` : '';
+    add('tracing', !o.tracing.enabled ? null : o.tracing.exportFailures ? false : true, !o.tracing.enabled ? 'off — set observability.otlp.endpoint (Helm) / MATELOT_OTLP_ENDPOINT (Compose) to export traces' : `${o.tracing.exporter} → ${o.tracing.endpoint ?? '?'}${o.tracing.headers.length ? ` (headers: ${o.tracing.headers.join(', ')})` : ''} · last span ${ago(o.tracing.lastSpanAt)}${o.tracing.exportFailures ? ` · ${o.tracing.exportFailures} export failure(s): ${o.tracing.lastExportError ?? ''}` : ''}${aside}`);
+    // the events: api + worker (the gate, job and pipeline transitions are the worker's); log export failures are their own
+    const total = o.events?.total ?? o.logs.emitted;
+    const per = o.events ? Object.entries(o.events.byComponent).sort(([a], [b]) => a.localeCompare(b)).map(([c, n]) => `${c} ${n.audit}/${n.security}`).join(', ') : 'api only — API older than this CLI';
+    const logFailures = o.logs.exportFailures ?? 0;
+    const tempo = !!o.logs.endpoint && /tempo/i.test(o.logs.endpoint) ? ' — Tempo takes no logs: point OTLP at a collector that forwards them to Loki (Alloy), or turn OTLP logs off' : '';
+    add('events', o.logs.enabled && logFailures ? false : true, `${total.audit} audit · ${total.security} security since start (${per})` + (o.logs.enabled ? ` — OTLP log records → ${o.logs.endpoint ?? '?'}${logFailures ? ` · ${logFailures} export failure(s): ${o.logs.lastExportError ?? ''}${tempo}` : ''}` : ' — stdout lines only (OTEL_LOGS_EXPORTER unset)'));
+    add('grafana', o.grafana ? true : null, o.grafana ? o.grafana.url : 'not linked — observability.grafana.url (Helm) / MATELOT_GRAFANA_URL (Compose)');
     if (testOtlp) {
       const t = await request<{ traceId: string | null; traces: { attempted: boolean; ok: boolean; error: string | null }; logs: { attempted: boolean; ok: boolean; error: string | null } }>(config, 'POST', '/api/v1/admin/observability/test-otlp');
       add('otlp-test', t.traces.attempted ? t.traces.ok : null, t.traces.attempted ? (t.traces.ok ? `test span sent (trace ${t.traceId}; look for "matelot.test")` : `trace export failed: ${t.traces.error}`) : `traces: ${t.traces.error}`);

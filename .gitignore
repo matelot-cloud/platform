@@ -9,6 +9,11 @@ apps/*/coverage/
 .idea/
 .vscode/
 *.tsbuildinfo
+# Python bytecode (tools/dashboards/test.py and the values scripts import modules) — never committed; check-layout fails on a tracked one
+__pycache__/
+*.py[co]
+# Node's compile cache (npm enables it; `pnpm install` → the CLI's prepare → `npm run build` writes apps/cli/node-compile-cache)
+node-compile-cache/
 
 .runner/
 dist-worker/
@@ -20,4 +25,3 @@ dist/
 .env.smoke
 .smoke-*
 smoke-backups/
-__pycache__/

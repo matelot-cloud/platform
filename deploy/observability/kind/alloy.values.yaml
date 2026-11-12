@@ -1,11 +1,18 @@
-# grafana/alloy 1.14.1 for Matelot on kind: the pod logs of every cell namespace (tenant-<slug>) into Loki, through
-# the Kubernetes API (one replica; no host mounts). Our processes log one JSON schema (docs/observability.md,
-# "Logs"): trace_id / span_id become structured metadata, level / component labels, the namespace gives `cell`.
+# grafana/alloy 1.14.1 for Matelot on kind, two jobs:
+#  1. the pod logs of every cell namespace (tenant-<slug>) into Loki, through the Kubernetes API (one replica; no host
+#     mounts). Our processes log one JSON schema (docs/observability.md, "Logs"): trace_id / span_id become structured
+#     metadata, level / component labels, the namespace gives `cell`.
+#  2. the cells' OTLP receiver (alloy.monitoring:4318 http, :4317 gRPC) that fans out like the Compose profile's
+#     collector: traces → Tempo, log records (the audit / security events, observability.otlp.logs) → Loki's OTLP
+#     endpoint. Tempo takes no logs (it answers 404 on /v1/logs — kind rc.23), so the cell never points at it directly.
 #   helm upgrade --install alloy grafana/alloy --version 1.14.1 -n monitoring -f deploy/observability/kind/alloy.values.yaml
 controller:
   type: deployment
   replicas: 1
 alloy:
+  extraPorts:
+    - { name: otlp-grpc, port: 4317, targetPort: 4317, protocol: TCP }
+    - { name: otlp-http, port: 4318, targetPort: 4318, protocol: TCP }
   resources: { requests: { cpu: 50m, memory: 128Mi }, limits: { memory: 512Mi } }
   configMap:
     content: |
@@ -56,5 +63,38 @@ alloy:
       loki.write "default" {
         endpoint {
           url = "http://loki.monitoring:3100/loki/api/v1/push"
+        }
+      }
+
+      // 2. OTLP from the cells: traces → Tempo, logs → Loki (http://loki:3100/otlp/v1/logs)
+      otelcol.receiver.otlp "cells" {
+        grpc {
+          endpoint = "0.0.0.0:4317"
+        }
+        http {
+          endpoint = "0.0.0.0:4318"
+        }
+        output {
+          traces = [otelcol.processor.batch.cells.input]
+          logs   = [otelcol.processor.batch.cells.input]
+        }
+      }
+
+      otelcol.processor.batch "cells" {
+        output {
+          traces = [otelcol.exporter.otlphttp.tempo.input]
+          logs   = [otelcol.exporter.otlphttp.loki.input]
+        }
+      }
+
+      otelcol.exporter.otlphttp "tempo" {
+        client {
+          endpoint = "http://tempo.monitoring:4318"
+        }
+      }
+
+      otelcol.exporter.otlphttp "loki" {
+        client {
+          endpoint = "http://loki.monitoring:3100/otlp"
         }
       }

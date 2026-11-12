@@ -25,10 +25,19 @@ released. Issues, discussions and releases live in `matelot-cloud/matelot` and a
 
 1. On `main`, green CI (`ci.yml`: api tests + migrations, web/runner/CLI builds and tests, docs render + link check,
    chart tests, image builds including the worker target).
-2. Add the release's section at the top of `CHANGELOG.md`, titled **`## vX.Y.Z — <one line>`**: the release notes are
-   that section (`scripts/changelog-section.sh vX.Y.Z` shows what will be published; without a matching heading the
-   first section is used with a note — accepted for a pre-release tag; **a final tag without its section fails the
-   release job** before anything is published to `matelot`).
+2. Write the **public** notes in `docs/release-notes.md` — the body of the GitHub Release in `matelot-cloud/matelot`,
+   written for an operator (features, fixes, upgrade notes, breaking changes): a section **`## vX.Y.Z — <one line>`**
+   with the curated summary first (the notes of the final release), then one `### <date> — <title>` entry per released
+   build, newest first (the notes of a pre-release `vX.Y.Z-rc.N` are the **newest entry only**). `CHANGELOG.md` is the
+   internal drop log — verification notes, test scripts, environment limits — and is **never published** (rc.24
+   tried: its section was 125,185 characters, GitHub's limit is 125,000, and the text was not for customers).
+   `scripts/release-notes.sh vX.Y.Z[-rc.N]` prints exactly what will be published and refuses a missing section
+   (exit 1), internal wording (exit 3; the list is `scripts/lib/public-notes-internal-wording.txt`) and more than
+   60,000 characters (exit 4). The release workflow runs it as the **first step of its first job**, so a tag with bad
+   notes fails before any image is built; the release job checks the final `notes.md` (with the Artifacts block)
+   against a hard limit of 100,000. `scripts/release-notes.test.sh` (CI job `layout`) keeps the next release's notes
+   valid on every push. A build with nothing new for operators needs no new entry: the pre-release republishes the
+   newest one. Still add the drop's entry to `CHANGELOG.md` as before.
 3. Bump versions if they changed: `apps/api`, `apps/web`, `apps/runner` `package.json` and `Chart.yaml`
    (`version` / `appVersion`) carry the development version; the pipeline stamps the tag's version on the chart it
    publishes, so these only need to match for `make deploy` on kind. The CLI has its own version and release:
@@ -52,8 +61,8 @@ released. Issues, discussions and releases live in `matelot-cloud/matelot` and a
    - **docs**: `tools/docs-site/build.mjs` renders `docs/` into `website/docs/vX.Y/` (major.minor: a patch release
      overwrites its line) and `website/docs/latest/`, runs the website's own test + link check against the result,
      commits and pushes. The website's `pages.yml` deploys on that push.
-   - **release**: `gh release create vX.Y.Z --repo matelot-cloud/matelot` with the CHANGELOG section, the image and chart
-     digests, the `cosign verify` commands and the SBOM files attached.
+   - **release**: `gh release create vX.Y.Z --repo matelot-cloud/matelot` with the public notes (`scripts/release-notes.sh`), the image and
+     chart digests, the `cosign verify` commands and the SBOM files attached.
 6. Check: `helm pull oci://ghcr.io/matelot-cloud/charts/secops-cell --version X.Y.Z`, `docker pull ghcr.io/matelot-cloud/api:X.Y.Z`,
    the release page, https://matelot.cloud/docs/vX.Y/install.html.
 7. Upgrade a cell on kind from the published chart (`helm upgrade … oci://… --version X.Y.Z`) before announcing.
@@ -126,7 +135,7 @@ The same procedure applies at expiry; GitHub e-mails the token owner a week befo
 | `helm-charts/charts/secops-cell`, `helm-charts/scripts` | `deploy/helm/secops-cell`, `scripts/cell-backup.sh`, `scripts/cell-restore.sh`, `scripts/lib/{wait.sh,cellwait.py}` | `release.yml` |
 | `helm-charts/README.md`, `LICENSE` | the public repository | by hand |
 | `matelot/*` files | the public repository | by hand; `CHANGELOG.md` there gets a short summary per release line, the detailed log stays here |
-| GitHub Release in `matelot` | `CHANGELOG.md` section + digests | `release.yml` |
+| GitHub Release in `matelot` | `docs/release-notes.md` (through `scripts/release-notes.sh`) + digests — never `CHANGELOG.md` | `release.yml`; `release-notes-fix.yml` (manual) rewrites published notes that carry internal wording |
 | `matelot/docker/` | `deploy/compose/`, `scripts/cell-backup.sh`, `scripts/cell-restore.sh`, `scripts/lib/{compose.sh,wait.sh,cellwait.py}` | `release.yml` (version stamped into `.env.example`) |
 | `setup-cli/*` except README | `apps/cli` (src, **compiled `dist/`**, examples, package.json without `prepare`/devDependencies, tsconfig, action.yml, LICENSE) | `publish-cli.yml` on `cli-v*` tags: push, tags `vX.Y.Z` + moving `v<major>`, then a GitHub Release `vX.Y.Z` in `setup-cli` with `matelot-cli-X.Y.Z.tgz` and `matelot-cli.tgz` (fixed name for `releases/latest/download/`); the `install-test` job then runs the documented commands on a clean runner (pinned asset, latest asset, the major tag's source archive) and checks `matelot --version` / `secops --version` |
 | `setup-cli/README.md` | the public repository | by hand |
@@ -181,5 +190,5 @@ pnpm -r typecheck && pnpm -r test && pnpm -r build
 make helm-lint          # scripts/chart-test.sh: every configuration, install == upgrade, tag change rolls only app pods, compose copies
 deploy/compose/smoke.sh # with local images: MATELOT_VERSION=local MATELOT_REGISTRY_PREFIX=secops in deploy/compose/.env (CI job `compose`)
 make docs-check         # docs render + every link resolves
-scripts/changelog-section.sh vX.Y.Z
+scripts/release-notes.sh vX.Y.Z          # the public release notes, as they will be published (also -rc.N)
 ```

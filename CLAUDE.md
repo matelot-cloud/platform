@@ -209,4 +209,9 @@ providers · 17 provisioning control plane.
   repo) and pushed there by `docs-sync.yml` (latest) and `release.yml` (`docs/vX.Y`). `make docs-check` is the CI gate;
   `make docs-sync WEBSITE_DIR=../website` previews the whole site. The web app does not bundle docs; its sidebar link
   is `docsUrl` from config.json (`web.docsUrl` in the chart, default the Pages URL).
-- A release = tag `vX.Y.Z` with a `## vX.Y.Z — …` section at the top of CHANGELOG.md; `release.yml` does the rest.
+- A release = tag `vX.Y.Z` (or `-rc.N`) with a `## vX.Y.Z — …` section in **`docs/release-notes.md`** — the public
+  notes, written for operators: curated summary (the final release), then one `###` entry per build, newest first (a
+  pre-release publishes the newest only); `release.yml` does the rest. `CHANGELOG.md` is the internal drop log and is
+  never published. Every drop that changes something for an operator adds a public entry there too — no test names,
+  repository paths, environment limits or drop numbers (`scripts/lib/public-notes-internal-wording.txt`;
+  `scripts/release-notes.test.sh` and check-forbidden enforce it, the release's first step refuses bad notes).

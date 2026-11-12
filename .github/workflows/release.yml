@@ -6,7 +6,7 @@
 #            scripts synced to matelot-cloud/helm-charts
 #   compose  deploy/compose (+ backup/restore scripts) synced to matelot-cloud/matelot → docker/, .env.example pinned to X.Y.Z
 #   docs     rendered into matelot-cloud/website: docs/vX.Y/ and docs/latest/ (Pages deploys on that push)
-#   release  GitHub Release vX.Y.Z in matelot-cloud/matelot: the CHANGELOG section + image and chart digests
+#   release  GitHub Release vX.Y.Z in matelot-cloud/matelot: the public notes (docs/release-notes.md, never CHANGELOG.md) + image and chart digests
 #
 # Secrets: GITHUB_TOKEN (ghcr, this repo) · PUBLIC_REPOS_TOKEN (repository secret on platform — organization secrets
 # are not available to private repositories on the Free plan: fine-grained PAT, Contents read/write on
@@ -38,6 +38,17 @@ jobs:
       line: ${{ steps.v.outputs.line }}             # v1.2  (docs folder)
       prerelease: ${{ steps.v.outputs.prerelease }} # true / false
     steps:
+      - uses: actions/checkout@v7
+      # First step of the first job: every other job needs this one, so a release whose notes are missing, too long
+      # or carry internal wording stops here — before any image is built or pushed (rc.24 failed at the very last
+      # step, HTTP 422 "body is too long", with images, chart, docs and compose already published).
+      - name: "Public release notes: present, operator wording, well under GitHub's 125,000-character limit"
+        run: |
+          bash scripts/release-notes.sh "$GITHUB_REF_NAME" > notes-body.md
+          chars=$(wc -m < notes-body.md)
+          echo "release notes of $GITHUB_REF_NAME: $chars characters (limit for the body 60000; for the release with its Artifacts block 100000)"
+          [ $((chars + 3000)) -le 100000 ] || { echo "::error::release notes of $GITHUB_REF_NAME are $chars characters — over the limit with the Artifacts block; shorten docs/release-notes.md"; exit 1; }
+          cat notes-body.md
       - id: v
         run: |
           tag="${GITHUB_REF_NAME}"; version="${tag#v}"
@@ -283,15 +294,14 @@ jobs:
         run: |
           for n in api worker web runner; do [ -s "digests/digest-$n.txt" ] || { echo "::error::no digest for $n — its image job did not finish; re-run the failed jobs"; exit 1; }; done
           cat digests/*.txt
-      - name: "Release notes: CHANGELOG section + digests"
+      - name: "Release notes: the public notes (docs/release-notes.md) + digests"
         env:
           VERSION: ${{ needs.version.outputs.version }}
           CHART_DIGEST: ${{ needs.chart.outputs.digest }}
         run: |
-          # the section must exist for a final release; a pre-release may fall back to the newest section
-          if bash scripts/changelog-section.sh "v$VERSION" > notes.md; then :
-          elif [ "${{ needs.version.outputs.prerelease }}" = "true" ]; then echo "::warning::CHANGELOG.md has no '## v$VERSION' section; using the newest one (fine for a pre-release)"
-          else echo "::error::CHANGELOG.md has no '## v$VERSION' section — add it at the top (docs/release-process.md § Cutting a release) and re-tag"; exit 1; fi
+          # Never CHANGELOG.md: that is the internal drop log. A pre-release publishes the newest entry of its
+          # release's section, the final release the curated summary; the script refuses internal wording and size.
+          bash scripts/release-notes.sh "v$VERSION" > notes.md
           {
             echo; echo "## Artifacts"; echo
             echo '```'
@@ -311,6 +321,9 @@ jobs:
             echo
             echo "Install or upgrade: $SITE/docs/${{ needs.version.outputs.line }}/install.html"
           } >> notes.md
+          chars=$(wc -m < notes.md)
+          [ "$chars" -le 100000 ] || { echo "::error::notes.md is $chars characters (hard limit 100000; GitHub refuses a release body over 125000)"; exit 1; }
+          echo "notes.md: $chars characters"
           for d in sboms/*/; do n=$(basename "$d" | sed 's/^sbom-//'); cp "$d/sbom-$n.spdx.json" "matelot-$n-$VERSION.spdx.json"; done
           cat notes.md
       - name: Create the GitHub Release in matelot-cloud/matelot

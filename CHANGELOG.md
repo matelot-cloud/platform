@@ -4,6 +4,32 @@
 
 Images `ghcr.io/matelot-cloud/{api,web,worker,runner}` and the chart `oci://ghcr.io/matelot-cloud/charts/secops-cell`, signed, with SBOM attestations; install guide at https://matelot-cloud.github.io/website/docs/latest/install.html. The sections below are the drops that make up the release, newest first.
 
+### Release notes: public, short, checked first (rc.24: HTTP 422 "body is too long" at the last step)
+
+Run here: `scripts/release-notes.test.sh`, check-forbidden / check-workflows / check-layout, shellcheck, the fixer's
+loop against a stand-in `gh`. Not run here: the release workflow itself and the fixer against the real repository
+(no access to it from this environment) — rc.25 and a dry run of `release-notes-fix` are the check.
+
+- **Cause.** The release body was this file's whole `## v0.1.0` section — 51 entries, 125,185 characters; GitHub
+  refuses more than 125,000 — and it is our internal drop log, published in the public repository.
+- **New source: `docs/release-notes.md`**, written for operators. `scripts/release-notes.sh <tag>` prints the notes:
+  the curated summary for the final `vX.Y.Z`, a short header + the **newest `###` entry** for a pre-release. It
+  refuses a missing section (1), internal wording (3) and more than 60,000 characters (4). This file is never
+  published; `scripts/changelog-section.sh` is gone (**`git rm scripts/changelog-section.sh`** — rsync does not delete).
+- **Fail early.** The first step of `release.yml`'s first job (`version`, which every job needs) builds the notes, so
+  bad notes stop the release before any image is built. The release job checks the final `notes.md` ≤ 100,000.
+- **Wording guard.** `scripts/lib/public-notes-internal-wording.txt` (verification notes, test scripts, repository
+  paths, environment limits, drop numbers) is used by the script, by check-forbidden on `docs/release-notes.md`, and by
+  the fixer. `scripts/release-notes.test.sh` (CI job `layout`, `make check-layout`) runs on the real files: the next
+  pre-release and final notes are valid and small; this file's newest entry is refused, 46 of its 51 entries trip the
+  wording guard, a body of rc.24's size trips the size guard. check-workflows pins the workflow shape.
+- **Published releases.** `.github/workflows/release-notes-fix.yml` (manual; dry run by default) runs
+  `.github/scripts/rewrite-release-notes.sh`: a release whose body carries internal wording gets a short public
+  paragraph and keeps its own Artifacts block byte for byte; clean releases are left alone; one without an Artifacts
+  block is reported for a manual edit.
+- The public `matelot/CHANGELOG.md` summary names the CLI package `matelot-cli` (it still said the old name) and
+  lists observability.
+
 ### Observability drop 4 acceptance fixes (kind rc.23): events of api + worker, export failures per signal and in one line, rollouts do not look like failures, OTLP logs through Alloy on kind
 
 Run here: unit and render tests, CLI tests, `test/span-budget.mjs` end to end (api + worker, status counts compared

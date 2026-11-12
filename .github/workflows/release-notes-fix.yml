@@ -1,0 +1,34 @@
+# One-off maintenance: rewrite the notes of releases already published in matelot-cloud/matelot that carry internal
+# wording (until rc.23 the release body was the internal CHANGELOG section). Run by hand — Actions → release-notes-fix →
+# Run workflow: first with "dry run" (the default; prints what would change), then without. The Artifacts block of each
+# release (digests, cosign commands) is kept as it is. New releases cannot leak: release.yml builds their notes from
+# docs/release-notes.md through scripts/release-notes.sh, which refuses internal wording.
+name: release-notes-fix
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run: only print what would change"
+        type: boolean
+        default: true
+      tags:
+        description: "Tags to rewrite, space separated (empty = every release)"
+        type: string
+        default: ""
+permissions: { contents: read }
+env:
+  ORG: matelot-cloud
+jobs:
+  rewrite:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Rewrite the notes that carry internal wording
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_REPOS_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+          TAGS: ${{ inputs.tags }}
+        run: |
+          # shellcheck disable=SC2086  # TAGS is a space-separated list
+          bash .github/scripts/rewrite-release-notes.sh $TAGS

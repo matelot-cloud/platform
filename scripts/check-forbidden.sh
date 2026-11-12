@@ -27,4 +27,15 @@ for word in "${FORBIDDEN[@]}"; do
     echo "$hits" | cut -d: -f1 | sort -u | while read -r f; do git check-ignore -q --no-index "$f" 2>/dev/null && echo "  ($f is tracked but git-ignored: git rm -r --cached $f)" >&2; done
   fi
 done
-[ $status -eq 0 ] && echo "forbidden strings: none" || exit 1
+# Public texts must not carry internal wording (verification notes, test scripts, environment limits): the source of
+# the public release notes is checked against the same list the release job uses (rc.24 published the internal log).
+PUBLIC_TEXTS=(docs/release-notes.md)
+for f in "${PUBLIC_TEXTS[@]}"; do
+  [ -f "$f" ] || { echo "public text $f is missing" >&2; status=1; continue; }
+  # HTML comments are the file's internal header: never published, so not scanned
+  hits=$(awk '/<!--/ { c = 1 } c { if (/-->/) c = 0; print ""; next } { print }' "$f" | grep -nEi -f <(grep -v '^#' scripts/lib/public-notes-internal-wording.txt | grep -v '^$') || true)
+  if [ -n "$hits" ]; then
+    echo "internal wording in the public text $f (scripts/lib/public-notes-internal-wording.txt):" >&2; echo "$hits" | cut -c1-200 | sed 's/^/  /' >&2; status=1
+  fi
+done
+[ $status -eq 0 ] && echo "forbidden strings: none; public texts carry no internal wording" || exit 1

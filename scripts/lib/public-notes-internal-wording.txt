@@ -1,0 +1,39 @@
+# Internal wording that must never reach the public release notes (matelot-cloud/matelot → Releases): one extended
+# regular expression per line, matched case-insensitively. Used by scripts/release-notes.sh (the notes it prints),
+# scripts/check-forbidden.sh (docs/release-notes.md) and .github/scripts/rewrite-release-notes.sh (published releases).
+# rc.24 published the internal drop log: verification notes, test scripts, environment limits.
+\bnot run here\b
+\brun here\b
+\bthis environment\b
+\bin this (container|session|sandbox)\b
+\bchart-test\b
+\bsmoke(-observability)?\.sh\b
+\bsmoke_checks\b
+\bspan-budget\b
+\bexport-failures\.mjs\b
+\.spec\.ts\b
+\.test\.(sh|ts|js|mjs|py)\b
+_test\.(py|yaml)\b
+\btest/[a-z0-9_-]+\.(mjs|js)\b
+\bon kind\b
+\bkind (rc|run|cluster|acceptance|values|recipe)\b
+\bkind-(observability|jaeger|up|load)\b
+\(kind\b
+\brc\.[0-9]+ (fix|fixes|acceptance|finding|findings)\b
+\bdrops? [0-9]
+\bacceptance (fix|fixes|pending)\b
+\bCLAUDE\.md\b
+\bcheck-(layout|forbidden|workflows)\b
+\bapps/(api|web|cli|runner)/
+\btools/(dashboards|docs-site|icons)\b
+\bscripts/lib/
+\bdeploy/(helm|compose|observability|cells)/
+\blocally built\b
+\bDocker daemon\b
+\bstand-in\b
+\bjsdom\b
+\bpromtool\b
+\brender test
+\bCI (job|is|was|stayed|green|red)\b
+\b(green|red) (on|in) CI\b
+\bTODO\b|\bFIXME\b

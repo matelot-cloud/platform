@@ -72,6 +72,8 @@ jobs:
         run: bash scripts/check-forbidden.sh
       - name: Workflow guards (timeouts on every job, npm pack directory, worker built from the api job, release re-run safe)
         run: bash scripts/check-workflows.sh
+      - name: "Public release notes: the next release's notes exist, are small and carry no internal wording (the internal CHANGELOG is refused)"
+        run: bash scripts/release-notes.test.sh
       - name: Compose init script (generated files survive hostile values; secrets generated once)
         run: bash deploy/compose/init/compose-init.test.sh
       - name: "cell-provision.sh: new picks the issuer per context; preflight reads the generated values as YAML (inline comments)"

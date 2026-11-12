@@ -9,7 +9,7 @@ cd "$(dirname "$0")/.."
 python3 - <<'PY'
 import re, sys, yaml
 problems = []
-for f in ['ci', 'release', 'publish-cli', 'docs-sync']:
+for f in ['ci', 'release', 'publish-cli', 'docs-sync', 'release-notes-fix']:
     d = yaml.safe_load(open(f'.github/workflows/{f}.yml'))
     for name, job in d['jobs'].items():
         if 'timeout-minutes' not in job: problems.append(f'{f}.yml: job {name} has no timeout-minutes')
@@ -32,6 +32,19 @@ sign = open('.github/scripts/sign-image.sh').read()
 for call in ('cosign sign', 'cosign attest'):
     if not re.search(rf'retry "[^"]*" {call} ', sign): problems.append(f'sign-image.sh: `{call}` must run through retry')
 if 'retry.sh "cosign sign chart" cosign sign' not in open('.github/workflows/release.yml').read(): problems.append('release.yml: the chart signature must run through retry.sh')
+# the release notes are the PUBLIC ones (docs/release-notes.md), checked before anything is published (rc.24: the
+# internal CHANGELOG section, 125,185 characters, was refused by GitHub after images, chart and docs were out)
+raw = open('.github/workflows/release.yml').read()
+if 'changelog-section' in raw or 'CHANGELOG.md >' in raw or 'cat CHANGELOG' in raw: problems.append('release.yml: the release notes come from scripts/release-notes.sh (docs/release-notes.md), never from CHANGELOG.md')
+if 'scripts/release-notes.sh "v$VERSION" > notes.md' not in steps: problems.append('release.yml: the release job builds notes.md with scripts/release-notes.sh')
+if '-le 100000' not in steps: problems.append('release.yml: the release job must fail when notes.md is over 100000 characters')
+vsteps = rel['jobs']['version']['steps']
+first_run = next((s for s in vsteps if 'run' in s), {})
+if 'scripts/release-notes.sh "$GITHUB_REF_NAME"' not in str(first_run.get('run', '')): problems.append('release.yml: the first step of the `version` job must build the release notes (fail before any image is pushed)')
+for j, job in rel['jobs'].items():
+    if j != 'version' and 'version' not in (job.get('needs') if isinstance(job.get('needs'), list) else [job.get('needs')]): problems.append(f'release.yml: job {j} must need `version` (the release-notes guard runs there)')
+ci_raw = open('.github/workflows/ci.yml').read()
+if 'scripts/release-notes.test.sh' not in ci_raw: problems.append('ci.yml: scripts/release-notes.test.sh must run (the notes of the next release, on the real files)')
 if 'publish-release.sh' not in steps: problems.append('release.yml: the GitHub Release is created by .github/scripts/publish-release.sh (retried, idempotent)')
 pubrel = open('.github/scripts/publish-release.sh').read()
 if 'retry ' not in pubrel or 'gh release view' not in pubrel or '--clobber' not in pubrel: problems.append('publish-release.sh: must retry, and update an existing release (view → edit + upload --clobber)')
@@ -54,4 +67,4 @@ grep -q '::error::always: failed 3 times (last exit 7)' "$T/err" || { echo "chec
 helm_versions="$(grep -h -A1 'uses: azure/setup-helm' .github/workflows/*.yml | grep -o 'version: v[0-9][0-9.]*' | sort -u)"
 [ "$(grep -c 'uses: azure/setup-helm' .github/workflows/*.yml | awk -F: '{s+=$2} END {print s}')" = "$(grep -h -A1 'uses: azure/setup-helm' .github/workflows/*.yml | grep -c 'version: v[0-9]')" ] || { echo "check-workflows: every azure/setup-helm step needs a pinned version (with: { version: vX.Y.Z })" >&2; exit 1; }
 [ "$(printf '%s\n' "$helm_versions" | grep -c .)" = 1 ] || { echo "check-workflows: CI and release pin different helm versions: $helm_versions" >&2; exit 1; }
-echo "workflows ok (timeouts on every job, pack dir created, worker from the api job, release re-run safe, cosign / gh release retried, helm pinned)"
+echo "workflows ok (timeouts on every job, pack dir created, worker from the api job, release re-run safe, cosign / gh release retried, helm pinned, public release notes checked first)"

@@ -64,6 +64,7 @@ observability:
     labels:
       release: "kube-prometheus-stack"
   grafana:
+    url: "http://localhost:3000"
     dashboards:
       enabled: true   # the four dashboards as ConfigMaps for Grafana's sidecar
   otlp:

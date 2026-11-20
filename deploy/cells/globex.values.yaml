@@ -8,13 +8,13 @@ tenant:
 
 image:
   repository: ghcr.io/matelot-cloud/api
-  tag: "0.1.0-rc.23"                  # all four images move together: scripts/cell-provision.sh apply --tag X
+  tag: "0.1.0-rc.25"                  # all four images move together: scripts/cell-provision.sh apply --tag X
 worker:
-  image: { repository: ghcr.io/matelot-cloud/worker, tag: "0.1.0-rc.23" }
+  image: { repository: ghcr.io/matelot-cloud/worker, tag: "0.1.0-rc.25" }
 web:
-  image: { repository: ghcr.io/matelot-cloud/web, tag: "0.1.0-rc.23" }
+  image: { repository: ghcr.io/matelot-cloud/web, tag: "0.1.0-rc.25" }
 managedRunners:
-  image: { repository: ghcr.io/matelot-cloud/runner, tag: "0.1.0-rc.23" }
+  image: { repository: ghcr.io/matelot-cloud/runner, tag: "0.1.0-rc.25" }
   replicas: 1
 imagePullSecrets: []            # e.g. [{ name: ghcr-pull }] — create the Secret in tenant-globex first
 
@@ -64,9 +64,9 @@ observability:
     labels:
       release: "kube-prometheus-stack"
   grafana:
-    url: "http://localhost:3000"
     dashboards:
       enabled: true   # the four dashboards as ConfigMaps for Grafana's sidecar
   otlp:
-    endpoint: "http://tempo.monitoring:4318"   # OTLP traces (docs/observability.md); empty = tracing off
+    endpoint: "http://alloy.monitoring:4318"   # OTLP traces (docs/observability.md); empty = tracing off
     protocol: http/protobuf
+    logs: true   # the audit / security events as OTLP log records too (the endpoint must take logs)
